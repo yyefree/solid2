@@ -201,7 +201,7 @@ const NUM_RE = /(\d+(?:\.\d+)?)(mm|cm|dm|km|in|ft|m|毫米|厘米|分米|米|英
 // 3. 通用工具
 // ============================================================
 
-interface WordMatch {
+export interface WordMatch {
   word: string;
   tag: string;
   start: number;
@@ -266,7 +266,7 @@ function lastKind(kinds: WordMatch[]): PrimitiveKind | null {
 // 4. 数字与角色提取
 // ============================================================
 
-interface NumHit {
+export interface NumHit {
   value: number;
   role: string | null;
   start: number;
@@ -555,36 +555,77 @@ function resolvePrimitiveDims(
  *  句点只在**不紧邻数字**时才当分隔符，否则会把 `0.06` 的小数点切开。 */
 const CLAUSE_SPLIT = /[,;!?、。\n]+|\.(?!\d)|然后|接着|并且|同时|以及|再加上|外加/g;
 
+/** 归一化 + 切子句（供 parseText 与 edit.ts 共用） */
+export function splitClauses(raw: string): string[] {
+  return normalizeInput(raw)
+    .split(CLAUSE_SPLIT)
+    .map((c) => c.trim())
+    .filter(Boolean);
+}
+
+/**
+ * 扫描单个子句：抽出「种类词 / 动作词 / 数字（带角色）/ 连乘组」。
+ * 这是解析层的公共底座 —— `parseText` 与 `parseEdit` 都建在它上面。
+ */
+export interface ClauseScan {
+  clause: string;
+  /** 遮掉种类词与动作词之后的文本（角色词保留，供取数） */
+  masked: string;
+  kinds: WordMatch[];
+  ops: WordMatch[];
+  hits: NumHit[];
+  groups: NumHit[][];
+}
+
+export function scanClause(clause: string): ClauseScan {
+  const kinds = scanWords(clause, KIND_DICT);
+  const ops = scanWords(clause, OP_DICT);
+  // 只把「种类词 + 动作词」遮掉，角色词（半径/长/宽…）必须保留给取数用
+  const masked = maskRanges(clause, [...kinds, ...ops]);
+  const hits = extractNumbers(masked);
+  const groups = findDimensionGroups(masked, hits);
+  return { clause, masked, kinds, ops, hits, groups };
+}
+
+/** 从一次扫描里取「最后一个基本体种类」（「上面加一个圆柱」里圆柱才是主体） */
+export function kindOf(scan: ClauseScan): PrimitiveKind | null {
+  return lastKind(scan.kinds);
+}
+
+/** 从一次扫描里取「最后一个特征动作」tag（孔 / 圆角 / 抽壳 / 阵列…） */
+export function opTagOf(scan: ClauseScan): string | null {
+  return scan.ops.length ? scan.ops[scan.ops.length - 1].tag : null;
+}
+
+/**
+ * 单子句解析入口（`parseText` 与 `edit.ts` 共用）。
+ * 已经把 `scanClause` 与 `parseClause` 串好，外部不必再拼 ctx。
+ */
+export function parseSingleClause(
+  clause: string,
+  hasPrior = false
+): { op?: AiOp; issue?: ParseIssue } {
+  return parseClause({ ...scanClause(clause), hasPrior });
+}
+
+/** 某子句里是否有基本体 / 特征动作关键词（edit.ts 判断「这是建模描述还是编辑指令」用） */
+export function hasModelingWords(clause: string): boolean {
+  const scan = scanClause(clause);
+  return scan.kinds.length > 0 || scan.ops.length > 0;
+}
+
 /**
  * 核心：文本 → AiPlan（同步、纯函数）。
  * `localProvider.plan` 只是把它包成 Promise。
  */
 export function parseText(raw: string): AiPlan {
-  const text = normalizeInput(raw);
-  const clauses = text
-    .split(CLAUSE_SPLIT)
-    .map((c) => c.trim())
-    .filter(Boolean);
-
+  const clauses = splitClauses(raw);
   const ops: AiOp[] = [];
   const issues: ParseIssue[] = [];
 
   for (const clause of clauses) {
-    const kinds = scanWords(clause, KIND_DICT);
-    const opWords = scanWords(clause, OP_DICT);
-    // 只把「种类词 + 动作词」遮掉，角色词（半径/长/宽…）必须保留给取数用
-    const masked = maskRanges(clause, [...kinds, ...opWords]);
-    const hits = extractNumbers(masked);
-    const groups = findDimensionGroups(masked, hits);
-    const r = parseClause({
-      clause,
-      masked,
-      kinds,
-      ops: opWords,
-      hits,
-      groups,
-      hasPrior: ops.length > 0,
-    });
+    const scan = scanClause(clause);
+    const r = parseClause({ ...scan, hasPrior: ops.length > 0 });
     if (r.op) ops.push(r.op);
     if (r.issue) issues.push(r.issue);
   }

@@ -50,8 +50,17 @@ export function buildTabs(): RTab[] {
               label: 'AI 建模',
               icon: 'ai',
               big: true,
-              run: (a) => openAiModeling(a),
+              run: (a) => openAiModeling(a, { mode: 'create' }),
               tip: '用中文描述零件（如「60x40x10 的长方体，中心开 Φ16 通孔，四角倒圆角 R5」），自动解析成特征树并建模',
+            },
+            {
+              id: 'ai.edit',
+              label: 'AI 编辑',
+              icon: 'ai',
+              big: true,
+              run: (a) => openAiModeling(a, { mode: 'edit' }),
+              enabled: (a) => a.doc.features.length > 0,
+              tip: '在现有模型上继续用中文改：追加特征 / 改尺寸 / 删特征（如「上面加一个圆柱」「把高改成 20」「删掉圆角」）',
             },
             {
               id: 'ai.hint',

@@ -856,13 +856,63 @@ const ai = await (async () => {
   await new Promise((r) => setTimeout(r, 120));
   out.previewText = document.querySelector('.ai-preview')?.textContent ?? '';
 
-  // 点击「生成模型」
-  const gen = [...document.querySelectorAll('.modal-foot .btn')].find((b) => /生成模型/.test(b.textContent));
+  // 点击「应用」
+  const gen = [...document.querySelectorAll('.modal-foot .btn')].find((b) => /应用/.test(b.textContent));
   gen?.click();
   await new Promise((r) => setTimeout(r, 400));
   await app.rebuild();
   out.afterDialogVolume = app.model?.stats.volume ?? 0;
   out.dialogClosed = !document.querySelector('.modal');
+
+  // --- G3. 编辑现有模型：无头链路（追加 → 改尺寸 → 删除） ---
+  const boxRes = await ai.interpret('60x40x10 的长方体');
+  app.loadFeatures(boxRes.compiled.features, { replace: true, fit: false });
+  await app.rebuild();
+  let feats = boxRes.compiled.features;
+  let bbox = boxRes.compiled.bbox;
+  out.edit = [];
+  for (const step of ['上面加一个半径8高12的圆柱', '把高改成20', '删掉圆柱']) {
+    const run = ai.editModel(step, { features: feats, bbox, boxForRefs: ai.boxRefOf(feats) });
+    feats = run.features;
+    bbox = run.bbox;
+    app.setFeatures(feats, { fit: false });
+    await app.rebuild();
+    out.edit.push({
+      step,
+      volume: app.model?.stats.volume ?? 0,
+      features: feats.length,
+      changes: run.changes.length,
+      errs: run.issues.filter((i) => i.level === 'error').map((i) => i.message),
+    });
+  }
+
+  // --- G4. UI 接线：AI 编辑页签 → 编辑模式 → 实时预览 → 应用 ---
+  const tabs2 = [...document.querySelectorAll('.rtab')];
+  tabs2.find((t) => t.textContent === 'AI')?.click();
+  const editBtn = [...document.querySelectorAll('.rbtn')].find((b) => /AI 编辑/.test(b.textContent));
+  out.hasEditButton = !!editBtn;
+  out.editBtnEnabled = editBtn ? !editBtn.classList.contains('disabled') : false;
+  editBtn?.click();
+  await new Promise((r) => setTimeout(r, 80));
+  out.editDialogOpen = !!document.querySelector('.modal');
+  out.editModeOn = document.querySelector('.ai-mode.on')?.textContent ?? '';
+  out.editModelHint = document.querySelector('.ai-model-hint')?.textContent ?? '';
+
+  const ta2 = document.querySelector('.ai-input');
+  if (ta2) {
+    ta2.value = '中心开半径8的通孔';
+    ta2.dispatchEvent(new Event('input'));
+  }
+  await new Promise((r) => setTimeout(r, 120));
+  out.editPreview = document.querySelector('.ai-preview')?.textContent ?? '';
+
+  const applyBtn = [...document.querySelectorAll('.modal-foot .btn')].find((b) => /应用/.test(b.textContent));
+  applyBtn?.click();
+  await new Promise((r) => setTimeout(r, 400));
+  await app.rebuild();
+  out.afterEditVolume = app.model?.stats.volume ?? 0;
+  out.afterEditFeatures = app.doc.features.length;
+  out.editDialogClosed = !document.querySelector('.modal');
 
   return out;
 })()`);
@@ -893,9 +943,31 @@ check('ribbon 出现「AI」页签', ai.hasAiTab === true);
 check('AI 页签下有「AI 建模」按钮', ai.hasAiButton === true);
 check('点击后弹出 AI 建模对话框', ai.dialogOpen === true && ai.dialogTitle === 'AI 建模助手', `title=${ai.dialogTitle}`);
 check('弹窗内实时解析出「圆柱」摘要', /圆柱/.test(ai.previewText), ai.previewText.slice(0, 60));
-check('点「生成模型」后弹窗关闭并建出圆柱（体积 ≈ π·100·20）',
+check('点「应用」后弹窗关闭并建出圆柱（体积 ≈ π·100·20）',
   ai.dialogClosed === true && near(ai.afterDialogVolume, Math.PI * 100 * 20, 3),
   `closed=${ai.dialogClosed} vol=${ai.afterDialogVolume.toFixed(2)}`);
+
+// --- G3/G4. 编辑现有模型 ---
+for (const s of ai.edit) {
+  console.log(`    编辑 ${s.step.slice(0, 20).padEnd(22)} 体积=${s.volume.toFixed(2).padStart(10)}  ${s.features} 特征 / ${s.changes} 处改动`);
+}
+check('编辑「上面加圆柱」→ 26412.74（凸台落在顶面）',
+  ai.edit[0].changes === 1 && ai.edit[0].errs.length === 0 && near(ai.edit[0].volume, 24000 + Math.PI * 64 * 12, 3),
+  `vol=${ai.edit[0].volume.toFixed(2)} err=${ai.edit[0].errs.join(';') || '无'}`);
+check('编辑「把高改成20」→ 50412.74（板变厚 + 凸台抬升）',
+  ai.edit[1].errs.length === 0 && near(ai.edit[1].volume, 60 * 40 * 20 + Math.PI * 64 * 12, 3),
+  `vol=${ai.edit[1].volume.toFixed(2)} err=${ai.edit[1].errs.join(';') || '无'}`);
+check('编辑「删掉圆柱」→ 48000（回到纯长方体）',
+  ai.edit[2].features === 1 && ai.edit[2].errs.length === 0 && near(ai.edit[2].volume, 48000, 1),
+  `features=${ai.edit[2].features} vol=${ai.edit[2].volume.toFixed(2)}`);
+check('ribbon 出现「AI 编辑」按钮', ai.hasEditButton === true);
+check('有模型时「AI 编辑」可用', ai.editBtnEnabled === true);
+check('点「AI 编辑」直接进入编辑模式', ai.editDialogOpen === true && ai.editModeOn === '编辑当前模型', `mode=${ai.editModeOn}`);
+check('编辑模式提示当前模型特征数', /当前模型：\d+ 个特征/.test(ai.editModelHint), ai.editModelHint);
+check('编辑指令实时解析出「通孔」改动', /通孔/.test(ai.editPreview) && /新增/.test(ai.editPreview), ai.editPreview.slice(0, 80));
+check('点「应用」后孔生效（体积 ≈ 43978.76）',
+  ai.editDialogClosed === true && ai.afterEditFeatures === 2 && near(ai.afterEditVolume, 48000 - Math.PI * 64 * 20, 3),
+  `closed=${ai.editDialogClosed} n=${ai.afterEditFeatures} vol=${ai.afterEditVolume.toFixed(2)}`);
 
 ws.close();
 cleanup();

@@ -1355,6 +1355,25 @@ export class App {
     this.emit('tree', 'props');
   }
 
+  /**
+   * 用一组特征**整体替换**当前文档的特征列表 —— AI 编辑现有模型的落地入口。
+   * 与 `loadFeatures` 的区别：原地改 `doc.features`，因此**保留全局参数与名称计数器**
+   * （AI 编辑不该把用户定义好的参数表达式冲掉）。
+   */
+  setFeatures(features: Feature[], opts: { fit?: boolean } = {}): void {
+    this.pushUndo();
+    const keep = this.doc.features;
+    keep.length = 0;
+    for (const f of features) keep.push(f);
+    this.rebuild({ fit: opts.fit ?? true });
+    this.emit('tree', 'props', 'params');
+  }
+
+  /** 当前模型的可序列化包围盒（AI 编辑追加特征时的落位基准） */
+  currentBBox(): { min: [number, number, number]; max: [number, number, number] } | null {
+    return this.currentModel()?.bbox ?? null;
+  }
+
   removeFeature(id: FeatureId): void {
     this.pushUndo();
     this.doc.remove(id);

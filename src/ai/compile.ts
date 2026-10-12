@@ -43,14 +43,31 @@ export interface CompileResult {
   bbox: Box | null;
   /** 编译出的特征名列表（UI 回显） */
   names: string[];
+  /**
+   * 编译结束时「可作解析式边/面引用」的长方体包围盒。
+   * 非空表示下一个圆角/倒角/抽壳/孔还能算出几何引用（供追加编辑接力）。
+   */
+  refBox: Box | null;
 }
 
 export interface CompileOptions {
   /** 名称分配器；不传则用内置计数器 */
   namer?: (type: string) => string;
+  /**
+   * 追加编译：以现有模型的包围盒作为初始「当前累计包围盒」。
+   * 有了它，「再加一个…」才能相对已有实体正确落位。
+   */
+  initialBBox?: Box | null;
+  /**
+   * 追加编译：若现有模型最后是一个长方体，把它的包围盒交进来，
+   * 这样「打个孔」「倒圆角」就能解析式地生成面/边引用。
+   */
+  initialBoxForRefs?: Box | null;
+  /** 追加编译：上一个特征 id（供阵列做种子） */
+  initialLastId?: string | null;
 }
 
-const DEFAULT_LABELS: Record<string, string> = {
+export const DEFAULT_LABELS: Record<string, string> = {
   primitive: '基本体',
   hole: '孔',
   fillet: '圆角',
@@ -74,6 +91,14 @@ function makeNamer(): (type: string) => string {
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const mid = (a: Vec3, b: Vec3): Vec3 => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+
+/**
+ * 基本体在「引擎原生坐标系」里的包围盒（未加 origin 偏移）。
+ * 对外导出，供编辑层（edit.ts）解析式估算现有模型的包围盒。
+ */
+export function primitiveBounds(kind: string, dims: number[]): Box {
+  return localBounds(kind, dims);
+}
 
 /** 基本体在「引擎原生坐标系」里的包围盒（未加 origin 偏移） */
 function localBounds(kind: string, dims: number[]): Box {
@@ -118,7 +143,7 @@ function placementOffset(size: Vec3, place: Placement, cur: Box | null): Vec3 {
 }
 
 /** 长方体的 12 条棱 → EdgeRef[]（解析式；供圆角/倒角引用） */
-function boxEdges(b: Box, scope: 'all' | 'vertical' | 'top' | 'bottom'): EdgeRef[] {
+export function boxEdges(b: Box, scope: 'all' | 'vertical' | 'top' | 'bottom'): EdgeRef[] {
   const [x0, y0, z0] = b.min;
   const [x1, y1, z1] = b.max;
   const cx = (x0 + x1) / 2;
@@ -144,7 +169,7 @@ function boxEdges(b: Box, scope: 'all' | 'vertical' | 'top' | 'bottom'): EdgeRef
 }
 
 /** 长方体的上/下表面 → FaceRef（供抽壳引用） */
-function boxFace(b: Box, which: 'top' | 'bottom'): FaceRef {
+export function boxFace(b: Box, which: 'top' | 'bottom'): FaceRef {
   const c = mid(b.min, b.max);
   return which === 'top'
     ? { point: [c[0], c[1], b.max[2]], normal: [0, 0, 1] }
@@ -155,7 +180,7 @@ function boxFace(b: Box, which: 'top' | 'bottom'): FaceRef {
  * 圆角 / 倒角的半径上限（超过会导致自交，引擎会失败）。
  * 竖直棱只受 X/Y 两向限制；顶/底棱与「全部棱」还受高度限制。
  */
-function edgeLimit(size: Vec3, scope: 'all' | 'vertical' | 'top' | 'bottom'): number {
+export function edgeLimit(size: Vec3, scope: 'all' | 'vertical' | 'top' | 'bottom'): number {
   const planar = Math.min(size[0], size[1]) / 2;
   if (scope === 'vertical') return planar;
   return Math.min(planar, size[2] / 2);
@@ -180,12 +205,12 @@ export function compilePlan(ops: AiOp[], opts: CompileOptions = {}): CompileResu
   const issues: ParseIssue[] = [];
   const names: string[] = [];
 
-  /** 当前累计包围盒（所有实体并集） */
-  let cur: Box | null = null;
+  /** 当前累计包围盒（所有实体并集）；追加模式下从现有模型续起 */
+  let cur: Box | null = opts.initialBBox ?? null;
   /** 只有「上一个实体是纯长方体」时才非空，供解析式边/面引用使用 */
-  let boxForRefs: Box | null = null;
+  let boxForRefs: Box | null = opts.initialBoxForRefs ?? null;
   /** 上一个特征 id（阵列的种子） */
-  let lastId: string | null = null;
+  let lastId: string | null = opts.initialLastId ?? null;
 
   for (const op of ops) {
     switch (op.kind) {
@@ -366,5 +391,5 @@ export function compilePlan(ops: AiOp[], opts: CompileOptions = {}): CompileResu
     }
   }
 
-  return { features, issues, bbox: cur, names };
+  return { features, issues, bbox: cur, names, refBox: boxForRefs };
 }

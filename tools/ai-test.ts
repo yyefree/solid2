@@ -10,6 +10,13 @@ import {
   normalizeInput,
   describeOp,
   summarize,
+  parseEdit,
+  applyEdits,
+  editModel,
+  boxRefOf,
+  estimateBBox,
+  describeEdit,
+  summarizeEdits,
 } from '../src/ai';
 import type { AiOp } from '../src/ai';
 import type { PrimitiveFeature, HoleFeature, FilletFeature, ShellFeature } from '../src/doc/types';
@@ -239,6 +246,230 @@ console.log('\n【12. 端到端 interpret（provider 契约）】');
   const describe = describeOp({ kind: 'box', source: '', dims: [60, 40, 10], operation: 'new', place: 'center' });
   check('describeOp 输出尺寸', describe === '长方体 60×40×10', describe);
   check('summarize 空计划', summarize([]) === '没有识别出任何建模动作', summarize([]));
+}
+
+// ============================================================
+console.log('\n【13. 编辑：指令解析】');
+{
+  const del = parseEdit('删掉孔');
+  check('「删掉孔」→ delete/hole', del.edits[0]?.kind === 'delete' && (del.edits[0] as any).target.type === 'hole', JSON.stringify(del.edits));
+
+  const delLast = parseEdit('删掉最后一个圆角');
+  check('「删掉最后一个圆角」→ fillet + last', delLast.edits[0]?.kind === 'delete' && (delLast.edits[0] as any).target.type === 'fillet' && (delLast.edits[0] as any).target.last === true, JSON.stringify(delLast.edits));
+
+  const delAll = parseEdit('删除所有孔');
+  check('删除时不默认 last（=删全部）', (delAll.edits[0] as any)?.target.last === undefined, JSON.stringify(delAll.edits));
+
+  const r1 = parseEdit('把高改成20');
+  check('「把高改成20」→ resize/height/20', r1.edits[0]?.kind === 'resize' && (r1.edits[0] as any).role === 'height' && near((r1.edits[0] as any).value, 20), JSON.stringify(r1.edits));
+
+  const r2 = parseEdit('把长方体的高改成20');
+  check('「把长方体的高改成20」→ 取最靠右的角色词（高）', (r2.edits[0] as any)?.role === 'height', JSON.stringify(r2.edits));
+  check('并锁定 primitive/box 目标', (r2.edits[0] as any)?.target.type === 'primitive' && (r2.edits[0] as any)?.target.primitiveKind === 'box', JSON.stringify((r2.edits[0] as any)?.target));
+
+  const r3 = parseEdit('把直径改成12');
+  check('「把直径改成12」→ diameter', (r3.edits[0] as any)?.role === 'diameter' && near((r3.edits[0] as any).value, 12), JSON.stringify(r3.edits));
+
+  const r4 = parseEdit('把长方体改成80x60x20');
+  check('整体三边 → role=dims', (r4.edits[0] as any)?.role === 'dims' && JSON.stringify((r4.edits[0] as any).dims) === '[80,60,20]', JSON.stringify(r4.edits));
+
+  const r5 = parseEdit('把最后一个孔的直径改为6');
+  check('「把最后一个孔的直径改为6」→ hole/diameter/6', (r5.edits[0] as any)?.target.type === 'hole' && (r5.edits[0] as any)?.role === 'diameter' && near((r5.edits[0] as any).value, 6), JSON.stringify(r5.edits));
+
+  const ap = parseEdit('再加一个半径8高12的圆柱');
+  check('「再加一个…」→ append', ap.edits[0]?.kind === 'append' && (ap.edits[0] as any).ops[0].kind === 'cylinder', JSON.stringify(ap.edits));
+
+  const ap2 = parseEdit('挖掉一个半径5的圆柱');
+  check('「挖掉…」→ 仍是追加（布尔切除）', ap2.edits[0]?.kind === 'append' && (ap2.edits[0] as any).ops[0].operation === 'cut', JSON.stringify(ap2.edits));
+
+  const multi = parseEdit('再加一个半径8高12的圆柱，把高改成20');
+  check('一句两动作 → append + resize', multi.edits.length === 2 && multi.edits[0].kind === 'append' && multi.edits[1].kind === 'resize', multi.edits.map((e) => e.kind).join(','));
+
+  const bad = parseEdit('删掉');
+  check('「删掉」缺目标 → error', bad.issues.some((i) => i.level === 'error'), JSON.stringify(bad.issues));
+}
+
+// ============================================================
+console.log('\n【14. 编辑：追加特征（以现有模型为基准）】');
+{
+  const base = compilePlan(parseText('60x40x10 的长方体').ops);
+  const ctx = { features: base.features, bbox: base.bbox, boxForRefs: boxRefOf(base.features) };
+  check('基准模型 = 长方体', base.features.length === 1 && base.features[0].type === 'primitive');
+
+  const a = editModel('上面加一个半径8高12的圆柱', ctx);
+  check('追加圆柱 → 共 2 个特征', a.features.length === 2, `n=${a.features.length}`);
+  const cyl = a.features[1] as PrimitiveFeature;
+  check('圆柱落在长方体顶面（origin z = 5）', near(cyl.params.origin![2], 5), JSON.stringify(cyl.params.origin));
+  check('包围盒总高 = 10 + 12 = 22', !!a.bbox && near(a.bbox.max[2] - a.bbox.min[2], 22), JSON.stringify(a.bbox));
+  check('change = append', a.changes[0]?.kind === 'append', JSON.stringify(a.changes));
+  check('新特征名为 基本体2（续号）', cyl.name === '基本体2', cyl.name);
+
+  const b = editModel('中心开半径8的通孔', ctx);
+  const hole = b.features[1] as HoleFeature;
+  check('追加通孔 → 顶面中心起钻', hole.type === 'hole' && JSON.stringify(hole.params.plane.origin) === '[0,0,5]', JSON.stringify(hole.params.plane.origin));
+  check('追加孔直径 = 16', near(hole.params.diameter, 16), String(hole.params.diameter));
+
+  const c = editModel('四角倒圆角R5', ctx);
+  const fil = c.features[1] as FilletFeature;
+  check('追加圆角 → 复用长方体解析式棱', fil.type === 'fillet' && fil.params.edges.length === 4, `n=${fil.params.edges?.length}`);
+
+  const d = editModel('切除一个半径5高10的圆柱', ctx);
+  check('追加切除 → operation=cut', (d.features[1] as PrimitiveFeature).params.operation === 'cut', String((d.features[1] as PrimitiveFeature).params.operation));
+}
+
+// ============================================================
+console.log('\n【15. 编辑：修改尺寸】');
+{
+  const base = compilePlan(parseText('60x40x10 的长方体').ops);
+  const ctx = { features: base.features, bbox: base.bbox, boxForRefs: boxRefOf(base.features) };
+
+  const r = editModel('把高改成20', ctx);
+  const box = r.features[0] as PrimitiveFeature;
+  check('长方体高 10 → 20', near(box.params.dims[2], 20), JSON.stringify(box.params.dims));
+  check('宽 / 长 不受影响', near(box.params.dims[0], 60) && near(box.params.dims[1], 40), JSON.stringify(box.params.dims));
+  check('change 记录 from→to', r.changes[0]?.kind === 'resize' && (r.changes[0] as any).from === 10 && (r.changes[0] as any).to === 20, JSON.stringify(r.changes));
+  check('包围盒随之更新', !!r.bbox && near(r.bbox.max[2] - r.bbox.min[2], 20), JSON.stringify(r.bbox));
+  check('原特征未被就地改动（快照语义）', near((base.features[0] as PrimitiveFeature).params.dims[2], 10), JSON.stringify((base.features[0] as PrimitiveFeature).params.dims));
+
+  const r2 = editModel('把长方体改成80x60x20', ctx);
+  check('整体三边改写', JSON.stringify((r2.features[0] as PrimitiveFeature).params.dims) === '[80,60,20]', JSON.stringify((r2.features[0] as PrimitiveFeature).params.dims));
+
+  const withHole = compilePlan(parseText('60x40x10 的长方体，中心开半径8的通孔').ops);
+  const ctx2 = { features: withHole.features, bbox: withHole.bbox, boxForRefs: boxRefOf(withHole.features) };
+  const r3 = editModel('把直径改成12', ctx2);
+  check('默认改「最后一个」→ 孔直径 16 → 12', near((r3.features[1] as HoleFeature).params.diameter, 12), String((r3.features[1] as HoleFeature).params.diameter));
+
+  const r4 = editModel('把长方体的高改成20', ctx2);
+  check('按种类锁定 → 改的是长方体不是孔', near((r4.features[0] as PrimitiveFeature).params.dims[2], 20), JSON.stringify((r4.features[0] as PrimitiveFeature).params.dims));
+
+  const cylBase = compilePlan(parseText('半径20高50的圆柱').ops);
+  const ctx3 = { features: cylBase.features, bbox: cylBase.bbox, boxForRefs: boxRefOf(cylBase.features) };
+  const r5 = editModel('把直径改成30', ctx3);
+  check('圆柱直径改 → 半径 15', near((r5.features[0] as PrimitiveFeature).params.dims[0], 15), JSON.stringify((r5.features[0] as PrimitiveFeature).params.dims));
+}
+
+// ============================================================
+console.log('\n【16. 编辑：删除与悬空引用剪枝】');
+{
+  const base = compilePlan(parseText('60x40x10 的长方体，中心开半径8的通孔，四角倒圆角R5').ops);
+  const ctx = { features: base.features, bbox: base.bbox, boxForRefs: boxRefOf(base.features) };
+  check('基准 = primitive,hole,fillet', base.features.map((f) => f.type).join(',') === 'primitive,hole,fillet');
+
+  const d = editModel('删掉孔', ctx);
+  check('删掉孔 → 剩 primitive,fillet', d.features.map((f) => f.type).join(',') === 'primitive,fillet', d.features.map((f) => f.type).join(','));
+  check('change = delete', d.changes[0]?.kind === 'delete', JSON.stringify(d.changes));
+
+  const d2 = editModel('删掉圆角', ctx);
+  check('删掉圆角 → 剩 primitive,hole', d2.features.map((f) => f.type).join(',') === 'primitive,hole', d2.features.map((f) => f.type).join(','));
+
+  // 悬空引用：阵列种子是孔，删掉孔后阵列也必须一起消失
+  const chained = compilePlan(parseText('60x40x10 的长方体，中心开半径8的通孔，线性阵列3个间距30').ops);
+  const ctx2 = { features: chained.features, bbox: chained.bbox, boxForRefs: boxRefOf(chained.features) };
+  check('链式基准 = primitive,hole,linearPattern', chained.features.map((f) => f.type).join(',') === 'primitive,hole,linearPattern');
+  const d3 = editModel('删掉孔', ctx2);
+  check('删孔后悬空阵列被剪掉', d3.features.map((f) => f.type).join(',') === 'primitive', d3.features.map((f) => f.type).join(','));
+  check('剪掉的阵列也记入 change', (d3.changes[0] as any)?.names.includes('线性阵列1'), JSON.stringify(d3.changes));
+
+  const miss = editModel('删掉圆锥', ctx);
+  check('删不存在的目标 → error', miss.issues.some((i) => i.level === 'error' && /没找到/.test(i.message)), JSON.stringify(miss.issues));
+  check('失败时特征原样保留', miss.features.length === 3, `n=${miss.features.length}`);
+}
+
+// ============================================================
+console.log('\n【17. 编辑：错误与边界】');
+{
+  const base = compilePlan(parseText('半径5的球').ops);
+  const ctx = { features: base.features, bbox: base.bbox, boxForRefs: boxRefOf(base.features) };
+  const r = editModel('把高改成20', ctx);
+  check('球不支持「高」→ 明确报错', r.issues.some((i) => /没找到可修改/.test(i.message)), JSON.stringify(r.issues));
+  check('球仍保留', r.features.length === 1);
+
+  const empty = editModel('把高改成20', { features: [], bbox: null });
+  check('空文档改尺寸 → 报「没找到」', empty.issues.some((i) => /没找到/.test(i.message)), JSON.stringify(empty.issues));
+
+  check('estimateBBox 空文档 → null', estimateBBox([]) === null);
+  check('boxRefOf 空文档 → null', boxRefOf([]) === null);
+  check('boxRefOf 穿透孔找长方体', !!boxRefOf(compilePlan(parseText('60x40x10 的长方体，中心开半径8的通孔').ops).features));
+  check('boxRefOf 遇圆柱 → null', boxRefOf(compilePlan(parseText('60x40x10 的长方体，上面加一个半径8高12的圆柱').ops).features) === null);
+
+  const sum = summarizeEdits(editModel('再加一个半径8高12的圆柱', ctx).changes);
+  check('summarizeEdits 可读', /新增/.test(sum), sum);
+  check('describeEdit 可读', /追加/.test(describeEdit(parseEdit('加一个半径5的球').edits[0])), describeEdit(parseEdit('加一个半径5的球').edits[0]));
+  check('describeEdit 覆盖 resize', /改/.test(describeEdit(parseEdit('把高改成20').edits[0])), describeEdit(parseEdit('把高改成20').edits[0]));
+  check('describeEdit 覆盖 delete', /删除/.test(describeEdit(parseEdit('删掉孔').edits[0])), describeEdit(parseEdit('删掉孔').edits[0]));
+}
+
+// ============================================================
+console.log('\n【18. 编辑：端到端复合场景】');
+{
+  // 从零建一个带孔的板，再依次：加凸台 → 改高 → 删圆角
+  const s1 = compilePlan(parseText('长80宽60高20的板，中心开半径8的通孔，四角倒圆角R4').ops);
+  let ctx = { features: s1.features, bbox: s1.bbox, boxForRefs: boxRefOf(s1.features) };
+  check('第一步 → 3 个特征', s1.features.length === 3, `n=${s1.features.length}`);
+
+  const s2 = editModel('上面加一个半径12高10的圆柱', ctx);
+  ctx = { features: s2.features, bbox: s2.bbox, boxForRefs: boxRefOf(s2.features) };
+  check('加凸台 → 4 个特征', s2.features.length === 4, `n=${s2.features.length}`);
+  check('凸台落在板顶面 z=10', near((s2.features[3] as PrimitiveFeature).params.origin![2], 10), JSON.stringify((s2.features[3] as PrimitiveFeature).params.origin));
+
+  const s3 = editModel('把半径改成15', ctx);
+  check('改凸台半径 12 → 15', near((s3.features[3] as PrimitiveFeature).params.dims[0], 15), JSON.stringify((s3.features[3] as PrimitiveFeature).params.dims));
+  ctx = { features: s3.features, bbox: s3.bbox, boxForRefs: boxRefOf(s3.features) };
+
+  const s4 = editModel('删掉圆角', ctx);
+  check('删圆角 → 剩 3 个特征', s4.features.length === 3, `n=${s4.features.length}`);
+  check('剩下 primitive,hole,primitive', s4.features.map((f) => f.type).join(',') === 'primitive,hole,primitive', s4.features.map((f) => f.type).join(','));
+
+  // 一条指令里同时追加 + 改尺寸
+  const ctx0 = { features: compilePlan(parseText('60x40x10 的长方体').ops).features, bbox: null as any };
+  ctx0.bbox = compilePlan(parseText('60x40x10 的长方体').ops).bbox;
+  const mix = editModel('再加一个半径8高12的圆柱，把高改成20', ctx0);
+  check('一句两动作 → 2 个特征', mix.features.length === 2, `n=${mix.features.length}`);
+  check('新圆柱高被改为 20', near((mix.features[1] as PrimitiveFeature).params.dims[1], 20), JSON.stringify((mix.features[1] as PrimitiveFeature).params.dims));
+  check('changes 两条', mix.changes.length === 2, `n=${mix.changes.length}`);
+}
+
+// ============================================================
+console.log('\n【19. 编辑：依赖特征随新尺寸跟随】');
+{
+  const mk = (text: string) => {
+    const r = compilePlan(parseText(text).ops);
+    return { features: r.features, bbox: r.bbox, boxForRefs: boxRefOf(r.features) };
+  };
+
+  // 孔：板变厚，孔仍应贯穿
+  const plate = mk('60x40x10 的长方体，中心开半径8的通孔');
+  const h = editModel('把高改成20', plate);
+  const hole = h.features[1] as HoleFeature;
+  check('板厚 10 → 20 后孔移到新顶面 z=15', near(hole.params.plane.origin[2], 15), JSON.stringify(hole.params.plane.origin));
+  check('孔仍为通孔', hole.params.through === true);
+
+  // 圆角：长变长，竖直棱应落到新角点
+  const fil = editModel('把长改成80', mk('60x40x10 的长方体，四角倒圆角R5'));
+  const filF = fil.features[1] as FilletFeature;
+  check('长方体加长后圆角仍为 4 条竖直棱', filF.params.edges.length === 4 && JSON.stringify(filF.params.edges[0].dir) === '[0,0,1]', JSON.stringify(filF.params.edges));
+  check('棱点 x 跟随到 +50', near(filF.params.edges[1].point[0], 50), JSON.stringify(filF.params.edges[1]));
+
+  // 抽壳：板变厚，开口面仍在顶面
+  const sh = editModel('把高改成30', mk('长80宽60高20的板，顶面抽壳3'));
+  const shF = sh.features[1] as ShellFeature;
+  check('抽壳开口面跟到新顶面 z=20', near(shF.params.faces[0].point[2], 20), JSON.stringify(shF.params.faces[0]));
+
+  // 叠放：长方体加高后，顶上的圆柱应整体抬升同样的增量
+  const stack = editModel('把高改成20', mk('60x40x10 的长方体，上面加一个半径8高12的圆柱'));
+  const cyl = stack.features[1] as PrimitiveFeature;
+  check('顶部圆柱随之抬升到 z=15', near(cyl.params.origin![2], 15), JSON.stringify(cyl.params.origin));
+  check('抬升后圆柱仍在长方体顶面（相切）', near(cyl.params.origin![2] - 6, 15 - 6), JSON.stringify(cyl.params.origin));
+
+  // 圆角半径超过新尺寸 → 给出 warn，但不阻断
+  const tooBig = editModel('把高改成6', mk('60x40x10 的长方体，倒圆角R4'));
+  check('半径超限 → warn', tooBig.issues.some((i) => i.level === 'warn' && /超过新尺寸限制/.test(i.message)), JSON.stringify(tooBig.issues));
+  check('仍然产出特征（不阻断）', tooBig.features.length === 2, `n=${tooBig.features.length}`);
+
+  // 不相关的特征不该被误改
+  const cylOnly = mk('半径20高50的圆柱');
+  const r = editModel('把高改成60', cylOnly);
+  check('圆柱改高不影响半径', near((r.features[0] as PrimitiveFeature).params.dims[0], 20) && near((r.features[0] as PrimitiveFeature).params.dims[1], 60), JSON.stringify((r.features[0] as PrimitiveFeature).params.dims));
 }
 
 // ============================================================

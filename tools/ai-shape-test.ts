@@ -11,7 +11,7 @@ import { setOcct } from '../src/core/occt';
 import * as S from '../src/core/solid';
 import { CadDocument } from '../src/doc/model';
 import { rebuildFeatures } from '../src/doc/engine';
-import { interpret } from '../src/ai';
+import { interpret, editModel, boxRefOf } from '../src/ai';
 
 let pass = 0;
 let fail = 0;
@@ -120,6 +120,77 @@ console.log('\n【D. 综合：一句话多特征】');
   // 外壳先倒角再抽壳：倒角在外轮廓上，抽壳按偏移内缩
   check('倒角+抽壳链路产出 3 特征', r2.features === 3, `n=${r2.features}`);
   check('倒角+抽壳体积合理（< 实心）', r2.vol > 0 && r2.vol < 80 * 60 * 20, `= ${r2.vol.toFixed(2)}`);
+}
+
+// ============================================================
+console.log('\n【E. 编辑现有模型：追加 / 改尺寸 / 删除】');
+{
+  /**
+   * 先按 `createText` 建模，再依次执行编辑指令；
+   * 每一步都真重建一次，返回各阶段体积（stages[0] = 初始模型）。
+   */
+  async function flow(createText: string, steps: string[]) {
+    const { compiled } = await interpret(createText);
+    let features = compiled.features;
+    let bbox = compiled.bbox;
+    const stages: Built[] = [];
+    const errors: string[] = [];
+    const snap = () => {
+      const { shape, errors: es } = rebuildFeatures(features);
+      stages.push({ vol: shape ? S.volume(shape) : 0, errors: es.map((e) => e.message), features: features.length });
+    };
+    snap();
+    for (const s of steps) {
+      const run = editModel(s, { features, bbox, boxForRefs: boxRefOf(features) });
+      errors.push(...run.issues.filter((i) => i.level === 'error').map((i) => i.message));
+      features = run.features;
+      bbox = run.bbox;
+      snap();
+    }
+    return { stages, errors };
+  }
+
+  // E1 追加：长方体 + 顶部圆柱凸台
+  const e1 = await flow('60x40x10 的长方体', ['上面加一个半径8高12的圆柱']);
+  const e1Expect = 24000 + PI * 64 * 12;
+  check('追加凸台 = 24000 + π·8²·12 = 26412.74', near(e1.stages[1].vol, e1Expect, 3), `= ${e1.stages[1].vol.toFixed(2)} 期望 ${e1Expect.toFixed(2)}`);
+  check('追加后无内核错误', e1.stages[1].errors.length === 0, e1.stages[1].errors.join('; '));
+
+  // E2 改尺寸：板变厚，通孔仍贯穿（依赖特征跟随）
+  const e2 = await flow('60x40x10 的长方体，中心开半径8的通孔', ['把高改成20']);
+  const e2Expect = 60 * 40 * 20 - PI * 64 * 20;
+  check('板厚 10→20 后孔仍贯穿 = 43978.76', near(e2.stages[1].vol, e2Expect, 3), `= ${e2.stages[1].vol.toFixed(2)} 期望 ${e2Expect.toFixed(2)}`);
+  check('改尺寸后无内核错误', e2.stages[1].errors.length === 0, e2.stages[1].errors.join('; '));
+
+  // E3 改尺寸：加长后圆角跟随到新角点
+  const e3 = await flow('60x40x10 的长方体，四角倒圆角R5', ['把长改成80']);
+  const e3Expect = 80 * 40 * 10 - 4 * (25 - (PI * 25) / 4) * 10;
+  check('加长 60→80 后四角圆角 = 31785.40', near(e3.stages[1].vol, e3Expect, 2), `= ${e3.stages[1].vol.toFixed(2)} 期望 ${e3Expect.toFixed(2)}`);
+  check('圆角跟随到新角点（体积 = 纯圆角板）', e3.stages[1].errors.length === 0, e3.stages[1].errors.join('; '));
+
+  // E4 删除：删掉孔后剩下的实体体积正确
+  const e4 = await flow('60x40x10 的长方体，中心开半径8的通孔，四角倒圆角R5', ['删掉孔']);
+  const e4Expect = 24000 - 4 * (25 - (PI * 25) / 4) * 10;
+  check('删孔后 = 23785.40', near(e4.stages[1].vol, e4Expect, 2), `= ${e4.stages[1].vol.toFixed(2)} 期望 ${e4Expect.toFixed(2)}`);
+  check('删孔后剩 2 个特征', e4.stages[1].features === 2, `n=${e4.stages[1].features}`);
+
+  // E5 叠放：长方体加高，顶部圆柱随之抬升
+  const e5 = await flow('60x40x10 的长方体，上面加一个半径8高12的圆柱', ['把高改成20']);
+  const e5Expect = 60 * 40 * 20 + PI * 64 * 12;
+  check('加高后凸台随之抬升 = 50412.74', near(e5.stages[1].vol, e5Expect, 3), `= ${e5.stages[1].vol.toFixed(2)} 期望 ${e5Expect.toFixed(2)}`);
+  check('抬升后无内核错误', e5.stages[1].errors.length === 0, e5.stages[1].errors.join('; '));
+
+  // E6 连续编辑：建模 → 加凸台 → 改凸台半径 → 删圆角
+  const e6 = await flow('长80宽60高20的板，中心开半径8的通孔，四角倒圆角R4', [
+    '上面加一个半径12高10的圆柱',
+    '把半径改成15',
+    '删掉圆角',
+  ]);
+  check('三步编辑均无错误', e6.errors.length === 0, e6.errors.join('; '));
+  check('编辑后特征数 = 3', e6.stages[3].features === 3, `n=${e6.stages[3].features}`);
+  // 板(去圆角) + 凸台，再减贯穿孔
+  const e6Expect = 80 * 60 * 20 + PI * 225 * 10 - PI * 64 * 20;
+  check('终态体积与解析解一致', near(e6.stages[3].vol, e6Expect, 4), `= ${e6.stages[3].vol.toFixed(2)} 期望 ${e6Expect.toFixed(2)}`);
 }
 
 // ============================================================
