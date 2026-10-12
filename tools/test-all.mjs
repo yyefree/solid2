@@ -15,6 +15,7 @@ const root = path.join(here, '..');
 const SUITES = [
   { name: '草图求解器', file: 'tools/sketch-test.ts' },
   { name: '表达式引擎/参数化', file: 'tools/expr-test.ts' },
+  { name: 'AI 建模助手（解析/编译）', file: 'tools/ai-test.ts' },
   { name: '工程图/尺寸标注', file: 'tools/drawing-test.ts' },
   { name: '装配体配合', file: 'tools/assembly-test.ts' },
   { name: '文档/特征引擎', file: 'tools/doc-test.ts' },
@@ -22,6 +23,7 @@ const SUITES = [
   { name: '曲线/弹簧/涡状线', file: 'tools/curve-test.ts' },
   { name: '实体编辑/缩放/分割/圆角/移动/删除/组合/新建实体', file: 'tools/edit-test.ts' },
   { name: '草图→实体', file: 'tools/sketch-shape-test.ts' },
+  { name: 'AI 建模助手（几何）', file: 'tools/ai-shape-test.ts' },
   { name: '几何内核', file: 'tools/kernel-test.ts' },
 ];
 

@@ -1342,6 +1342,19 @@ export class App {
     else this.emit('tree');
   }
 
+  /**
+   * 用一组特征替换（或追加到）当前文档 —— AI 建模助手的落地入口。
+   * 与逐条 addFeature 的区别：只压一次撤销栈，且默认重建后自动适配视图。
+   */
+  loadFeatures(features: Feature[], opts: { replace?: boolean; fit?: boolean } = {}): void {
+    if (!features.length) return;
+    this.pushUndo();
+    if (opts.replace !== false) this.doc = new CadDocument();
+    for (const f of features) this.doc.add(f);
+    this.rebuild({ fit: opts.fit ?? true });
+    this.emit('tree', 'props');
+  }
+
   removeFeature(id: FeatureId): void {
     this.pushUndo();
     this.doc.remove(id);

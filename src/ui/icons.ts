@@ -211,6 +211,12 @@ export const ICONS: Record<string, string> = {
   eyeOff: S(`<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/><path d="M2.5 2.5 13.5 13.5"/>`),
   warning: S(`<path d="M8 2 14.5 13.5h-13z"/><path d="M8 6v3.5"/><circle cx="8" cy="11.6" r=".75" fill="currentColor" stroke="none"/>`),
   info: S(`<circle cx="8" cy="8" r="6"/><path d="M8 7.2v4"/><circle cx="8" cy="4.9" r=".75" fill="currentColor" stroke="none"/>`),
+
+  // ============ AI ============
+  /** 四角星火花（AI 助手） */
+  ai: S(`<path d="M6.6 1.8 7.9 5.3 11.4 6.6 7.9 7.9 6.6 11.4 5.3 7.9 1.8 6.6 5.3 5.3z"/><path d="M12.4 10.2l.65 1.75 1.75.65-1.75.65-.65 1.75-.65-1.75-1.75-.65 1.75-.65z"/>`),
+  /** 命令行（自然语言输入） */
+  aiPrompt: S(`<rect x="1.6" y="3" width="12.8" height="10" rx="1.6"/><path d="M4.2 6.4 6.4 8l-2.2 1.6M8 10h3.6"/>`),
 };
 
 export function icon(name: string, size = 16): string {

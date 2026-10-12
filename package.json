@@ -16,6 +16,8 @@
     "test": "node tools/test-all.mjs",
     "test:sketch": "node tools/run-ts.mjs tools/sketch-test.ts",
     "test:expr": "node tools/run-ts.mjs tools/expr-test.ts",
+    "test:ai": "node tools/run-ts.mjs tools/ai-test.ts",
+    "test:ai-shape": "node tools/run-ts.mjs tools/ai-shape-test.ts",
     "test:drawing": "node tools/run-ts.mjs tools/drawing-test.ts",
     "test:assembly": "node tools/run-ts.mjs tools/assembly-test.ts",
     "test:doc": "node tools/run-ts.mjs tools/doc-test.ts",

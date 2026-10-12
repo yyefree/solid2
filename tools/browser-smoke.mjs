@@ -802,6 +802,101 @@ check('抛物线/双曲线（开放）不产生实体，且显式报「没有封
 check('圆沿 B 样条路径扫描成体（体积 > 0）',
   cv.steps[2].volume > 0 && !cv.sweepError, `体积=${cv.steps[2].volume.toFixed(2)} err=${cv.sweepError || '无'}`);
 
+// ==================================================================
+// G. AI 建模助手：自然语言 → 特征 → 真实内核建模 + UI 接线
+// ==================================================================
+console.log('\n▶ G. AI 建模助手（真实内核）');
+
+const ai = await (async () => {
+  try {
+    return await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const ai = await import('/src/ai/index.ts');
+  const out = { steps: [], errors: [] };
+
+  // --- G1. 三句话端到端建模 ---
+  const cases = [
+    '60x40x10 的长方体',
+    '60x40x10 的长方体，中心开半径8的通孔，四角倒圆角R5',
+    '长80宽60高20的板，四角倒角4，顶面抽壳3',
+  ];
+  for (const text of cases) {
+    const { plan, compiled } = await ai.interpret(text);
+    app.loadFeatures(compiled.features, { replace: true, fit: false });
+    await app.rebuild();
+    const st = app.model.stats;
+    out.steps.push({
+      text,
+      volume: st.volume,
+      faces: st.faces,
+      solids: st.solids,
+      features: compiled.features.length,
+      summary: plan.summary,
+      errors: [...compiled.issues, ...plan.issues].filter((i) => i.level === 'error').map((i) => i.message),
+    });
+  }
+
+  // --- G2. UI 接线：AI 页签 → 按钮 → 弹窗 → 输入解析 ---
+  const tabs = [...document.querySelectorAll('.rtab')];
+  const aiTab = tabs.find((t) => t.textContent === 'AI');
+  out.hasAiTab = !!aiTab;
+  aiTab?.click();
+  const btn = [...document.querySelectorAll('.rbtn')].find((b) => /AI 建模/.test(b.textContent));
+  out.hasAiButton = !!btn;
+  btn?.click();
+  await new Promise((r) => setTimeout(r, 80));
+  out.dialogOpen = !!document.querySelector('.modal');
+  out.dialogTitle = document.querySelector('.modal .ai-title')?.textContent ?? '';
+
+  const ta = document.querySelector('.ai-input');
+  if (ta) {
+    ta.value = '半径10高20的圆柱';
+    ta.dispatchEvent(new Event('input'));
+  }
+  await new Promise((r) => setTimeout(r, 120));
+  out.previewText = document.querySelector('.ai-preview')?.textContent ?? '';
+
+  // 点击「生成模型」
+  const gen = [...document.querySelectorAll('.modal-foot .btn')].find((b) => /生成模型/.test(b.textContent));
+  gen?.click();
+  await new Promise((r) => setTimeout(r, 400));
+  await app.rebuild();
+  out.afterDialogVolume = app.model?.stats.volume ?? 0;
+  out.dialogClosed = !document.querySelector('.modal');
+
+  return out;
+})()`);
+  } catch (e) {
+    console.log(`  ✗ AI 端到端执行异常：${e.message}`);
+    fail++;
+    ws.close();
+    cleanup();
+    console.log(`\n浏览器端到端：${pass} 通过 / ${fail} 失败`);
+    process.exit(1);
+  }
+})();
+
+for (const s of ai.steps) {
+  console.log(`    ${s.text.slice(0, 28).padEnd(30)} 体积=${s.volume.toFixed(2).padStart(10)}  ${s.features} 特征 / ${s.faces} 面`);
+}
+check('AI「长方体」→ 体积 24000', near(ai.steps[0].volume, 24000, 1), ai.steps[0].volume.toFixed(2));
+check('AI「长方体+通孔+圆角」→ 3 特征且无错误',
+  ai.steps[1].features === 3 && ai.steps[1].errors.length === 0,
+  `features=${ai.steps[1].features} err=${ai.steps[1].errors.join(';') || '无'}`);
+check('AI「长方体+通孔+圆角」体积 ≈ 21774.78',
+  near(ai.steps[1].volume, 24000 - Math.PI * 64 * 10 - 4 * (25 - (Math.PI * 25) / 4) * 10, 3),
+  ai.steps[1].volume.toFixed(2));
+check('AI「板+倒角+抽壳」→ 3 特征且体积小于实心',
+  ai.steps[2].features === 3 && ai.steps[2].volume > 0 && ai.steps[2].volume < 80 * 60 * 20,
+  `features=${ai.steps[2].features} vol=${ai.steps[2].volume.toFixed(2)}`);
+check('ribbon 出现「AI」页签', ai.hasAiTab === true);
+check('AI 页签下有「AI 建模」按钮', ai.hasAiButton === true);
+check('点击后弹出 AI 建模对话框', ai.dialogOpen === true && ai.dialogTitle === 'AI 建模助手', `title=${ai.dialogTitle}`);
+check('弹窗内实时解析出「圆柱」摘要', /圆柱/.test(ai.previewText), ai.previewText.slice(0, 60));
+check('点「生成模型」后弹窗关闭并建出圆柱（体积 ≈ π·100·20）',
+  ai.dialogClosed === true && near(ai.afterDialogVolume, Math.PI * 100 * 20, 3),
+  `closed=${ai.dialogClosed} vol=${ai.afterDialogVolume.toFixed(2)}`);
+
 ws.close();
 cleanup();
 

@@ -13,6 +13,9 @@ dist/
 tools/.ktest/
 tools/.ocjs.esm.mjs
 
+# 工具内部的应用标记文件（非项目产物）
+*.genie
+
 # 日志与系统文件
 *.log
 npm-debug.log*

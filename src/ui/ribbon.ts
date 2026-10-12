@@ -6,6 +6,7 @@ import { icon } from './icons';
 import type { App } from '../app/app';
 import { notify } from './toast';
 import { featureDialogs } from './dialogs';
+import { openAiModeling, openAiHelp } from './aipanel';
 
 export type CmdId = string;
 
@@ -37,6 +38,32 @@ const D = featureDialogs;
 
 export function buildTabs(): RTab[] {
   return [
+    {
+      id: 'ai',
+      label: 'AI',
+      groups: [
+        {
+          title: '自然语言建模',
+          items: [
+            {
+              id: 'ai.model',
+              label: 'AI 建模',
+              icon: 'ai',
+              big: true,
+              run: (a) => openAiModeling(a),
+              tip: '用中文描述零件（如「60x40x10 的长方体，中心开 Φ16 通孔，四角倒圆角 R5」），自动解析成特征树并建模',
+            },
+            {
+              id: 'ai.hint',
+              label: '语法帮助',
+              icon: 'aiPrompt',
+              run: () => openAiHelp(),
+              tip: '查看本地解析器支持的句式与关键词',
+            },
+          ],
+        },
+      ],
+    },
     {
       id: 'sketch',
       label: '草图',
