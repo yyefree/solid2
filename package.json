@@ -1,0 +1,40 @@
+{
+  "name": "solid2",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Solid2 - A web-based parametric CAD system powered by OpenCASCADE (OCCT) WASM kernel",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node tools/precompress.mjs && node tools/verify-bundle.mjs",
+    "build:noslim": "vite build",
+    "precompress": "node tools/precompress.mjs",
+    "verify:bundle": "node tools/verify-bundle.mjs",
+    "kernel:scan": "node tools/kernel-build/scan.mjs",
+    "preview": "vite preview --port 4173 --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "test": "node tools/test-all.mjs",
+    "test:sketch": "node tools/run-ts.mjs tools/sketch-test.ts",
+    "test:expr": "node tools/run-ts.mjs tools/expr-test.ts",
+    "test:drawing": "node tools/run-ts.mjs tools/drawing-test.ts",
+    "test:assembly": "node tools/run-ts.mjs tools/assembly-test.ts",
+    "test:doc": "node tools/run-ts.mjs tools/doc-test.ts",
+    "test:features": "node tools/run-ts.mjs tools/features-test.ts",
+    "test:curve": "node tools/run-ts.mjs tools/curve-test.ts",
+    "test:edit": "node tools/run-ts.mjs tools/edit-test.ts",
+    "test:shape": "node tools/run-ts.mjs tools/sketch-shape-test.ts",
+    "test:kernel": "node tools/run-ts.mjs tools/kernel-test.ts",
+    "test:browser": "node tools/browser-smoke.mjs",
+    "demo:video": "node tools/all-features-demo.mjs"
+  },
+  "dependencies": {
+    "esbuild": "^0.28.2",
+    "opencascade.js": "^1.1.1",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5"
+  }
+}

@@ -1,0 +1,20 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+.vite/
+
+# 临时 / 工具目录
+.shots/
+.workbuddy-ai/
+
+# 测试运行器生成的构建缓存与 OCCT ESM 补丁
+tools/.ktest/
+tools/.ocjs.esm.mjs
+
+# 日志与系统文件
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
