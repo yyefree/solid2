@@ -16,6 +16,8 @@ import {
   boxRefOf,
   estimateBBox,
   describeEdit,
+  describeChange,
+  describeChangeBare,
   summarizeEdits,
 } from '../src/ai';
 import type { AiOp } from '../src/ai';
@@ -397,6 +399,10 @@ console.log('\n【17. 编辑：错误与边界】');
   check('describeEdit 可读', /追加/.test(describeEdit(parseEdit('加一个半径5的球').edits[0])), describeEdit(parseEdit('加一个半径5的球').edits[0]));
   check('describeEdit 覆盖 resize', /改/.test(describeEdit(parseEdit('把高改成20').edits[0])), describeEdit(parseEdit('把高改成20').edits[0]));
   check('describeEdit 覆盖 delete', /删除/.test(describeEdit(parseEdit('删掉孔').edits[0])), describeEdit(parseEdit('删掉孔').edits[0]));
+  check('无显式目标时不硬报「最后一个特征」', !/最后一个/.test(describeEdit(parseEdit('把高改成20').edits[0])), describeEdit(parseEdit('把高改成20').edits[0]));
+  const bare = describeChangeBare({ kind: 'append', names: ['基本体2'], summary: '圆柱 ⌀24×10' });
+  check('describeChangeBare 不重复「新增」', !/^新增/.test(bare) && /基本体2/.test(bare), bare);
+  check('describeChange 保留动词（供 summarizeEdits）', /^新增/.test(describeChange({ kind: 'append', names: ['基本体2'], summary: '圆柱' })));
 }
 
 // ============================================================

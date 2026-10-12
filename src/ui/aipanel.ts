@@ -15,7 +15,7 @@ import type { App } from '../app/app';
 import {
   boxRefOf,
   defaultProvider,
-  describeChange,
+  describeChangeBare,
   describeEdit,
   describeOp,
   editModel,
@@ -253,7 +253,14 @@ export function openAiModeling(app: App, opts: { mode?: Mode } = {}): void {
     if (run.changes.length) {
       const list = el('ul', { class: 'ai-changes' });
       for (const c of run.changes) {
-        list.appendChild(el('li', {}, el('span', { class: `ai-chg-kind ${c.kind}`, text: CHG_LABEL[c.kind] }), el('span', { text: describeChange(c) })));
+        list.appendChild(
+          el(
+            'li',
+            {},
+            el('span', { class: `ai-chg-kind ${c.kind}`, text: CHG_LABEL[c.kind] }),
+            el('span', { text: describeChangeBare(c) })
+          )
+        );
       }
       preview.appendChild(list);
     } else {

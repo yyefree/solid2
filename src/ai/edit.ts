@@ -479,7 +479,9 @@ function targetLabel(t: EditTarget): string {
   if (t.type === 'primitive' && t.primitiveKind) return KIND_LABEL[t.primitiveKind];
   if (t.type) return FEATURE_LABEL[t.type] ?? t.type;
   if (t.index !== undefined) return `第 ${t.index + 1} 个特征`;
-  return '最后一个特征';
+  if (t.last) return '最后一个特征';
+  // 没显式指定对象（由 applyEdits 智能选）→ 不硬报一个可能不对的标签
+  return '';
 }
 
 // ---------- 参数写入 ----------
@@ -814,12 +816,26 @@ export function describeEdit(ed: AiEdit): string {
   switch (ed.kind) {
     case 'append':
       return `追加 ${summarize(ed.ops)}`;
-    case 'resize':
-      return ed.dims
-        ? `改 ${targetLabel(ed.target)} 的${ROLE_LABEL[ed.role]}为 ${ed.dims.join('×')}`
-        : `改 ${targetLabel(ed.target)} 的${ROLE_LABEL[ed.role] ?? ed.role}为 ${fmtNum(ed.value)}`;
+    case 'resize': {
+      const who = targetLabel(ed.target);
+      const role = ROLE_LABEL[ed.role] ?? ed.role;
+      const to = ed.dims ? ed.dims.join('×') : fmtNum(ed.value);
+      return who ? `改 ${who} 的${role}为 ${to}` : `改${role}为 ${to}`;
+    }
     case 'delete':
       return `删除 ${targetLabel(ed.target)}`;
+  }
+}
+
+/** 去掉与「新增/修改/删除」徽标重复的动词前缀，供 UI 列表使用 */
+export function describeChangeBare(c: EditChange): string {
+  switch (c.kind) {
+    case 'append':
+      return `${c.names.join('、')}（${c.summary}）`;
+    case 'resize':
+      return describeChange(c);
+    case 'delete':
+      return c.names.join('、');
   }
 }
 
