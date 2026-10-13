@@ -21,7 +21,7 @@ import {
   summarizeEdits,
 } from '../src/ai';
 import type { AiOp } from '../src/ai';
-import type { PrimitiveFeature, HoleFeature, FilletFeature, ShellFeature } from '../src/doc/types';
+import type { PrimitiveFeature, HoleFeature, FilletFeature, ShellFeature, SpringFeature } from '../src/doc/types';
 
 let pass = 0;
 let fail = 0;
@@ -476,6 +476,119 @@ console.log('\n【19. 编辑：依赖特征随新尺寸跟随】');
   const cylOnly = mk('半径20高50的圆柱');
   const r = editModel('把高改成60', cylOnly);
   check('圆柱改高不影响半径', near((r.features[0] as PrimitiveFeature).params.dims[0], 20) && near((r.features[0] as PrimitiveFeature).params.dims[1], 60), JSON.stringify((r.features[0] as PrimitiveFeature).params.dims));
+}
+
+// ============================================================
+console.log('\n【20. 异型孔：柱形沉头 / 锥形埋头 / 螺纹】');
+{
+  // 单子句形式：只给孔型，沉头参数交给引擎默认
+  const cb = parseText('60x40x10 的长方体，中心开Φ8的沉头孔').ops[1];
+  check('「沉头孔」→ counterbore', cb?.kind === 'hole' && cb.holeType === 'counterbore', JSON.stringify(cb));
+  const cbF = compilePlan(parseText('60x40x10 的长方体，中心开Φ8的沉头孔').ops).features[1] as HoleFeature;
+  check('编译出 type=counterbore', cbF.params.type === 'counterbore', cbF.params.type);
+  check('孔径 Φ8 → diameter 8', near(cbF.params.diameter, 8), String(cbF.params.diameter));
+
+  // 双子句形式：孔细节子句回填到上一个孔
+  const r2 = compilePlan(parseText('60x40x10 的长方体，中心开Φ8的沉头孔，沉头直径14深6').ops);
+  const cb2 = r2.features[1] as HoleFeature;
+  check('「沉头直径14深6」回填成 boreDiameter/boreDepth',
+    near(cb2.params.boreDiameter ?? 0, 14) && near(cb2.params.boreDepth ?? 0, 6),
+    JSON.stringify({ d: cb2.params.boreDiameter, h: cb2.params.boreDepth }));
+  check('孔细节子句不产生多余特征', r2.features.length === 2, `n=${r2.features.length}`);
+  check('孔细节子句不报 issue', r2.issues.length === 0, JSON.stringify(r2.issues));
+
+  // 锥形埋头
+  const cs = compilePlan(parseText('60x40x10 的长方体，中心开Φ8的埋头孔，埋头直径12深3').ops).features[1] as HoleFeature;
+  check('埋头 → type=countersink', cs.params.type === 'countersink', cs.params.type);
+  check('埋头直径/深度写入', near(cs.params.sinkDiameter ?? 0, 12) && near(cs.params.sinkDepth ?? 0, 3), JSON.stringify(cs.params));
+
+  // 「锥形沉头孔」也归到锥沉（不能因为含「沉头」被当成柱沉）
+  const cs2 = op1('中心开Φ8的锥形沉头孔');
+  check('「锥形沉头孔」→ countersink（不是 counterbore）', cs2?.kind === 'hole' && cs2.holeType === 'countersink', JSON.stringify(cs2));
+
+  // 螺纹孔
+  const th = op1('中心开Φ6的螺纹孔');
+  check('「螺纹孔」→ threaded', th?.kind === 'hole' && th.holeType === 'threaded', JSON.stringify(th));
+
+  // 尺寸合理性：沉头直径必须大于孔径
+  const bad = compilePlan(parseText('60x40x10 的长方体，中心开Φ8的沉头孔，沉头直径6深3').ops);
+  check('沉头直径 ≤ 孔径 → 报错且不生成孔', bad.issues.some((i) => /必须大于孔径/.test(i.message)) && bad.features.length === 1,
+    JSON.stringify(bad.issues.map((i) => i.message)));
+
+  // 通孔 + 沉头可以共存
+  const thru = compilePlan(parseText('60x40x10 的长方体，中心开Φ8的通孔，沉头直径14深3').ops).features[1] as HoleFeature;
+  check('通孔 + 沉头：through=true 且带沉头', thru.params.through === true && thru.params.type === 'counterbore', JSON.stringify(thru.params));
+
+  // 回显可读
+  const d = describeOp(parseText('中心开Φ8的沉头孔，沉头直径14深6').ops[0]);
+  check('describeOp 含沉头信息', /沉头/.test(d) && /14/.test(d), d);
+}
+
+// ============================================================
+console.log('\n【21. 弹簧】');
+{
+  const sp = op1('中径20线径2螺距5圈数10的弹簧');
+  check('识别为弹簧', sp?.kind === 'spring', JSON.stringify(sp));
+  check('中径/线径/螺距/圈数 解析正确',
+    sp?.kind === 'spring' && near(sp.meanDiameter, 20) && near(sp.wireDiameter, 2) && near(sp.pitch, 5) && near(sp.turns, 10),
+    JSON.stringify(sp));
+  check('默认右旋', sp?.kind === 'spring' && sp.handedness === 'right');
+
+  const left = op1('中径20线径2螺距5圈数10的左旋弹簧');
+  check('「左旋」→ handedness=left', left?.kind === 'spring' && left.handedness === 'left', JSON.stringify(left));
+
+  // 外径 + 线径 → 中径 = 外径 − 线径
+  const byOuter = op1('外径22线径2螺距5圈数10的弹簧');
+  check('给外径时中径 = 外径 − 线径', byOuter?.kind === 'spring' && near(byOuter.meanDiameter, 20), JSON.stringify(byOuter));
+
+  // 锥度
+  const taper = op1('中径20线径2螺距5圈数10锥度15的弹簧');
+  check('锥度被解析', taper?.kind === 'spring' && near(taper.taperDeg ?? 0, 15), JSON.stringify(taper));
+
+  // 缺参数要明确报缺哪个
+  const miss = parseText('中径20的弹簧');
+  check('缺参数 → 列出缺失项', miss.issues.some((i) => /线径/.test(i.message) && /螺距/.test(i.message) && /圈数/.test(i.message)),
+    JSON.stringify(miss.issues.map((i) => i.message)));
+
+  // 中径 ≤ 线径 不合法
+  const bad = parseText('中径2线径3螺距5圈数10的弹簧');
+  check('中径 ≤ 线径 → 报错', bad.issues.some((i) => /必须大于线径/.test(i.message)), JSON.stringify(bad.issues.map((i) => i.message)));
+
+  // 编译
+  const r = compilePlan(parseText('中径20线径2螺距5圈数10的弹簧').ops);
+  const f = r.features[0] as SpringFeature;
+  check('编译出 spring 特征', f.type === 'spring', f.type);
+  check('轴向 +Z、起点在原点', JSON.stringify(f.params.axis) === '[0,0,1]' && JSON.stringify(f.params.origin) === '[0,0,0]', JSON.stringify(f.params.origin));
+  check('操作 = new（首个特征）', f.params.operation === 'new', f.params.operation);
+  check('包围盒：外径 = 中径 + 线径', r.bbox !== null && near(r.bbox.max[0] - r.bbox.min[0], 22, 1e-6), JSON.stringify(r.bbox));
+  check('包围盒：高 = 螺距×圈数 + 线径', r.bbox !== null && near(r.bbox.max[2] - r.bbox.min[2], 52, 1e-6), JSON.stringify(r.bbox));
+
+  // 有先验实体时弹簧坐在顶面
+  const onTop = compilePlan(parseText('60x40x10 的长方体，上面加一个中径20线径2螺距5圈数10的弹簧').ops);
+  const sf = onTop.features[1] as SpringFeature;
+  check('弹簧坐在长方体顶面 z=5', near(sf.params.origin[2], 5), JSON.stringify(sf.params.origin));
+  check('追加时 operation=add', sf.params.operation === 'add', sf.params.operation);
+
+  // 回显
+  const d = describeOp(parseText('中径20线径2螺距5圈数10的弹簧').ops[0]);
+  check('describeOp 含弹簧参数', /弹簧/.test(d) && /中径20/.test(d) && /10圈/.test(d), d);
+
+  // 编辑：改弹簧参数
+  const base = compilePlan(parseText('中径20线径2螺距5圈数10的弹簧').ops);
+  const ctx = { features: base.features, bbox: base.bbox, boxForRefs: null };
+  const e1 = editModel('把螺距改成8', ctx);
+  check('改弹簧螺距', near((e1.features[0] as SpringFeature).params.pitch, 8), String((e1.features[0] as SpringFeature).params.pitch));
+  const e2 = editModel('把圈数改成6', ctx);
+  check('改弹簧圈数', near((e2.features[0] as SpringFeature).params.turns, 6), String((e2.features[0] as SpringFeature).params.turns));
+  const e3 = editModel('把中径改成24', ctx);
+  check('改弹簧中径', near((e3.features[0] as SpringFeature).params.meanDiameter, 24), String((e3.features[0] as SpringFeature).params.meanDiameter));
+  const e4 = editModel('把线径改成3', ctx);
+  check('改弹簧线径', near((e4.features[0] as SpringFeature).params.wireDiameter, 3), String((e4.features[0] as SpringFeature).params.wireDiameter));
+  check('改尺寸被回显', /螺距/.test(describeChangeBare(e1.changes[0])), describeChangeBare(e1.changes[0]));
+
+  // 编辑：删掉弹簧
+  const e5 = editModel('删掉弹簧', ctx);
+  check('删掉弹簧 → 0 个特征', e5.features.length === 0, `n=${e5.features.length}`);
 }
 
 // ============================================================

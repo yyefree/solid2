@@ -41,6 +41,9 @@ export interface AiPrimitiveOp extends AiOpBase {
   place: Placement;
 }
 
+/** 孔型（取值与 `doc/types` 的 `HoleType` 对齐） */
+export type AiHoleType = 'simple' | 'counterbore' | 'countersink' | 'threaded';
+
 /** 孔：默认沿 -Z 从实体上表面中心钻入 */
 export interface AiHoleOp extends AiOpBase {
   kind: 'hole';
@@ -48,6 +51,36 @@ export interface AiHoleOp extends AiOpBase {
   through: boolean;
   /** 盲孔深度（通孔时忽略） */
   depth: number;
+  place: Placement;
+  /** 孔型；省略等价 `simple` */
+  holeType?: AiHoleType;
+  /** 柱形沉头：沉头直径 / 沉头深度 */
+  boreDiameter?: number;
+  boreDepth?: number;
+  /** 锥形埋头：埋头直径 / 埋头深度 */
+  sinkDiameter?: number;
+  sinkDepth?: number;
+}
+
+/**
+ * 弹簧：圆截面沿螺旋线成型。
+ * 参数用工程上惯用的「中径 / 线径 / 螺距 / 圈数」描述；
+ * 也可以只给「外径 + 线径」，中径 = 外径 − 线径。
+ */
+export interface AiSpringOp extends AiOpBase {
+  kind: 'spring';
+  /** 中径（mm） */
+  meanDiameter: number;
+  /** 线径（mm） */
+  wireDiameter: number;
+  /** 螺距（mm，每圈轴向进给） */
+  pitch: number;
+  /** 有效圈数 */
+  turns: number;
+  handedness: 'right' | 'left';
+  /** 锥度（度）：半径沿轴向线性变化，0 = 圆柱弹簧 */
+  taperDeg?: number;
+  operation: AiBoolOp;
   place: Placement;
 }
 
@@ -91,7 +124,8 @@ export type AiOp =
   | AiChamferOp
   | AiShellOp
   | AiLinearPatternOp
-  | AiCircularPatternOp;
+  | AiCircularPatternOp
+  | AiSpringOp;
 
 /** 解析层问题：某个子句没读懂，或读懂了但缺参数 */
 export interface ParseIssue {

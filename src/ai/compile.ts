@@ -28,8 +28,9 @@ import type {
   LinearPatternFeature,
   PrimitiveFeature,
   ShellFeature,
+  SpringFeature,
 } from '../doc/types';
-import type { AiOp, ParseIssue, Placement, Vec3 } from './types';
+import type { AiOp, AiSpringOp, ParseIssue, Placement, Vec3 } from './types';
 
 export interface Box {
   min: Vec3;
@@ -75,6 +76,7 @@ export const DEFAULT_LABELS: Record<string, string> = {
   shell: '抽壳',
   linearPattern: '线性阵列',
   circularPattern: '圆周阵列',
+  spring: '弹簧',
 };
 
 /** 内置名称分配器（与 doc.nextName 的标签一致） */
@@ -195,6 +197,28 @@ function holePlane(b: Box, which: 'top' | 'bottom'): SketchPlane {
   return { origin: [c[0], c[1], b.max[2]], u: [1, 0, 0], v: [0, 1, 0], normal: [0, 0, 1], ref: 'AI 孔·顶面' };
 }
 
+/** 两个包围盒的并集 */
+function unionBox(a: Box, b: Box): Box {
+  return {
+    min: [Math.min(a.min[0], b.min[0]), Math.min(a.min[1], b.min[1]), Math.min(a.min[2], b.min[2])],
+    max: [Math.max(a.max[0], b.max[0]), Math.max(a.max[1], b.max[1]), Math.max(a.max[2], b.max[2])],
+  };
+}
+
+/**
+ * 弹簧的解析式包围盒（轴向固定为 +Z）。
+ * 外径 = 中径 + 线径；高 = 螺距 × 圈数 + 线径。
+ * 锥簧只让半径沿轴渐变，外轮廓不超过最大半径，故此式同样成立（略保守）。
+ */
+export function springBounds(op: AiSpringOp, origin: Vec3): Box {
+  const R = (op.meanDiameter + op.wireDiameter) / 2;
+  const H = op.pitch * op.turns + op.wireDiameter;
+  return {
+    min: [origin[0] - R, origin[1] - R, origin[2]],
+    max: [origin[0] + R, origin[1] + R, origin[2] + H],
+  };
+}
+
 /**
  * 编译入口：把一份建模计划变成文档特征。
  * 顺序即特征树顺序；后面的特征可以引用前面的实体。
@@ -249,6 +273,24 @@ export function compilePlan(ops: AiOp[], opts: CompileOptions = {}): CompileResu
           break;
         }
         const which = op.place === 'bottom' ? 'bottom' : 'top';
+        const dia = op.radius * 2;
+        // 沉头/埋头的直径必须大于主孔，否则布尔做不出台阶 —— 提前拦下而不是交给引擎
+        if (op.holeType === 'counterbore' && op.boreDiameter !== undefined && op.boreDiameter <= dia) {
+          issues.push({
+            clause: op.source,
+            message: `沉头直径 ${op.boreDiameter} 必须大于孔径 ${dia}`,
+            level: 'error',
+          });
+          break;
+        }
+        if (op.holeType === 'countersink' && op.sinkDiameter !== undefined && op.sinkDiameter <= dia) {
+          issues.push({
+            clause: op.source,
+            message: `埋头直径 ${op.sinkDiameter} 必须大于孔径 ${dia}`,
+            level: 'error',
+          });
+          break;
+        }
         const f: HoleFeature = {
           id: newId('f'),
           type: 'hole',
@@ -256,16 +298,52 @@ export function compilePlan(ops: AiOp[], opts: CompileOptions = {}): CompileResu
           params: {
             plane: holePlane(cur, which),
             pos: [0, 0],
-            type: 'simple',
-            diameter: op.radius * 2,
+            type: op.holeType ?? 'simple',
+            diameter: dia,
             depth: op.through ? 100 : op.depth,
             through: op.through,
+            boreDiameter: op.boreDiameter,
+            boreDepth: op.boreDepth,
+            sinkDiameter: op.sinkDiameter,
+            sinkDepth: op.sinkDepth,
           },
         };
         features.push(f);
         names.push(f.name);
         lastId = f.id;
         // 孔是内部切除，既不改变包围盒也不动外表面的棱 —— 长方体引用继续有效
+        break;
+      }
+
+      case 'spring': {
+        const mean = Math.max(op.meanDiameter, 0.02);
+        const wire = Math.max(op.wireDiameter, 0.01);
+        // 落位：无先验 → 轴起点在原点；有先验 → 坐在当前包围盒顶面中心
+        const origin: Vec3 = cur
+          ? [(cur.min[0] + cur.max[0]) / 2, (cur.min[1] + cur.max[1]) / 2, cur.max[2]]
+          : [0, 0, 0];
+        const f: SpringFeature = {
+          id: newId('f'),
+          type: 'spring',
+          name: namer('spring'),
+          params: {
+            origin,
+            axis: [0, 0, 1],
+            meanDiameter: mean,
+            wireDiameter: wire,
+            pitch: Math.max(op.pitch, 0.01),
+            turns: Math.max(op.turns, 0.05),
+            handedness: op.handedness,
+            taperDeg: op.taperDeg,
+            operation: op.operation,
+          },
+        };
+        features.push(f);
+        names.push(f.name);
+        lastId = f.id;
+        const nb = springBounds({ ...op, meanDiameter: mean, wireDiameter: wire }, origin);
+        cur = cur ? unionBox(cur, nb) : nb;
+        boxForRefs = null;
         break;
       }
 

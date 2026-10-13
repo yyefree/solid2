@@ -18,6 +18,8 @@
 
 import type {
   AiBoolOp,
+  AiHoleOp,
+  AiHoleType,
   AiOp,
   AiPlan,
   EdgeScope,
@@ -130,17 +132,36 @@ const OP_WORDS: [string, string][] = [
   ['矩形阵列', 'linearPattern'],
   ['圆周阵列', 'circularPattern'],
   ['环形阵列', 'circularPattern'],
+  ['螺旋弹簧', 'spring'],
+  ['圆柱弹簧', 'spring'],
+  ['弹簧', 'spring'],
+  ['压簧', 'spring'],
+  ['拉簧', 'spring'],
   ['阵列', 'linearPattern'],
 ];
 
 /** 数字角色词（紧贴在数字之前；按长度降序） */
 const ROLE_WORDS: [string, string][] = [
+  ['沉头直径', 'boreDia'],
+  ['埋头直径', 'sinkDia'],
+  ['沉头深度', 'boreDepth'],
+  ['埋头深度', 'sinkDepth'],
+  ['沉头深', 'boreDepth'],
+  ['埋头深', 'sinkDepth'],
   ['直径', 'diameter'],
   ['半径', 'radius'],
   ['深度', 'depth'],
   ['高度', 'height'],
   ['厚度', 'thickness'],
   ['边长', 'side'],
+  ['中径', 'meanDia'],
+  ['外径', 'outerDia'],
+  ['线径', 'wireDia'],
+  ['丝径', 'wireDia'],
+  ['螺距', 'pitch'],
+  ['圈数', 'turns'],
+  ['匝数', 'turns'],
+  ['锥度', 'taper'],
   ['Φ', 'diameter'],
   ['长', 'length'],
   ['宽', 'width'],
@@ -380,16 +401,30 @@ function parseClause(ctx: ClauseCtx): { op?: AiOp; issue?: ParseIssue } {
         return { issue: { clause, message: '孔缺少半径或直径（可写「半径8」「Φ16」）', level: 'error' } };
       }
       const through = hasAny(clause, ['通孔', '贯穿', '打通', '通透', '通']) || !byRole(hits, 'depth').length;
-      return {
-        op: {
-          kind: 'hole',
-          source: clause,
-          radius: r,
-          through,
-          depth: byRole(hits, 'depth')[0] ?? 10,
-          place: placeOf(clause),
-        },
+      const op: AiHoleOp = {
+        kind: 'hole',
+        source: clause,
+        radius: r,
+        through,
+        depth: byRole(hits, 'depth')[0] ?? 10,
+        place: placeOf(clause),
       };
+      const holeType = holeTypeOf(clause);
+      if (holeType !== 'simple') op.holeType = holeType;
+      // 同一个子句里就把沉头/埋头参数写全的情况
+      const boreDia = byRole(hits, 'boreDia')[0];
+      const boreDepth = byRole(hits, 'boreDepth')[0];
+      const sinkDia = byRole(hits, 'sinkDia')[0];
+      const sinkDepth = byRole(hits, 'sinkDepth')[0];
+      if (boreDia !== undefined) op.boreDiameter = boreDia;
+      if (boreDepth !== undefined) op.boreDepth = boreDepth;
+      if (sinkDia !== undefined) op.sinkDiameter = sinkDia;
+      if (sinkDepth !== undefined) op.sinkDepth = sinkDepth;
+      return { op };
+    }
+
+    if (opTag === 'spring') {
+      return parseSpring(clause, hits, hasPrior);
     }
 
     if (opTag === 'fillet' || opTag === 'chamfer') {
@@ -479,6 +514,102 @@ function parseClause(ctx: ClauseCtx): { op?: AiOp; issue?: ParseIssue } {
 
 function kindLabel(kind: PrimitiveKind): string {
   return { box: '长方体', cylinder: '圆柱', sphere: '球', cone: '圆锥', torus: '圆环' }[kind];
+}
+
+/**
+ * 孔型判定。
+ * 注意顺序：「锥形沉头孔」也含「沉头」，所以锥沉必须在柱沉之前判。
+ */
+function holeTypeOf(text: string): AiHoleType {
+  if (hasAny(text, ['埋头孔', '锥形沉头', '锥形沉', '锥沉', '埋头'])) return 'countersink';
+  if (hasAny(text, ['沉头孔', '柱形沉头', '柱形沉', '沉头'])) return 'counterbore';
+  if (hasAny(text, ['螺纹孔', '螺纹'])) return 'threaded';
+  return 'simple';
+}
+
+/**
+ * 弹簧参数解析。
+ * 支持两种给法：
+ *   - 中径 + 线径：「中径20线径2螺距5圈数10的弹簧」
+ *   - 外径 + 线径：中径自动 = 外径 − 线径
+ * 缺参数时明确报缺哪个，而不是拿默认值硬凑。
+ */
+function parseSpring(
+  clause: string,
+  hits: NumHit[],
+  hasPrior: boolean
+): { op?: AiOp; issue?: ParseIssue } {
+  const wire = byRole(hits, 'wireDia')[0];
+  const outer = byRole(hits, 'outerDia')[0];
+  const mean = byRole(hits, 'meanDia')[0] ?? (outer !== undefined && wire !== undefined ? outer - wire : undefined);
+  const pitch = byRole(hits, 'pitch')[0];
+  const turns = byRole(hits, 'turns')[0];
+
+  const missing: string[] = [];
+  if (!wire) missing.push('线径');
+  if (!mean) missing.push(outer !== undefined ? '外径' : '中径');
+  if (!pitch) missing.push('螺距');
+  if (!turns) missing.push('圈数');
+  if (missing.length) {
+    return {
+      issue: {
+        clause,
+        message: `弹簧缺少参数：${missing.join('、')}（可写「中径20线径2螺距5圈数10的弹簧」）`,
+        level: 'error',
+      },
+    };
+  }
+  if (mean! <= wire!) {
+    return { issue: { clause, message: `弹簧中径（${mean}）必须大于线径（${wire}）`, level: 'error' } };
+  }
+
+  // ⚠️ 「锥度」不能靠角色词提取：基本体词表里的「锥」（圆锥）会先吃掉「锥」字，
+  //    剩下「度15」匹配不上角色。这里直接从原文正则取。
+  const taperM = /锥度(\d+(?:\.\d+)?)/.exec(clause);
+
+  return {
+    op: {
+      kind: 'spring',
+      source: clause,
+      meanDiameter: mean!,
+      wireDiameter: wire!,
+      pitch: pitch!,
+      turns: turns!,
+      handedness: hasAny(clause, ['左旋', '左旋向']) ? 'left' : 'right',
+      taperDeg: taperM ? parseFloat(taperM[1]) : undefined,
+      operation: boolOpOf(clause, hasPrior),
+      place: placeOf(clause),
+    },
+  };
+}
+
+/**
+ * 「孔细节」子句：跟在孔后面、只补参数不产生新特征的一段。
+ * 如「沉头直径14深6」「埋头Φ12深3」——通常被逗号切成了独立子句，
+ * 由 `parseText` / `parseEdit` 回填到上一个孔上。
+ * 返回 null 表示这不是一个孔细节子句。
+ */
+export function parseHoleDetail(clause: string): Partial<AiHoleOp> | null {
+  if (!hasAny(clause, ['沉头', '埋头', '锥沉', '锥形沉'])) return null;
+  const scan = scanClause(clause);
+  // 含种类词/动作词说明它本身就是一条建模子句，不是纯细节
+  if (scan.kinds.length || scan.ops.length) return null;
+
+  const dia = byRole(scan.hits, 'boreDia')[0] ?? byRole(scan.hits, 'sinkDia')[0] ?? byRole(scan.hits, 'diameter')[0];
+  const dep = byRole(scan.hits, 'boreDepth')[0] ?? byRole(scan.hits, 'sinkDepth')[0] ?? byRole(scan.hits, 'depth')[0];
+
+  const out: Partial<AiHoleOp> = {};
+  if (hasAny(clause, ['埋头', '锥沉', '锥形沉'])) {
+    out.holeType = 'countersink';
+    if (dia !== undefined) out.sinkDiameter = dia;
+    if (dep !== undefined) out.sinkDepth = dep;
+  } else {
+    out.holeType = 'counterbore';
+    if (dia !== undefined) out.boreDiameter = dia;
+    if (dep !== undefined) out.boreDepth = dep;
+  }
+  if (dia === undefined && dep === undefined) return null;
+  return out;
 }
 
 /**
@@ -622,12 +753,21 @@ export function parseText(raw: string): AiPlan {
   const clauses = splitClauses(raw);
   const ops: AiOp[] = [];
   const issues: ParseIssue[] = [];
+  /** 最近一个孔 —— 供「孔细节」子句回填 */
+  let lastHole: AiHoleOp | null = null;
 
   for (const clause of clauses) {
     const scan = scanClause(clause);
     const r = parseClause({ ...scan, hasPrior: ops.length > 0 });
-    if (r.op) ops.push(r.op);
-    if (r.issue) issues.push(r.issue);
+    if (r.op) {
+      ops.push(r.op);
+      lastHole = r.op.kind === 'hole' ? r.op : null;
+    } else if (r.issue) {
+      // 「沉头直径14深6」这类只补参数的子句 → 回填到上一个孔，不算问题
+      const detail = lastHole ? parseHoleDetail(clause) : null;
+      if (detail && lastHole) Object.assign(lastHole, detail);
+      else issues.push(r.issue);
+    }
   }
 
   return {
@@ -656,8 +796,21 @@ export function describeOp(op: AiOp): string {
       return `圆锥 ⌀${fmt([op.dims[0] * 2])}→⌀${fmt([op.dims[1] * 2])}×${op.dims[2]}`;
     case 'torus':
       return `圆环 R${fmt([op.dims[0]])}/r${fmt([op.dims[1]])}`;
-    case 'hole':
-      return `${op.through ? '通孔' : `盲孔深${fmt([op.depth])}`} ⌀${fmt([op.radius * 2])}`;
+    case 'hole': {
+      const base = `${op.through ? '通孔' : `盲孔深${fmt([op.depth])}`} ⌀${fmt([op.radius * 2])}`;
+      if (op.holeType === 'counterbore') {
+        const d = op.boreDiameter !== undefined ? `沉头⌀${fmt([op.boreDiameter])}` : '沉头';
+        const h = op.boreDepth !== undefined ? `深${fmt([op.boreDepth])}` : '';
+        return `柱形沉头孔 ${base}（${d}${h}）`;
+      }
+      if (op.holeType === 'countersink') {
+        const d = op.sinkDiameter !== undefined ? `埋头⌀${fmt([op.sinkDiameter])}` : '埋头';
+        const h = op.sinkDepth !== undefined ? `深${fmt([op.sinkDepth])}` : '';
+        return `锥形埋头孔 ${base}（${d}${h}）`;
+      }
+      if (op.holeType === 'threaded') return `螺纹孔 ${base}`;
+      return base;
+    }
     case 'fillet':
       return `圆角 R${fmt([op.radius])}`;
     case 'chamfer':
@@ -668,6 +821,11 @@ export function describeOp(op: AiOp): string {
       return `线性阵列 ${op.count} 个·间距${fmt([op.spacing])}`;
     case 'circularPattern':
       return `圆周阵列 ${op.count} 个`;
+    case 'spring': {
+      const taper = op.taperDeg ? `·锥度${fmt([op.taperDeg])}°` : '';
+      const hand = op.handedness === 'left' ? '左旋' : '右旋';
+      return `弹簧 中径${fmt([op.meanDiameter])}·线径${fmt([op.wireDiameter])}·螺距${fmt([op.pitch])}·${fmt([op.turns])}圈${hand}${taper}`;
+    }
   }
 }
 

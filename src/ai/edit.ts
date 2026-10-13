@@ -23,6 +23,7 @@ import {
   DEFAULT_LABELS,
   edgeLimit,
   primitiveBounds,
+  springBounds,
   type Box,
   type CompileResult,
 } from './compile';
@@ -31,12 +32,13 @@ import {
   kindOf,
   normalizeInput,
   opTagOf,
+  parseHoleDetail,
   parseSingleClause,
   scanClause,
   splitClauses,
   summarize,
 } from './parse';
-import type { AiOp, ParseIssue, PrimitiveKind } from './types';
+import type { AiHoleOp, AiOp, ParseIssue, PrimitiveKind } from './types';
 
 // ============================================================
 // 1. 编辑意图（IR）
@@ -96,6 +98,13 @@ const ROLE_WORDS: [string, string][] = [
   ['高度', 'height'],
   ['边长', 'side'],
   ['距离', 'distance'],
+  ['中径', 'meanDia'],
+  ['线径', 'wireDia'],
+  ['丝径', 'wireDia'],
+  ['螺距', 'pitch'],
+  ['圈数', 'turns'],
+  ['匝数', 'turns'],
+  ['锥度', 'taper'],
   ['Φ', 'diameter'],
   ['长', 'length'],
   ['宽', 'width'],
@@ -117,6 +126,11 @@ const RESIZE_ROLES = new Set([
   'diameter',
   'side',
   'distance',
+  'meanDia',
+  'wireDia',
+  'pitch',
+  'turns',
+  'taper',
 ]);
 
 const OP_FEATURE: Record<string, string> = {
@@ -126,6 +140,7 @@ const OP_FEATURE: Record<string, string> = {
   shell: 'shell',
   linearPattern: 'linearPattern',
   circularPattern: 'circularPattern',
+  spring: 'spring',
 };
 
 const KIND_LABEL: Record<PrimitiveKind, string> = {
@@ -146,6 +161,11 @@ const ROLE_LABEL: Record<string, string> = {
   diameter: '直径',
   side: '边长',
   distance: '距离',
+  meanDia: '中径',
+  wireDia: '线径',
+  pitch: '螺距',
+  turns: '圈数',
+  taper: '锥度',
   dims: '三边尺寸',
 };
 
@@ -166,6 +186,8 @@ export function parseEdit(raw: string, features: Feature[] = []): { edits: AiEdi
   const edits: AiEdit[] = [];
   const issues: ParseIssue[] = [];
   let hasPrior = features.length > 0;
+  /** 最近一个追加进来的孔 —— 供「沉头直径14深6」这类细节子句回填 */
+  let lastHole: AiHoleOp | null = null;
 
   for (const clause of clauses) {
     // (1) 删除
@@ -176,6 +198,7 @@ export function parseEdit(raw: string, features: Feature[] = []): { edits: AiEdi
         continue;
       }
       edits.push({ kind: 'delete', target, source: clause });
+      lastHole = null;
       continue;
     }
 
@@ -183,6 +206,7 @@ export function parseEdit(raw: string, features: Feature[] = []): { edits: AiEdi
     const rs = parseResize(clause);
     if (rs) {
       edits.push(rs);
+      lastHole = null;
       continue;
     }
 
@@ -193,8 +217,14 @@ export function parseEdit(raw: string, features: Feature[] = []): { edits: AiEdi
       if (last && last.kind === 'append') last.ops.push(r.op);
       else edits.push({ kind: 'append', ops: [r.op], source: clause });
       hasPrior = true;
+      lastHole = r.op.kind === 'hole' ? r.op : null;
+      continue;
     }
-    if (r.issue) issues.push(r.issue);
+    if (r.issue) {
+      const detail = lastHole ? parseHoleDetail(clause) : null;
+      if (detail && lastHole) Object.assign(lastHole, detail);
+      else issues.push(r.issue);
+    }
   }
 
   return { edits, issues };
@@ -530,9 +560,39 @@ export function writeParam(f: Feature, role: string, value: number): WriteResult
           if (role === 'height') return setNum(d, 2, value, '高');
           return null;
         case 'torus':
-          if (role === 'radius') return setNum(d, 0, value, '中径');
-          if (role === 'thickness' || role === 'depth') return setNum(d, 1, value, '线径');
+          if (role === 'radius' || role === 'meanDia' || role === 'diameter')
+            return role === 'diameter' ? setDiameter(d, 0, value) : setNum(d, 0, value, '中径');
+          if (role === 'thickness' || role === 'depth' || role === 'wireDia') return setNum(d, 1, value, '线径');
           return null;
+      }
+      return null;
+    }
+    case 'spring': {
+      const p = f.params;
+      if (role === 'meanDia') {
+        const from = p.meanDiameter;
+        p.meanDiameter = value;
+        return { label: '中径', from, to: value };
+      }
+      if (role === 'wireDia') {
+        const from = p.wireDiameter;
+        p.wireDiameter = value;
+        return { label: '线径', from, to: value };
+      }
+      if (role === 'pitch') {
+        const from = p.pitch;
+        p.pitch = value;
+        return { label: '螺距', from, to: value };
+      }
+      if (role === 'turns') {
+        const from = p.turns;
+        p.turns = value;
+        return { label: '圈数', from, to: value };
+      }
+      if (role === 'taper') {
+        const from = p.taperDeg ?? 0;
+        p.taperDeg = value;
+        return { label: '锥度', from, to: value };
       }
       return null;
     }
@@ -643,18 +703,38 @@ function pruneDangling(features: Feature[]): { kept: Feature[]; removed: Feature
   return { kept, removed };
 }
 
-/** 解析式估算包围盒（只统计基本体；孔/圆角不改变外轮廓，与编译层口径一致） */
+/** 解析式估算包围盒（基本体 + 弹簧；孔/圆角不改变外轮廓，与编译层口径一致） */
 export function estimateBBox(features: Feature[]): Box | null {
   let cur: Box | null = null;
   for (const f of features) {
-    if (f.type !== 'primitive') continue;
-    const p = f.params;
-    const lb = primitiveBounds(p.kind, p.dims);
-    const o = p.origin ?? [0, 0, 0];
-    const b: Box = {
-      min: [lb.min[0] + o[0], lb.min[1] + o[1], lb.min[2] + o[2]],
-      max: [lb.max[0] + o[0], lb.max[1] + o[1], lb.max[2] + o[2]],
-    };
+    let b: Box | null = null;
+    if (f.type === 'primitive') {
+      const p = f.params;
+      const lb = primitiveBounds(p.kind, p.dims);
+      const o = p.origin ?? [0, 0, 0];
+      b = {
+        min: [lb.min[0] + o[0], lb.min[1] + o[1], lb.min[2] + o[2]],
+        max: [lb.max[0] + o[0], lb.max[1] + o[1], lb.max[2] + o[2]],
+      };
+    } else if (f.type === 'spring') {
+      const p = f.params;
+      b = springBounds(
+        {
+          kind: 'spring',
+          source: '',
+          meanDiameter: p.meanDiameter,
+          wireDiameter: p.wireDiameter,
+          pitch: p.pitch,
+          turns: p.turns,
+          handedness: p.handedness,
+          taperDeg: p.taperDeg,
+          operation: 'new',
+          place: 'center',
+        },
+        p.origin
+      );
+    }
+    if (!b) continue;
     cur = cur
       ? {
           min: [Math.min(cur.min[0], b.min[0]), Math.min(cur.min[1], b.min[1]), Math.min(cur.min[2], b.min[2])],

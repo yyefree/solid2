@@ -914,6 +914,43 @@ const ai = await (async () => {
   out.afterEditFeatures = app.doc.features.length;
   out.editDialogClosed = !document.querySelector('.modal');
 
+  // --- G5. 异型孔 + 弹簧：端到端建模 ---
+  out.extra = [];
+  const extraCases = [
+    '60x40x10 的长方体，中心开Φ8的通孔，沉头直径14深3',
+    '60x40x10 的长方体，中心开Φ8的通孔，埋头直径12深3',
+    '中径20线径2螺距5圈数8的弹簧',
+  ];
+  for (const text of extraCases) {
+    const { compiled } = await ai.interpret(text);
+    app.loadFeatures(compiled.features, { replace: true, fit: false });
+    await app.rebuild();
+    out.extra.push({
+      text,
+      volume: app.model?.stats.volume ?? 0,
+      features: compiled.features.length,
+      errs: compiled.issues.filter((i) => i.level === 'error').map((i) => i.message),
+    });
+  }
+
+  // 编辑模式里加沉头孔（含「孔细节」子句回填）
+  const plate = await ai.interpret('60x40x10 的长方体');
+  app.loadFeatures(plate.compiled.features, { replace: true, fit: false });
+  await app.rebuild();
+  const runHole = ai.editModel('中心开Φ8的沉头孔，沉头直径14深3', {
+    features: plate.compiled.features,
+    bbox: plate.compiled.bbox,
+    boxForRefs: ai.boxRefOf(plate.compiled.features),
+  });
+  app.setFeatures(runHole.features, { fit: false });
+  await app.rebuild();
+  out.extraHole = {
+    volume: app.model?.stats.volume ?? 0,
+    features: runHole.features.length,
+    changes: runHole.changes.length,
+    errs: runHole.issues.filter((i) => i.level === 'error').map((i) => i.message),
+  };
+
   return out;
 })()`);
   } catch (e) {
@@ -968,6 +1005,28 @@ check('编辑指令实时解析出「通孔」改动', /通孔/.test(ai.editPrev
 check('点「应用」后孔生效（体积 ≈ 43978.76）',
   ai.editDialogClosed === true && ai.afterEditFeatures === 2 && near(ai.afterEditVolume, 48000 - Math.PI * 64 * 20, 3),
   `closed=${ai.editDialogClosed} n=${ai.afterEditFeatures} vol=${ai.afterEditVolume.toFixed(2)}`);
+
+// --- G5. 异型孔 + 弹簧 ---
+for (const s of ai.extra) {
+  console.log(`    端到端 ${s.text.slice(0, 26).padEnd(28)} 体积=${s.volume.toFixed(2).padStart(10)}  ${s.features} 特征`);
+}
+check('AI「长方体 + Φ8通孔 + 沉头Φ14深3」→ 23186.33',
+  ai.extra[0].features === 2 && ai.extra[0].errs.length === 0 &&
+    near(ai.extra[0].volume, 24000 - (Math.PI * 16 * 10 + Math.PI * (49 - 16) * 3), 3),
+  `vol=${ai.extra[0].volume.toFixed(2)} err=${ai.extra[0].errs.join(';') || '无'}`);
+check('AI「长方体 + Φ8通孔 + 埋头Φ12深3」→ 23409.38',
+  ai.extra[1].features === 2 && ai.extra[1].errs.length === 0 &&
+    near(ai.extra[1].volume, 24000 - (Math.PI * 16 * 10 + (Math.PI * 3 / 3 * (16 + 4 * 6 + 36) - Math.PI * 16 * 3)), 3),
+  `vol=${ai.extra[1].volume.toFixed(2)} err=${ai.extra[1].errs.join(';') || '无'}`);
+const springExp = Math.PI * 1 * 1 * (8 * Math.hypot(2 * Math.PI * 10, 5));
+check('AI「弹簧」→ 体积 ≈ π·r²·螺旋长（1% 内）',
+  ai.extra[2].features === 1 && ai.extra[2].errs.length === 0 &&
+    Math.abs(ai.extra[2].volume - springExp) / springExp <= 0.01,
+  `vol=${ai.extra[2].volume.toFixed(2)} 期望≈${springExp.toFixed(2)}`);
+check('编辑模式加沉头孔（含孔细节子句回填）→ 23186.33',
+  ai.extraHole.features === 2 && ai.extraHole.changes === 1 && ai.extraHole.errs.length === 0 &&
+    near(ai.extraHole.volume, 24000 - (Math.PI * 16 * 10 + Math.PI * (49 - 16) * 3), 3),
+  `n=${ai.extraHole.features} vol=${ai.extraHole.volume.toFixed(2)} err=${ai.extraHole.errs.join(';') || '无'}`);
 
 ws.close();
 cleanup();

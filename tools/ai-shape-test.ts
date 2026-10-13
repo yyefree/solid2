@@ -194,5 +194,56 @@ console.log('\n【E. 编辑现有模型：追加 / 改尺寸 / 删除】');
 }
 
 // ============================================================
+console.log('\n【F. 异型孔（柱形沉头 / 锥形埋头）】');
+{
+  // 柱形沉头：主孔 Φ8 通 + 沉头 Φ14 深 3
+  //   挖掉 = π·4²·10 + π·(7²−4²)·3 = 160π + 99π = 259π
+  const cb = await build('60x40x10 的长方体，中心开Φ8的通孔，沉头直径14深3');
+  const cbExp = 24000 - (PI * 16 * 10 + PI * (49 - 16) * 3);
+  check('柱形沉头孔无内核错误', cb.errors.length === 0, cb.errors.join('; '));
+  check('柱形沉头孔体积 = 23186.33', near(cb.vol, cbExp, 3), `= ${cb.vol.toFixed(2)} 期望 ${cbExp.toFixed(2)}`);
+
+  // 锥形埋头：主孔 Φ8 通 + 圆台 R4→R6 高 3（与主孔重叠部分要扣掉）
+  //   挖掉 = π·16·10 + (π·3/3·(16+24+36) − π·16·3) = 160π + 28π = 188π
+  const cs = await build('60x40x10 的长方体，中心开Φ8的通孔，埋头直径12深3');
+  const csExp = 24000 - (PI * 16 * 10 + (PI * 3 / 3 * (16 + 4 * 6 + 36) - PI * 16 * 3));
+  check('锥形埋头孔无内核错误', cs.errors.length === 0, cs.errors.join('; '));
+  check('锥形埋头孔体积 = 23409.38', near(cs.vol, csExp, 3), `= ${cs.vol.toFixed(2)} 期望 ${csExp.toFixed(2)}`);
+
+  // 盲孔 + 沉头：深度只算主孔，沉头另外扣
+  const blind = await build('60x40x10 的长方体，中心开Φ8的盲孔深6，沉头直径14深3');
+  const blindExp = 24000 - (PI * 16 * 6 + PI * (49 - 16) * 3);
+  check('盲孔 + 沉头 = 23186.33', near(blind.vol, blindExp, 3), `= ${blind.vol.toFixed(2)} 期望 ${blindExp.toFixed(2)}`);
+}
+
+// ============================================================
+console.log('\n【G. 弹簧】');
+{
+  const R = 10, wireR = 1, pitch = 5, turns = 8;
+  const L = turns * Math.hypot(2 * PI * R, pitch);
+  const exp = PI * wireR * wireR * L;
+
+  const r = await build('中径20线径2螺距5圈数8的弹簧');
+  check('弹簧无内核错误', r.errors.length === 0, r.errors.join('; '));
+  check('弹簧特征数 = 1', r.features === 1, `n=${r.features}`);
+  check('弹簧体积 ≈ π·r²·螺旋长（1% 内）', Math.abs(r.vol - exp) / exp <= 0.01, `= ${r.vol.toFixed(2)} 期望 ${exp.toFixed(2)}`);
+
+  const left = await build('中径20线径2螺距5圈数8的左旋弹簧');
+  check('左旋弹簧同样成立', left.errors.length === 0 && Math.abs(left.vol - exp) / exp <= 0.01, `= ${left.vol.toFixed(2)} 期望 ${exp.toFixed(2)}`);
+
+  const taper = await build('中径20线径2螺距5圈数8锥度15的弹簧');
+  check('锥形弹簧求值成功', taper.errors.length === 0, taper.errors.join('; '));
+  check('锥形弹簧体积明显大于等参数圆柱弹簧（半径沿轴增大 → 螺旋更长）', taper.vol > r.vol * 1.2,
+    `${taper.vol.toFixed(2)} > ${(r.vol * 1.2).toFixed(2)}`);
+
+  // 弹簧坐在长方体顶面（不相交，体积应相加）
+  const combo = await build('60x40x10 的长方体，上面加一个中径20线径2螺距5圈数8的弹簧');
+  const comboExp = 24000 + exp;
+  check('长方体 + 顶部弹簧无内核错误', combo.errors.length === 0, combo.errors.join('; '));
+  check('长方体 + 顶部弹簧 ≈ 24000 + 弹簧体积（3% 内）', Math.abs(combo.vol - comboExp) / comboExp <= 0.03,
+    `= ${combo.vol.toFixed(2)} 期望 ${comboExp.toFixed(2)}`);
+}
+
+// ============================================================
 console.log(`\nAI 几何验证：${pass} 通过 / ${fail} 失败（共 ${pass + fail} 项）`);
 process.exit(fail ? 1 : 0);
