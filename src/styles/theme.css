@@ -27,6 +27,7 @@
   --warn: #d98a1f;
 
   --h-menu: 28px;
+  --h-std: 30px; /* Standard 工具栏（菜单栏下方一行） */
   --h-ribbon-tabs: 30px;
   --h-ribbon: 96px;
   --w-left: 268px;
@@ -176,10 +177,13 @@ textarea {
   margin: 16px 0 8px;
 }
 
-/* ---------- 应用框架 ---------- */
+/* ---------- 应用框架 ----------
+   行序必须与 main.ts 里 appRoot 的子元素顺序一一对应：
+   menubar → menubar-std(Standard 工具栏) → ribbon-tabs → ribbon → main → statusbar。
+   少一行就会整列错位：main 会被挤进状态栏行，图形区塌成 24px 细条。 */
 .app {
   display: grid;
-  grid-template-rows: var(--h-menu) var(--h-ribbon-tabs) var(--h-ribbon) 1fr var(--h-status);
+  grid-template-rows: var(--h-menu) var(--h-std) var(--h-ribbon-tabs) var(--h-ribbon) 1fr var(--h-status);
   height: 100%;
 }
 

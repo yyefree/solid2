@@ -339,6 +339,30 @@ await evaluate(`[...document.querySelectorAll('.rtab')].find(x => x.textContent.
 console.log('\n▶ B. 内核加载');
 const ready = await waitFor('window.__solid2.app.kernelReady === true', TIMEOUT, '内核就绪');
 check('Worker 内核在浏览器中加载完成', ready);
+
+// 骨架布局回归（曾经因 .app 少一行 grid row 整列错位：
+// main 被挤进状态栏行，图形区塌成 24px 细条 —— 功能断言全绿但草图点击全乱。
+// .app 启动时带 hidden，需等启动屏摘除后再量几何。）
+await waitFor("!document.querySelector('.app')?.classList.contains('hidden')", 15000, '界面显示');
+const layout = await evaluate(`(() => {
+  const tops = {};
+  for (const [k, sel] of [['menubar', '.menubar'], ['std', '.menubar-std'],
+    ['ribbonTabs', '.ribbon-tabs'], ['ribbon', '.ribbon'],
+    ['main', '.main'], ['statusbar', '.statusbar']]) {
+    const e = document.querySelector(sel);
+    tops[k] = e ? e.getBoundingClientRect().top : -1;
+  }
+  const c = document.querySelector('.viewport canvas');
+  const r = c.getBoundingClientRect();
+  return { tops, canvas: { w: r.width, h: r.height }, winH: window.innerHeight };
+})()`);
+check('骨架六行自上而下顺序正确（menubar→std→ribbon-tabs→ribbon→main→statusbar）',
+  ['menubar', 'std', 'ribbonTabs', 'ribbon', 'main', 'statusbar']
+    .every((k, i, a) => i === 0 || layout.tops[a[i - 1]] < layout.tops[k]),
+  Object.entries(layout.tops).map(([k, v]) => `${k}:${v}`).join(' < '));
+check('图形区（canvas）高度占窗口 40% 以上',
+  layout.canvas.h > layout.winH * 0.4,
+  `${layout.canvas.w.toFixed(0)}×${layout.canvas.h.toFixed(0)} / 窗口高 ${layout.winH}`);
 if (!ready) {
   const st = await evaluate(`document.querySelector('.statusbar')?.textContent ?? ''`, { awaitPromise: false });
   console.log(`    状态栏: ${st}`);
