@@ -1,9 +1,11 @@
 /**
  * 特征管理器（FeatureManager 设计树，SolidWorks 风格）。
  *
- * 结构自上而下：文档根 ▸ 注解 ▸ 材质 ▸（实体）▸ 历史特征（草图/拉伸…）▸ 基准面（前/上/右）▸ 原点。
- * 文件夹可折叠；特征节点支持双击编辑、右键菜单。
- * 保留 `.tree` / `.tnode` / `.label` / `.ic` 类名，兼容右键「展开所有」逻辑。
+ * 结构自上而下（与 SolidWorks 零件树一致）：
+ *   文档根 ▸ 注解 ▸ 材质 ▸（实体）▸ 基准面（前/上/右）▸ 草图/特征（按创建顺序平铺为根的直接子节点）▸ 原点。
+ *   草图与特征不再塞进「历史特征」文件夹，而是像 SolidWorks 那样按时间顺序直接挂在零件根下。
+ *   文件夹可折叠；特征节点支持双击编辑、右键菜单。
+ *   保留 `.tree` / `.tnode` / `.label` / `.ic` 类名，兼容右键「展开所有」逻辑。
  */
 import { el, clear } from './dom';
 import { icon } from './icons';
@@ -21,10 +23,10 @@ export function buildFeatureTree(app: App, host: HTMLElement): void {
     const root = folder('零件1', 'part', [], false);
     tree.appendChild(root.node);
 
-    // 注解
-    root.children.appendChild(folder('注解', 'annotation2', [], true).node);
+    // 注解（可折叠文件夹，默认空）
+    root.children.appendChild(folder('注解', 'annotation2', [], false).node);
     // 材质
-    root.children.appendChild(folder('材质 <未指定>', 'material', [], false).node);
+    root.children.appendChild(leaf('材质 <未指定>', 'material'));
 
     // 实体（有实体时）
     const solids = app.modelSummary().solids;
@@ -36,7 +38,18 @@ export function buildFeatureTree(app: App, host: HTMLElement): void {
       root.children.appendChild(bodies.node);
     }
 
-    // 历史特征
+    // 基准面（前/上/右）
+    const planes = folder('基准面', 'plane', [], false);
+    for (const [name, ic] of [
+      ['前视基准面', 'front'],
+      ['上视基准面', 'top'],
+      ['右视基准面', 'right'],
+    ] as [string, string][]) {
+      planes.children.appendChild(leaf(name, ic));
+    }
+    root.children.appendChild(planes.node);
+
+    // 草图 / 特征：按创建顺序直接挂在零件根下（SolidWorks 风格，不再用「历史特征」文件夹）
     const feats = app.doc.features;
     for (const f of feats) {
       const isSketch = f.type === 'sketch';
@@ -52,9 +65,12 @@ export function buildFeatureTree(app: App, host: HTMLElement): void {
         el('span', { class: 'label', text: f.name }),
         f.error ? el('span', { class: 'badge', text: '!' }) : null
       );
+      node.addEventListener('click', () => {
+        app.selectFeature(f.id);
+      });
       node.addEventListener('dblclick', () => {
         if (isSketch && app.mode !== 'sketch') app.enterSketch(f as never);
-        else notify.info(`已选中「${f.name}」，可在右侧属性面板修改参数`);
+        else notify.info(`已选中「${f.name}」，可在左侧属性管理器修改参数`);
       });
       node.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -66,17 +82,6 @@ export function buildFeatureTree(app: App, host: HTMLElement): void {
     if (!feats.length) {
       root.children.appendChild(el('div', { class: 'hint', text: '特征树为空。先创建草图，再添加拉伸/旋转等特征。' }));
     }
-
-    // 基准面
-    const planes = folder('基准面', 'plane', [], false);
-    for (const [name, ic] of [
-      ['前视基准面', 'front'],
-      ['上视基准面', 'top'],
-      ['右视基准面', 'right'],
-    ] as [string, string][]) {
-      planes.children.appendChild(leaf(name, ic));
-    }
-    root.children.appendChild(planes.node);
 
     // 原点
     root.children.appendChild(leaf('原点', 'origin'));

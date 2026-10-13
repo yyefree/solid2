@@ -54,7 +54,9 @@ export type AppEvent =
   /** 视图状态变化（投影模式 / 布景 / 剖面 / 显示样式）—— 供参考三重轴与工具栏刷新 */
   | 'view'
   /** 命令激活状态变化 —— 供确认角刷新 */
-  | 'command';
+  | 'command'
+  /** 设计树中选中了某个特征（供属性管理器接管显示并切换左面板选项卡） */
+  | 'feature';
 
 export interface StatusInfo {
   text: string;
@@ -68,6 +70,8 @@ export class App {
   shapeView: ShapeView | null = null;
   mode: AppMode = 'model';
   selection: Selection = { faces: [], edges: [] };
+  /** 设计树中当前选中的特征 id（供属性管理器显示）—— SolidWorks「属性管理器」接管选中的特征 */
+  selectedFeatureId: string | null = null;
 
   // ---- 草图 ----
   activeSketchFeature: SketchFeature | null = null;
@@ -175,6 +179,12 @@ export class App {
 
   emit(...evts: AppEvent[]): void {
     for (const e of evts) for (const cb of this.listeners.get(e) ?? []) cb();
+  }
+
+  /** 在设计树中选中一个特征（SolidWorks：单击特征即在其「属性管理器」中显示参数） */
+  selectFeature(id: string | null): void {
+    this.selectedFeatureId = id;
+    this.emit('feature', 'props');
   }
 
   setStatus(text: string, kind: StatusInfo['kind'] = 'ok', detail?: string): void {

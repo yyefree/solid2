@@ -1590,52 +1590,68 @@ select.inp {
   position: absolute;
   top: 10px;
   right: 12px;
-  width: 116px;
-  height: 116px;
+  width: 150px;
+  height: 150px;
   z-index: 21;
 }
 .vc-svg {
   display: block;
 }
+.vc-compass text {
+  user-select: none;
+}
 
-/* ---------- 确认角（✓ / ✗） ---------- */
+/* ---------- 确认角（✓ / ✗）—— SolidWorks 风格：图形区右下角小圆角框 ---------- */
 .conf-corner {
   position: absolute;
-  top: 132px;
+  bottom: 14px;
   right: 14px;
   z-index: 25;
   display: flex;
-  gap: 4px;
+  gap: 0;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.conf-corner.show {
+  opacity: 1;
+  pointer-events: auto;
 }
 .cc-btn {
   width: 30px;
   height: 30px;
-  border-radius: 4px;
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 16px;
   font-weight: 700;
-  box-shadow: var(--shadow-1);
-  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+}
+.cc-btn:first-child {
+  border-left: none;
 }
 .cc-btn.cc-ok {
-  background: #fff;
   color: var(--ok);
 }
 .cc-btn.cc-ok:hover {
   background: var(--ok);
   color: #fff;
-  border-color: var(--ok);
 }
 .cc-btn.cc-no {
-  background: #fff;
   color: var(--danger);
 }
 .cc-btn.cc-no:hover {
   background: var(--danger);
   color: #fff;
-  border-color: var(--danger);
 }
 
 /* ---------- 状态栏（新增右侧区） ---------- */
@@ -1693,6 +1709,99 @@ select.inp {
 .sb-rebuild:hover {
   background: var(--bg-hover);
   color: var(--accent-dark);
+}
+
+/* ---------- 任务窗格（右侧竖排选项卡） ---------- */
+.panel-right.taskpane {
+  flex-direction: row;
+  overflow: hidden;
+}
+.tp-content {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+  min-width: 0;
+}
+.tp-strip {
+  flex: 0 0 34px;
+  width: 34px;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel-alt);
+  display: flex;
+  flex-direction: column;
+}
+.tp-tab {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--border);
+}
+.tp-tab:hover {
+  background: var(--bg-hover);
+}
+.tp-tab.active {
+  color: var(--accent-dark);
+  border-left-color: var(--accent);
+  background: var(--bg-panel);
+}
+.tp-resources {
+  gap: 8px;
+}
+.tp-logo {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: var(--accent-dark);
+}
+.tp-res-h {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 4px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 3px;
+}
+.tp-links {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tp-link {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 3px 4px;
+  border-bottom: 1px dotted var(--border);
+}
+.kv-row .k {
+  color: var(--text-dim);
+}
+.kv-row .v {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+/* ---------- 视图立方罗盘 ---------- */
+.vc-compass circle,
+.vc-compass line {
+  pointer-events: none;
+}
+.vc-compass > circle:last-child {
+  pointer-events: auto;
 }
 
 /* ---------- 特征树（文件夹 / 折叠） ---------- */

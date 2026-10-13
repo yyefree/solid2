@@ -1,19 +1,22 @@
 /**
- * 视图立方体（SolidWorks View Orientation Cube）—— 右上角。
+ * 视图立方体（SolidWorks View Orientation Cube）+ 指北罗盘（Compass）。
+ * 右上角。
  *
  * 与 SolidWorks 一致：
  *   - 立方体随当前相机实时旋转，三个朝向观察者的面可见；
  *   - 点击可见面 → 标准正交视图（前/后/左/右/上/下）；
  *   - 点击棱 / 角 → 等轴测视图；
- *   - 下方「主页」按钮 → 回到等轴测默认视图。
+ *   - 下方「主页」按钮 → 回到等轴测默认视图；
+ *   - 外围叠加 **指北罗盘**（N/E/S/W + 30° 刻度环），拖动罗盘可绕竖直轴旋转模型。
  */
 import type { App } from '../app/app';
 import * as THREE from 'three';
 
-const SIZE = 116; // svg 边长
+const SIZE = 150; // svg 画布边长
 const CX = SIZE / 2;
-const CY = SIZE / 2 + 4;
+const CY = 70; // 立方体中心（上方，给底部罗盘/主页留空间）
 const SCALE = 30; // 立方体半边长在屏幕上的像素
+const R = 60; // 罗盘半径
 
 // 立方体 8 个角（单位立方体，居中于原点）
 const C: [number, number, number][] = [
@@ -64,6 +67,67 @@ export function buildViewcube(app: App, host: HTMLElement): void {
   const fwd = new THREE.Vector3();
   const tmpN = new THREE.Vector3();
   const tmpP = new THREE.Vector3();
+
+  // ---------------- 指北罗盘（屏幕固定） ----------------
+  const compass = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  compass.setAttribute('class', 'vc-compass');
+  const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  ring.setAttribute('cx', String(CX));
+  ring.setAttribute('cy', String(CY));
+  ring.setAttribute('r', String(R));
+  ring.setAttribute('fill', 'none');
+  ring.setAttribute('stroke', 'rgba(120,140,160,0.55)');
+  ring.setAttribute('stroke-width', '1');
+  compass.appendChild(ring);
+
+  // 30° 刻度 + N/E/S/W 标签
+  for (let a = 0; a < 360; a += 30) {
+    const rad = (a * Math.PI) / 180;
+    const cardinal = a % 90 === 0;
+    const inner = cardinal ? R - 7 : R - 4;
+    const x1 = CX + Math.sin(rad) * inner;
+    const y1 = CY - Math.cos(rad) * inner;
+    const x2 = CX + Math.sin(rad) * R;
+    const y2 = CY - Math.cos(rad) * R;
+    const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    tick.setAttribute('x1', String(x1));
+    tick.setAttribute('y1', String(y1));
+    tick.setAttribute('x2', String(x2));
+    tick.setAttribute('y2', String(y2));
+    tick.setAttribute('stroke', cardinal ? 'rgba(90,110,130,0.9)' : 'rgba(120,140,160,0.5)');
+    tick.setAttribute('stroke-width', cardinal ? '1.6' : '1');
+    compass.appendChild(tick);
+  }
+  const dirs: [string, number][] = [
+    ['N', 0], ['E', 90], ['S', 180], ['W', 270],
+  ];
+  for (const [t, a] of dirs) {
+    const rad = (a * Math.PI) / 180;
+    const lr = R + 9;
+    const x = CX + Math.sin(rad) * lr;
+    const y = CY - Math.cos(rad) * lr;
+    const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txt.setAttribute('x', String(x));
+    txt.setAttribute('y', String(y + 3));
+    txt.setAttribute('text-anchor', 'middle');
+    txt.setAttribute('font-size', '8');
+    txt.setAttribute('font-weight', '700');
+    txt.setAttribute('fill', '#3a4756');
+    txt.setAttribute('pointer-events', 'none');
+    txt.textContent = t;
+    compass.appendChild(txt);
+  }
+  // 罗盘拖拽热区（透明粗环）
+  const compassHit = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  compassHit.setAttribute('cx', String(CX));
+  compassHit.setAttribute('cy', String(CY));
+  compassHit.setAttribute('r', String(R));
+  compassHit.setAttribute('fill', 'transparent');
+  compassHit.setAttribute('stroke', 'transparent');
+  compassHit.setAttribute('stroke-width', '16');
+  compassHit.style.cursor = 'grab';
+  compass.appendChild(compassHit);
+  svg.appendChild(compass);
 
   // 每条棱一个透明粗描边，作为点击热区（等轴测）
   const edgeHits = EDGES.map(() => {
@@ -185,6 +249,51 @@ export function buildViewcube(app: App, host: HTMLElement): void {
   };
 
   home.onclick = () => app.setView('iso');
+
+  // ---------------- 罗盘拖拽旋转 ----------------
+  const _v = new THREE.Vector3();
+  const orbit = (dAz: number, dPol: number) => {
+    const cam = app.viewport.camera;
+    const ctr = app.viewport.controls.target;
+    _v.copy(cam.position).sub(ctr);
+    const sph = new THREE.Spherical().setFromVector3(_v);
+    sph.theta += dAz;
+    sph.phi = Math.max(0.05, Math.min(Math.PI - 0.05, sph.phi + dPol));
+    _v.setFromSpherical(sph);
+    cam.position.copy(ctr).add(_v);
+    cam.lookAt(ctr);
+    app.viewport.controls.update();
+  };
+
+  let dragging = false;
+  let lastAng = 0;
+  const angleAt = (e: PointerEvent) => {
+    const r = svg.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * SIZE;
+    const py = ((e.clientY - r.top) / r.height) * SIZE;
+    return Math.atan2(py - CY, px - CX);
+  };
+  compassHit.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragging = true;
+    lastAng = angleAt(e);
+    compassHit.style.cursor = 'grabbing';
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const ang = angleAt(e);
+    let d = ang - lastAng;
+    if (d > Math.PI) d -= 2 * Math.PI;
+    if (d < -Math.PI) d += 2 * Math.PI;
+    lastAng = ang;
+    orbit(-d, 0);
+  });
+  window.addEventListener('pointerup', () => {
+    if (!dragging) return;
+    dragging = false;
+    compassHit.style.cursor = 'grab';
+  });
 
   update();
   app.viewport.controls.addEventListener('change', update);

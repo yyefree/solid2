@@ -315,7 +315,7 @@ function editFeature(app: App, id: string): void {
     app.enterSketch(f as never);
     return;
   }  app.emit('props');
-  notify.info(`已选中「${f.name}」，可在右侧属性面板修改参数`);
+  notify.info(`已选中「${f.name}」，可在左侧属性管理器修改参数`);
 }
 
 function renameFeature(app: App, id: string): void {

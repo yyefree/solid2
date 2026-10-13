@@ -22,7 +22,8 @@ export function buildPropertyPanel(app: App, host: HTMLElement): void {
 }
 
 function renderModelProps(app: App, host: HTMLElement) {
-  const sel = app.doc.features.length > 0 ? app.doc.features[app.doc.features.length - 1] : null;
+  let sel = app.selectedFeatureId ? app.doc.getFeature(app.selectedFeatureId) ?? null : null;
+  if (!sel && app.doc.features.length > 0) sel = app.doc.features[app.doc.features.length - 1];
   if (!sel) {
     host.appendChild(el('div', { class: 'hint', text: '在左侧特征树中选择一个特征以编辑属性' }));
     return;

@@ -13,6 +13,7 @@ import { App } from './app/app';
 import { renderRibbon } from './ui/ribbon';
 import { buildFeatureTree } from './ui/featuretree';
 import { buildPropertyPanel } from './ui/propertypanel';
+import { buildTaskPane, buildConfigPanel } from './ui/taskpane';
 import { buildMenubar } from './ui/menubar';
 import { buildStatusbar } from './ui/statusbar';
 import { buildViewcube } from './ui/viewcube';
@@ -45,18 +46,17 @@ async function boot() {
 
     const leftPanel = el('div', { class: 'panel panel-left' });
     const leftTabs = el('div', { class: 'panel-tabs' });
-    const leftBody = el('div', { class: 'panel-body' });
-    leftPanel.append(leftTabs, leftBody);
+    const leftBodyTree = el('div', { class: 'panel-body' });
+    const leftBodyProp = el('div', { class: 'panel-body' });
+    const leftBodyCfg = el('div', { class: 'panel-body' });
+    leftPanel.append(leftTabs, leftBodyTree, leftBodyProp, leftBodyCfg);
 
     const viewportWrap = el('div', { class: 'viewport-wrap' });
     const viewportEl = el('div', { class: 'viewport' });
     const drawingWrap = el('div', { class: 'drawing-wrap hidden' });
     viewportWrap.append(viewportEl, drawingWrap);
 
-    const rightPanel = el('div', { class: 'panel panel-right' });
-    const rightTabs = el('div', { class: 'panel-tabs' });
-    const rightBody = el('div', { class: 'panel-body' });
-    rightPanel.append(rightTabs, rightBody);
+    const rightPanel = el('div', { class: 'panel panel-right taskpane' });
 
     mainEl.append(leftPanel, viewportWrap, rightPanel);
     const statusbarEl = el('div', { class: 'statusbar' });
@@ -64,15 +64,41 @@ async function boot() {
     appRoot.append(menubarEl, ribbonTabsEl, ribbonPanelEl, mainEl, statusbarEl);
     appHost.appendChild(appRoot);
 
-    // ---------- 面板标签 ----------
-    leftTabs.appendChild(el('button', { class: 'ptab active', text: '特征树' }));
-    leftTabs.appendChild(el('button', { class: 'ptab', text: '配置' }));
-    rightTabs.appendChild(el('button', { class: 'ptab active', text: '属性' }));
-    rightTabs.appendChild(el('button', { class: 'ptab', text: '外观' }));
+    // ---------- 左侧面板选项卡：特征管理器 / 属性管理器 / 配置管理器 ----------
+    const leftTabDefs = [
+      { id: 'tree', label: '特征管理器' },
+      { id: 'prop', label: '属性管理器' },
+      { id: 'cfg', label: '配置管理器' },
+    ];
+    const leftBodies: Record<string, HTMLElement> = {
+      tree: leftBodyTree,
+      prop: leftBodyProp,
+      cfg: leftBodyCfg,
+    };
+    let leftActive = 'tree';
+    const setLeftTab = (id: string) => {
+      leftActive = id;
+      for (const t of leftTabDefs) {
+        const btn = leftTabs.querySelector(`[data-ltab="${t.id}"]`) as HTMLElement | null;
+        if (btn) btn.classList.toggle('active', t.id === id);
+      }
+      for (const k of Object.keys(leftBodies)) leftBodies[k].style.display = k === id ? '' : 'none';
+    };
+    for (const t of leftTabDefs) {
+      leftTabs.appendChild(
+        el('button', { class: `ptab ${t.id === 'tree' ? 'active' : ''}`, type: 'button', text: t.label, dataset: { ltab: t.id }, onClick: () => setLeftTab(t.id) })
+      );
+    }
+    setLeftTab('tree');
 
     // ---------- 初始化 App ----------
     const app = new App(viewportEl);
     app.drawingHost = drawingWrap;
+
+    // 在设计树选中特征时，自动切到「属性管理器」（SolidWorks 行为）
+    app.on('feature', () => {
+      if (leftActive !== 'prop') setLeftTab('prop');
+    });
 
     // 开发模式：暴露调试句柄，供浏览器端到端冒烟测试驱动真实 Worker 内核。
     // 生产构建下 import.meta.env.DEV 为 false，此分支会被 Vite 静态消除（不进产物）。
@@ -83,8 +109,10 @@ async function boot() {
     // ---------- 挂载 UI ----------
     buildMenubar(app, menubarEl);
     renderRibbon(app, ribbonTabsEl, ribbonPanelEl);
-    buildFeatureTree(app, leftBody);
-    buildPropertyPanel(app, rightBody);
+    buildFeatureTree(app, leftBodyTree);
+    buildPropertyPanel(app, leftBodyProp);
+    buildConfigPanel(app, leftBodyCfg);
+    buildTaskPane(app, rightPanel);
     buildStatusbar(app, statusbarEl);
 
     const viewcubeEl = el('div', { class: 'viewcube' });

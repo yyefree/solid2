@@ -421,7 +421,7 @@ export function ribbonController(): RibbonController | null {
 
 export function renderRibbon(app: App, tabsHost: HTMLElement, panelHost: HTMLElement): RibbonController {
   const tabs = buildTabs();
-  let activeTab = 'sketch';
+  let activeTab = 'features';
 
   const allCommands = new Map<CmdId, { btn: RButton; tabId: string }>();
   for (const t of tabs) {
