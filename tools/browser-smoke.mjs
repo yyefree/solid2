@@ -914,12 +914,16 @@ const ai = await (async () => {
   out.afterEditFeatures = app.doc.features.length;
   out.editDialogClosed = !document.querySelector('.modal');
 
-  // --- G5. 异型孔 + 弹簧：端到端建模 ---
+  // --- G5. 异型孔 + 弹簧 + 变换/曲线：端到端建模 ---
   out.extra = [];
   const extraCases = [
     '60x40x10 的长方体，中心开Φ8的通孔，沉头直径14深3',
     '60x40x10 的长方体，中心开Φ8的通孔，埋头直径12深3',
     '中径20线径2螺距5圈数8的弹簧',
+    '20x20x20 的长方体，整体放大2倍',
+    '长40宽30高10的板，右边加一个半径5高10的圆柱，沿右视基准面镜像',
+    '涡状线起始半径12螺距6圈数4厚度2.5宽度5',
+    '60x40x10 的长方体，侧面拔模5度',
   ];
   for (const text of extraCases) {
     const { compiled } = await ai.interpret(text);
@@ -1027,6 +1031,25 @@ check('编辑模式加沉头孔（含孔细节子句回填）→ 23186.33',
   ai.extraHole.features === 2 && ai.extraHole.changes === 1 && ai.extraHole.errs.length === 0 &&
     near(ai.extraHole.volume, 24000 - (Math.PI * 16 * 10 + Math.PI * (49 - 16) * 3), 3),
   `n=${ai.extraHole.features} vol=${ai.extraHole.volume.toFixed(2)} err=${ai.extraHole.errs.join(';') || '无'}`);
+
+// --- G6. 变换与曲线：缩放 / 镜像 / 涡状线 / 拔模 ---
+check('AI「整体放大2倍」→ 20³ × 8 = 64000',
+  ai.extra[3].features === 2 && ai.extra[3].errs.length === 0 && near(ai.extra[3].volume, 64000, 1),
+  `vol=${ai.extra[3].volume.toFixed(2)} err=${ai.extra[3].errs.join(';') || '无'}`);
+check('AI「板 + 右侧圆柱 + 右视镜像」→ 13570.80',
+  ai.extra[4].features === 3 && ai.extra[4].errs.length === 0 &&
+    near(ai.extra[4].volume, 40 * 30 * 10 + 2 * Math.PI * 25 * 10, 1),
+  `vol=${ai.extra[4].volume.toFixed(2)} err=${ai.extra[4].errs.join(';') || '无'}`);
+check('AI「涡状线」→ 带材多边形面积 × 宽度 = 7501.60',
+  ai.extra[5].features === 1 && ai.extra[5].errs.length === 0 && near(ai.extra[5].volume, 7501.6, 40),
+  `vol=${ai.extra[5].volume.toFixed(2)} err=${ai.extra[5].errs.join(';') || '无'}`);
+{
+  const t = Math.tan((5 * Math.PI) / 180);
+  const draftExp = 24000 + 100 * t * 100 + (4 / 3) * t * t * 1000;
+  check('AI「侧面拔模5度」→ 线性锥化解析值 24885.09',
+    ai.extra[6].features === 2 && ai.extra[6].errs.length === 0 && near(ai.extra[6].volume, draftExp, 1),
+    `vol=${ai.extra[6].volume.toFixed(2)} 期望=${draftExp.toFixed(2)} err=${ai.extra[6].errs.join(';') || '无'}`);
+}
 
 ws.close();
 cleanup();

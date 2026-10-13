@@ -137,6 +137,20 @@ const OP_WORDS: [string, string][] = [
   ['弹簧', 'spring'],
   ['压簧', 'spring'],
   ['拉簧', 'spring'],
+  ['涡卷弹簧', 'spiral'],
+  ['涡状线', 'spiral'],
+  ['涡卷线', 'spiral'],
+  ['阿基米德螺线', 'spiral'],
+  ['螺旋线', 'spiral'],
+  ['涡卷', 'spiral'],
+  ['发条', 'spiral'],
+  ['拔模角', 'draft'],
+  ['拔模', 'draft'],
+  ['镜像', 'mirror'],
+  ['等比缩放', 'scale'],
+  ['缩放', 'scale'],
+  ['放大', 'scale'],
+  ['缩小', 'scale'],
   ['阵列', 'linearPattern'],
 ];
 
@@ -148,11 +162,15 @@ const ROLE_WORDS: [string, string][] = [
   ['埋头深度', 'sinkDepth'],
   ['沉头深', 'boreDepth'],
   ['埋头深', 'sinkDepth'],
+  ['起始半径', 'startRadius'],
+  ['拔模角', 'draftAngle'],
   ['直径', 'diameter'],
   ['半径', 'radius'],
   ['深度', 'depth'],
   ['高度', 'height'],
   ['厚度', 'thickness'],
+  ['长度', 'length'],
+  ['宽度', 'width'],
   ['边长', 'side'],
   ['中径', 'meanDia'],
   ['外径', 'outerDia'],
@@ -344,6 +362,28 @@ function findDimensionGroups(masked: string, hits: NumHit[]): NumHit[][] {
 // 5. 子句解析
 // ============================================================
 
+/** 纯修饰词子句（「反向」「左旋」被逗号切成独立子句时静默吸收，不当成建模动作） */
+const MODIFIER_WORDS = ['反向', '向外', '向内', '外扩', '内缩', '左旋', '右旋', '对称'];
+
+/**
+ * 把「修饰词子句」回填到上一个动作上（如「…拔模3度，反向」「…弹簧，左旋」）。
+ * 返回 true 表示该子句已被吸收。
+ */
+export function applyModifierTo(op: AiOp, clause: string): boolean {
+  const rev = hasAny(clause, ['反向', '向外', '外扩']);
+  if (rev && op.kind === 'draft') {
+    op.reverse = true;
+    return true;
+  }
+  const left = hasAny(clause, ['左旋']);
+  const right = hasAny(clause, ['右旋']);
+  if ((left || right) && (op.kind === 'spring' || op.kind === 'spiral')) {
+    op.handedness = left ? 'left' : 'right';
+    return true;
+  }
+  return false;
+}
+
 function placeOf(text: string): Placement {
   for (const [word, place] of PLACE_DICT) {
     if (text.includes(word)) return place as Placement;
@@ -427,6 +467,36 @@ function parseClause(ctx: ClauseCtx): { op?: AiOp; issue?: ParseIssue } {
       return parseSpring(clause, hits, hasPrior);
     }
 
+    if (opTag === 'spiral') {
+      return parseSpiral(clause, hits, hasPrior);
+    }
+
+    if (opTag === 'scale') {
+      return parseScale(clause);
+    }
+
+    if (opTag === 'mirror') {
+      return { op: { kind: 'mirror', source: clause, plane: mirrorPlaneOf(clause) } };
+    }
+
+    if (opTag === 'draft') {
+      const ang = draftAngleOf(clause, hits, bare);
+      if (!ang) {
+        return { issue: { clause, message: '拔模缺少角度（可写「侧面拔模5度」）', level: 'error' } };
+      }
+      if (ang >= 90) {
+        return { issue: { clause, message: `拔模角 ${ang}° 不合理（须在 0°~90° 之间）`, level: 'error' } };
+      }
+      return {
+        op: {
+          kind: 'draft',
+          source: clause,
+          angleDeg: ang,
+          reverse: hasAny(clause, ['反向', '向外', '外扩']),
+        },
+      };
+    }
+
     if (opTag === 'fillet' || opTag === 'chamfer') {
       const v = (byRole(hits, 'radius')[0] ?? byRole(hits, 'diameter')[0] / 2) || bare[0];
       if (!v) {
@@ -508,6 +578,7 @@ function parseClause(ctx: ClauseCtx): { op?: AiOp; issue?: ParseIssue } {
   // 有数字但没有可识别动作 —— 若是「上面」这类纯位置子句，静默忽略
   if (!hits.length && !clause.trim()) return {};
   if (!hits.length && PLACE_DICT.some(([w]) => clause.includes(w))) return {};
+  if (!hits.length && MODIFIER_WORDS.some((w) => clause.includes(w))) return {};
 
   return { issue: { clause, message: '没有识别出实体类型（如长方体/圆柱/球/孔/圆角）', level: 'warn' } };
 }
@@ -581,6 +652,124 @@ function parseSpring(
       place: placeOf(clause),
     },
   };
+}
+
+/**
+ * 涡状线（涡卷弹簧 / 发条）参数解析。
+ * 参数用「起始半径 / 螺距 / 圈数 / 厚度 / 宽度」描述，缺哪项就报哪项。
+ */
+function parseSpiral(
+  clause: string,
+  hits: NumHit[],
+  hasPrior: boolean
+): { op?: AiOp; issue?: ParseIssue } {
+  const startRadius = byRole(hits, 'startRadius')[0] ?? byRole(hits, 'radius')[0];
+  const pitch = byRole(hits, 'pitch')[0];
+  const turns = byRole(hits, 'turns')[0];
+  const thickness = byRole(hits, 'thickness')[0];
+  const width = byRole(hits, 'width')[0];
+
+  const missing: string[] = [];
+  if (!startRadius) missing.push('起始半径');
+  if (pitch === undefined) missing.push('螺距');
+  if (!turns) missing.push('圈数');
+  if (!thickness) missing.push('厚度');
+  if (!width) missing.push('宽度');
+  if (missing.length) {
+    return {
+      issue: {
+        clause,
+        message: `涡状线缺少参数：${missing.join('、')}（可写「涡状线起始半径12螺距6圈数4厚度2.5宽度5」）`,
+        level: 'error',
+      },
+    };
+  }
+
+  return {
+    op: {
+      kind: 'spiral',
+      source: clause,
+      startRadius: startRadius!,
+      pitch: pitch!,
+      turns: turns!,
+      thickness: thickness!,
+      width: width!,
+      handedness: hasAny(clause, ['左旋']) ? 'left' : 'right',
+      operation: boolOpOf(clause, hasPrior),
+      place: placeOf(clause),
+    },
+  };
+}
+
+/**
+ * 缩放（整体变换）解析。
+ *   - 「放大 1.5 倍」/「缩放 2 倍」/「放大到 2 倍」 → 统一系数
+ *   - 「缩小 2 倍」 → 1/2；「缩小一半」 → 0.5
+ *   - 「沿 X 放大 2 倍」 → 非均匀（只在该轴缩放）
+ */
+function parseScale(clause: string): { op?: AiOp; issue?: ParseIssue } {
+  const axis: 0 | 1 | 2 | null = hasAny(clause, ['沿x', 'x方向', 'x轴', '横向'])
+    ? 0
+    : hasAny(clause, ['沿y', 'y方向', 'y轴', '纵向'])
+      ? 1
+      : hasAny(clause, ['沿z', 'z方向', 'z轴', '竖向'])
+        ? 2
+        : null;
+
+  let factor: number | undefined;
+  if (/缩小(?:为|到)?一半/.test(clause)) {
+    factor = 0.5;
+  } else {
+    // 「放大到 2 倍」「缩小为 0.5 倍」—— 直接给目标系数
+    const toM = /(?:放大|缩小|缩放)(?:到|为)(\d+(?:\.\d+)?)/.exec(clause);
+    if (toM) factor = parseFloat(toM[1]);
+    else {
+      const shrinkM = /缩小(?:了)?(\d+(?:\.\d+)?)/.exec(clause);
+      if (shrinkM) factor = 1 / parseFloat(shrinkM[1]);
+      else {
+        const growM = /(?:放大|等比缩放|缩放)(?:了)?(\d+(?:\.\d+)?)/.exec(clause);
+        if (growM) factor = parseFloat(growM[1]);
+        else {
+          const coefM = /(?:缩放系数|比例)(\d+(?:\.\d+)?)/.exec(clause);
+          if (coefM) factor = parseFloat(coefM[1]);
+        }
+      }
+    }
+  }
+
+  if (factor === undefined || !Number.isFinite(factor) || factor <= 0) {
+    return { issue: { clause, message: '缩放缺少系数（可写「放大1.5倍」「缩小一半」）', level: 'error' } };
+  }
+
+  if (axis !== null) {
+    const factors: [number, number, number] = [1, 1, 1];
+    factors[axis] = factor;
+    return { op: { kind: 'scale', source: clause, factor, nonUniform: true, factors } };
+  }
+  return { op: { kind: 'scale', source: clause, factor } };
+}
+
+/**
+ * 镜像基准面判定。默认「右视」（YZ，法向 +X）—— 左右镜像最常见。
+ */
+function mirrorPlaneOf(clause: string): 'front' | 'right' | 'top' {
+  if (hasAny(clause, ['右视', '右侧', '右边', '左右', '侧面', '左视'])) return 'right';
+  if (hasAny(clause, ['上视', '俯视', '顶视', '上面', '上下', '水平'])) return 'top';
+  if (hasAny(clause, ['前视', '前面', '前后'])) return 'front';
+  return 'right';
+}
+
+/**
+ * 拔模角提取。
+ * ⚠️ 「拔模」后面可能直接跟「度」/「角度」，也可能夹着数字，这里统一用正则从原文取，
+ *    避免角色词被动作词遮罩影响。
+ */
+function draftAngleOf(clause: string, hits: NumHit[], bare: number[]): number | undefined {
+  const m = /拔模(?:角度|角|度数|度)?(\d+(?:\.\d+)?)/.exec(clause);
+  if (m) return parseFloat(m[1]);
+  const byRole = hits.find((h) => h.role === 'draftAngle' || h.role === 'angle');
+  if (byRole) return byRole.value;
+  return bare[0];
 }
 
 /**
@@ -755,6 +944,8 @@ export function parseText(raw: string): AiPlan {
   const issues: ParseIssue[] = [];
   /** 最近一个孔 —— 供「孔细节」子句回填 */
   let lastHole: AiHoleOp | null = null;
+  /** 最近一个动作 —— 供「修饰词」子句回填（反向 / 左旋…） */
+  let lastOp: AiOp | null = null;
 
   for (const clause of clauses) {
     const scan = scanClause(clause);
@@ -762,11 +953,14 @@ export function parseText(raw: string): AiPlan {
     if (r.op) {
       ops.push(r.op);
       lastHole = r.op.kind === 'hole' ? r.op : null;
+      lastOp = r.op;
     } else if (r.issue) {
       // 「沉头直径14深6」这类只补参数的子句 → 回填到上一个孔，不算问题
       const detail = lastHole ? parseHoleDetail(clause) : null;
       if (detail && lastHole) Object.assign(lastHole, detail);
       else issues.push(r.issue);
+    } else if (lastOp && applyModifierTo(lastOp, clause)) {
+      // 纯修饰词子句，已回填到上一个动作
     }
   }
 
@@ -826,6 +1020,23 @@ export function describeOp(op: AiOp): string {
       const hand = op.handedness === 'left' ? '左旋' : '右旋';
       return `弹簧 中径${fmt([op.meanDiameter])}·线径${fmt([op.wireDiameter])}·螺距${fmt([op.pitch])}·${fmt([op.turns])}圈${hand}${taper}`;
     }
+    case 'spiral': {
+      const hand = op.handedness === 'left' ? '左旋' : '右旋';
+      return `涡状线 起始R${fmt([op.startRadius])}·螺距${fmt([op.pitch])}·${fmt([op.turns])}圈·厚${fmt([op.thickness])}·宽${fmt([op.width])}${hand}`;
+    }
+    case 'scale': {
+      if (op.nonUniform && op.factors) {
+        const [kx, ky, kz] = op.factors;
+        return `非均匀缩放 X${fmt([kx])}·Y${fmt([ky])}·Z${fmt([kz])} 倍`;
+      }
+      return `整体缩放 ${fmt([op.factor])} 倍`;
+    }
+    case 'mirror': {
+      const name = { front: '前视', right: '右视', top: '上视' }[op.plane];
+      return `沿${name}基准面镜像`;
+    }
+    case 'draft':
+      return `拔模 ${fmt([op.angleDeg])}°${op.reverse ? '（反向）' : ''}`;
   }
 }
 

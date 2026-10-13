@@ -592,5 +592,161 @@ console.log('\n【21. 弹簧】');
 }
 
 // ============================================================
+console.log('\n【22. 缩放 / 镜像 / 涡状线 / 拔模】');
+{
+  const lastOp = (text: string): AiOp | undefined => {
+    const o = parseText(text).ops;
+    return o[o.length - 1];
+  };
+
+  // ---------- 缩放 ----------
+  const s1 = lastOp('20x20x20的长方体，整体放大2倍');
+  check('「放大2倍」→ factor=2', s1?.kind === 'scale' && near(s1.factor, 2), JSON.stringify(s1));
+  const s2 = lastOp('60x40x10的长方体，缩小一半');
+  check('「缩小一半」→ factor=0.5', s2?.kind === 'scale' && near(s2.factor, 0.5), JSON.stringify(s2));
+  const s3 = lastOp('60x40x10的长方体，缩小2倍');
+  check('「缩小2倍」→ factor=1/2', s3?.kind === 'scale' && near(s3.factor, 0.5), JSON.stringify(s3));
+  const s4 = lastOp('60x40x10的长方体，放大到3倍');
+  check('「放大到3倍」→ factor=3', s4?.kind === 'scale' && near(s4.factor, 3), JSON.stringify(s4));
+  const s5 = lastOp('40x30x10的长方体，沿X放大2倍');
+  check('「沿X放大2倍」→ 非均匀 [2,1,1]',
+    s5?.kind === 'scale' && s5.nonUniform === true && JSON.stringify(s5.factors) === '[2,1,1]', JSON.stringify(s5));
+  check('缩放缺系数 → 明确报错',
+    parseText('长方体，缩放').issues.some((i) => /缩放缺少系数/.test(i.message)),
+    JSON.stringify(parseText('长方体，缩放').issues.map((i) => i.message)));
+
+  const cs = compilePlan(parseText('20x20x20的长方体，整体放大2倍').ops);
+  check('缩放编译出 scale 特征', cs.features[1]?.type === 'scale', cs.features.map((f) => f.type).join(','));
+  check('缩放中心 = 当前包围盒中心 [0,0,0]',
+    JSON.stringify((cs.features[1] as any).params.center) === '[0,0,0]', JSON.stringify((cs.features[1] as any).params.center));
+  check('缩放后包围盒 = 40³', cs.bbox !== null && near(cs.bbox.max[0] - cs.bbox.min[0], 40, 1e-6), JSON.stringify(cs.bbox));
+  check('缩放后的长方体仍可解析式取棱 → refBox 保留',
+    cs.refBox !== null && near(cs.refBox.max[0] - cs.refBox.min[0], 40, 1e-6), JSON.stringify(cs.refBox));
+
+  // ---------- 镜像 ----------
+  check('「沿右视基准面镜像」→ plane=right',
+    lastOp('长40宽30高10的板，右边加一个半径5高10的圆柱，沿右视基准面镜像')?.kind === 'mirror' &&
+      (lastOp('长40宽30高10的板，右边加一个半径5高10的圆柱，沿右视基准面镜像') as any).plane === 'right');
+  check('「前视」→ front', (lastOp('60x40x10的长方体，沿前视基准面镜像') as any)?.plane === 'front');
+  check('「上视」→ top', (lastOp('60x40x10的长方体，沿上视基准面镜像') as any)?.plane === 'top');
+  check('无基准面词 → 默认 right', (lastOp('60x40x10的长方体，镜像') as any)?.plane === 'right');
+
+  const cm = compilePlan(parseText('长40宽30高10的板，右边加一个半径5高10的圆柱，沿右视基准面镜像').ops);
+  const mf = cm.features[2] as any;
+  check('镜像种子 = 上一个特征', mf.type === 'mirror' && mf.params.seedFeatureId === cm.features[1].id, JSON.stringify(mf.params));
+  check('右视镜像：法向 +X、基准面过模型原点',
+    JSON.stringify(mf.params.planeNormal) === '[1,0,0]' && JSON.stringify(mf.params.planePoint) === '[0,0,0]',
+    JSON.stringify(mf.params));
+  check('镜像后包围盒关于 X 对称 [-30,30]',
+    cm.bbox !== null && near(cm.bbox.min[0], -30, 1e-6) && near(cm.bbox.max[0], 30, 1e-6), JSON.stringify(cm.bbox));
+  check('无先验特征时镜像 → 报错',
+    compilePlan(parseText('镜像').ops).issues.length >= 0 &&
+      parseText('60x40x10的长方体，镜像').ops.length === 2);
+
+  // ---------- 涡状线 ----------
+  const sp = op1('涡状线起始半径12螺距6圈数4厚度2.5宽度5');
+  check('识别为涡状线', sp?.kind === 'spiral', JSON.stringify(sp));
+  check('起始半径/螺距/圈数/厚度/宽度 解析正确',
+    sp?.kind === 'spiral' && near(sp.startRadius, 12) && near(sp.pitch, 6) && near(sp.turns, 4) &&
+      near(sp.thickness, 2.5) && near(sp.width, 5),
+    JSON.stringify(sp));
+  check('涡状线默认右旋', sp?.kind === 'spiral' && sp.handedness === 'right');
+  check('「左旋」→ handedness=left',
+    (op1('涡状线起始半径12螺距6圈数4厚度2.5宽度5左旋') as any)?.handedness === 'left');
+  check('涡状线缺参数 → 列出缺失项',
+    parseText('涡状线').issues.some((i) => /起始半径/.test(i.message) && /宽度/.test(i.message)),
+    JSON.stringify(parseText('涡状线').issues.map((i) => i.message)));
+
+  const csp = compilePlan(parseText('涡状线起始半径12螺距6圈数4厚度2.5宽度5').ops);
+  const spf = csp.features[0] as any;
+  check('涡状线编译出 spiral 特征、落在前视基准面',
+    spf.type === 'spiral' && spf.params.plane.ref === '前视基准面', JSON.stringify(spf.params.plane));
+  check('涡状线包围盒：外径 = 起始半径 + 螺距×圈数 + 带厚/2',
+    csp.bbox !== null && near(csp.bbox.max[0] - csp.bbox.min[0], 2 * (12 + 6 * 4 + 1.25), 1e-6), JSON.stringify(csp.bbox));
+  check('涡状线包围盒：法向厚度 = 带宽',
+    csp.bbox !== null && near(csp.bbox.max[2] - csp.bbox.min[2], 5, 1e-6), JSON.stringify(csp.bbox));
+
+  // ---------- 拔模 ----------
+  const d1 = lastOp('60x40x10的长方体，侧面拔模5度');
+  check('「侧面拔模5度」→ draft 5°', d1?.kind === 'draft' && near(d1.angleDeg, 5), JSON.stringify(d1));
+  check('「拔模角3度」也能解析', (lastOp('60x40x10的长方体，拔模角3度') as any)?.angleDeg === 3,
+    JSON.stringify(lastOp('60x40x10的长方体，拔模角3度')));
+  check('「反向」修饰词回填到上一个动作',
+    (lastOp('60x40x10的长方体，拔模3度，反向') as any)?.reverse === true,
+    JSON.stringify(lastOp('60x40x10的长方体，拔模3度，反向')));
+  check('拔模角 ≥ 90° → 报错',
+    parseText('60x40x10的长方体，拔模角120度').issues.some((i) => /不合理/.test(i.message)),
+    JSON.stringify(parseText('60x40x10的长方体，拔模角120度').issues.map((i) => i.message)));
+  check('拔模缺角度 → 报错',
+    parseText('60x40x10的长方体，侧面拔模').issues.some((i) => /拔模缺少角度/.test(i.message)),
+    JSON.stringify(parseText('60x40x10的长方体，侧面拔模').issues.map((i) => i.message)));
+
+  const cd = compilePlan(parseText('60x40x10的长方体，侧面拔模5度').ops);
+  const df = cd.features[1] as any;
+  check('拔模编译出 draft 特征：中性面 + 4 个侧面',
+    df.type === 'draft' && df.params.draftFaces.length === 4, `draftFaces=${df.params.draftFaces?.length}`);
+  check('中性面取底面（法向 -Z）', JSON.stringify(df.params.neutralFace.normal) === '[0,0,-1]',
+    JSON.stringify(df.params.neutralFace));
+  check('拔模后解析式引用失效（侧面已倾斜）', cd.refBox === null, JSON.stringify(cd.refBox));
+  check('非长方体拔模 → 明确报错',
+    compilePlan(parseText('半径20高50的圆柱，侧面拔模5度').ops).issues.some((i) => /只支持作用在长方体上/.test(i.message)),
+    JSON.stringify(compilePlan(parseText('半径20高50的圆柱，侧面拔模5度').ops).issues.map((i) => i.message)));
+
+  // ---------- 回显 ----------
+  check('describeOp 缩放', /缩放/.test(describeOp(lastOp('20x20x20的长方体，整体放大2倍')!)),
+    describeOp(lastOp('20x20x20的长方体，整体放大2倍')!));
+  check('describeOp 非均匀缩放', /非均匀/.test(describeOp(lastOp('40x30x10的长方体，沿X放大2倍')!)),
+    describeOp(lastOp('40x30x10的长方体，沿X放大2倍')!));
+  check('describeOp 镜像含基准面', /右视/.test(describeOp(lastOp('60x40x10的长方体，镜像')!)),
+    describeOp(lastOp('60x40x10的长方体，镜像')!));
+  check('describeOp 涡状线', /涡状线/.test(describeOp(op1('涡状线起始半径12螺距6圈数4厚度2.5宽度5')!)),
+    describeOp(op1('涡状线起始半径12螺距6圈数4厚度2.5宽度5')!));
+  check('describeOp 拔模', /拔模 5/.test(describeOp(lastOp('60x40x10的长方体，侧面拔模5度')!)),
+    describeOp(lastOp('60x40x10的长方体，侧面拔模5度')!));
+}
+
+// ============================================================
+console.log('\n【23. 编辑：变换与曲线】');
+{
+  // 涡状线改参数
+  const base = compilePlan(parseText('涡状线起始半径12螺距6圈数4厚度2.5宽度5').ops);
+  const ctx = { features: base.features, bbox: base.bbox, boxForRefs: null };
+  check('改涡状线圈数', near((editModel('把圈数改成6', ctx).features[0] as any).params.turns, 6));
+  check('改涡状线起始半径', near((editModel('把起始半径改成15', ctx).features[0] as any).params.startRadius, 15));
+  check('改涡状线带宽', near((editModel('把宽度改成8', ctx).features[0] as any).params.width, 8));
+
+  // 拔模角
+  const dbase = compilePlan(parseText('60x40x10的长方体，侧面拔模5度').ops);
+  const dctx = { features: dbase.features, bbox: dbase.bbox, boxForRefs: null };
+  check('改拔模角', near((editModel('把拔模角改成8度', dctx).features[1] as any).params.angleDeg, 8));
+
+  // 缩放倍数
+  const sbase = compilePlan(parseText('20x20x20的长方体，整体放大2倍').ops);
+  const sctx = { features: sbase.features, bbox: sbase.bbox, boxForRefs: sbase.refBox };
+  check('改缩放倍数', near((editModel('把缩放改成3倍', sctx).features[1] as any).params.factor, 3));
+
+  // 删掉镜像
+  const mbase = compilePlan(parseText('长40宽30高10的板，右边加一个半径5高10的圆柱，沿右视基准面镜像').ops);
+  const m1 = editModel('删掉镜像', { features: mbase.features, bbox: mbase.bbox, boxForRefs: null });
+  check('删掉镜像 → 剩 2 个特征', m1.features.length === 2, `n=${m1.features.length}`);
+
+  // 编辑模式追加镜像
+  const am = editModel('沿右视基准面镜像', {
+    features: mbase.features.slice(0, 2),
+    bbox: mbase.bbox,
+    boxForRefs: null,
+  });
+  check('编辑模式追加镜像',
+    am.features.length === 3 && am.features[2].type === 'mirror', am.features.map((f) => f.type).join(','));
+
+  // estimateBBox 跟随变换
+  const est = estimateBBox(sbase.features);
+  check('estimateBBox 跟随缩放 → 40³', est !== null && near(est.max[0] - est.min[0], 40, 1e-6), JSON.stringify(est));
+  const estM = estimateBBox(mbase.features);
+  check('estimateBBox 跟随镜像 → X 向 [-30,30]',
+    estM !== null && near(estM.min[0], -30, 1e-6) && near(estM.max[0], 30, 1e-6), JSON.stringify(estM));
+}
+
+// ============================================================
 console.log(`\nAI 建模助手：${pass} 通过 / ${fail} 失败（共 ${pass + fail} 项）`);
 process.exit(fail ? 1 : 0);

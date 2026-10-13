@@ -16,21 +16,25 @@
  * 其余情况给出明确 issue，而不是丢一个必定失败的引用给引擎。
  */
 
-import { newId, type SketchPlane } from '../sketch/types';
+import { newId, DEFAULT_PLANE, type SketchPlane } from '../sketch/types';
 import type {
   ChamferFeature,
   CircularPatternFeature,
+  DraftFeature,
   EdgeRef,
   FaceRef,
   Feature,
   FilletFeature,
   HoleFeature,
   LinearPatternFeature,
+  MirrorFeature,
   PrimitiveFeature,
+  ScaleFeature,
   ShellFeature,
+  SpiralFeature,
   SpringFeature,
 } from '../doc/types';
-import type { AiOp, AiSpringOp, ParseIssue, Placement, Vec3 } from './types';
+import type { AiOp, AiSpiralOp, AiSpringOp, ParseIssue, Placement, Vec3 } from './types';
 
 export interface Box {
   min: Vec3;
@@ -77,6 +81,10 @@ export const DEFAULT_LABELS: Record<string, string> = {
   linearPattern: '线性阵列',
   circularPattern: '圆周阵列',
   spring: '弹簧',
+  spiral: '涡状线',
+  scale: '缩放',
+  mirror: '镜像',
+  draft: '拔模',
 };
 
 /** 内置名称分配器（与 doc.nextName 的标签一致） */
@@ -198,7 +206,7 @@ function holePlane(b: Box, which: 'top' | 'bottom'): SketchPlane {
 }
 
 /** 两个包围盒的并集 */
-function unionBox(a: Box, b: Box): Box {
+export function unionBox(a: Box, b: Box): Box {
   return {
     min: [Math.min(a.min[0], b.min[0]), Math.min(a.min[1], b.min[1]), Math.min(a.min[2], b.min[2])],
     max: [Math.max(a.max[0], b.max[0]), Math.max(a.max[1], b.max[1]), Math.max(a.max[2], b.max[2])],
@@ -216,6 +224,57 @@ export function springBounds(op: AiSpringOp, origin: Vec3): Box {
   return {
     min: [origin[0] - R, origin[1] - R, origin[2]],
     max: [origin[0] + R, origin[1] + R, origin[2] + H],
+  };
+}
+
+/**
+ * 涡状线带材的解析式包围盒。
+ * 外轮廓最大半径 = 起始半径 + 螺距×圈数 + 带厚/2（与 `spiralRibbon2D` 一致）；
+ * 沿平面法向拉伸 `width`。仅对「前视基准面（u=+X, v=+Y, normal=+Z）」成立。
+ */
+export function spiralBounds(
+  p: { startRadius: number; pitch: number; turns: number; thickness: number; width: number },
+  plane: SketchPlane
+): Box {
+  const R = p.startRadius + p.pitch * p.turns + p.thickness / 2;
+  const o = plane.origin;
+  return {
+    min: [o[0] - R, o[1] - R, o[2]],
+    max: [o[0] + R, o[1] + R, o[2] + p.width],
+  };
+}
+
+/** 长方体的 4 个侧面 → FaceRef[]（解析式；供拔模引用） */
+export function boxSideFaces(b: Box): FaceRef[] {
+  const c = mid(b.min, b.max);
+  return [
+    { point: [b.min[0], c[1], c[2]], normal: [-1, 0, 0] },
+    { point: [b.max[0], c[1], c[2]], normal: [1, 0, 0] },
+    { point: [c[0], b.min[1], c[2]], normal: [0, -1, 0] },
+    { point: [c[0], b.max[1], c[2]], normal: [0, 1, 0] },
+  ];
+}
+
+/** 包围盒关于平面（点 p、法向 n）镜像后的包围盒 */
+export function mirrorBox(b: Box, p: Vec3, n: Vec3): Box {
+  const mp = (v: Vec3): Vec3 => {
+    const d = (v[0] - p[0]) * n[0] + (v[1] - p[1]) * n[1] + (v[2] - p[2]) * n[2];
+    return [v[0] - 2 * d * n[0], v[1] - 2 * d * n[1], v[2] - 2 * d * n[2]];
+  };
+  const a = mp(b.min);
+  const c = mp(b.max);
+  return {
+    min: [Math.min(a[0], c[0]), Math.min(a[1], c[1]), Math.min(a[2], c[2])],
+    max: [Math.max(a[0], c[0]), Math.max(a[1], c[1]), Math.max(a[2], c[2])],
+  };
+}
+
+/** 包围盒以 center 为中心、各轴乘 k 之后的包围盒（k > 0） */
+export function scaleBox(b: Box, center: Vec3, k: Vec3): Box {
+  const at = (v: Vec3, i: 0 | 1 | 2) => center[i] + (v[i] - center[i]) * k[i];
+  return {
+    min: [at(b.min, 0), at(b.min, 1), at(b.min, 2)],
+    max: [at(b.max, 0), at(b.max, 1), at(b.max, 2)],
   };
 }
 
@@ -343,6 +402,137 @@ export function compilePlan(ops: AiOp[], opts: CompileOptions = {}): CompileResu
         lastId = f.id;
         const nb = springBounds({ ...op, meanDiameter: mean, wireDiameter: wire }, origin);
         cur = cur ? unionBox(cur, nb) : nb;
+        boxForRefs = null;
+        break;
+      }
+
+      case 'spiral': {
+        const startRadius = Math.max(op.startRadius, 0.02);
+        const thickness = Math.max(op.thickness, 0.01);
+        const width = Math.max(op.width, 0.01);
+        const turns = Math.max(op.turns, 0.05);
+        const pitch = Math.max(op.pitch, 0.01);
+        // 有先验实体时坐在其顶面中心（与前视基准面平行），否则落在原点
+        const plane: SketchPlane = cur
+          ? { ...DEFAULT_PLANE, origin: [mid(cur.min, cur.max)[0], mid(cur.min, cur.max)[1], cur.max[2]] }
+          : { ...DEFAULT_PLANE };
+        const f: SpiralFeature = {
+          id: newId('f'),
+          type: 'spiral',
+          name: namer('spiral'),
+          params: {
+            plane,
+            startRadius,
+            pitch,
+            turns,
+            thickness,
+            width,
+            handedness: op.handedness,
+            symmetric: false,
+            operation: op.operation,
+          },
+        };
+        features.push(f);
+        names.push(f.name);
+        lastId = f.id;
+        const nb = spiralBounds({ startRadius, pitch, turns, thickness, width }, plane);
+        cur = cur ? unionBox(cur, nb) : nb;
+        boxForRefs = null;
+        break;
+      }
+
+      case 'scale': {
+        if (!cur) {
+          issues.push({ clause: op.source, message: '缩放需要先有一个实体', level: 'error' });
+          break;
+        }
+        const k: Vec3 = op.nonUniform
+          ? [op.factors?.[0] ?? 1, op.factors?.[1] ?? 1, op.factors?.[2] ?? 1]
+          : [op.factor, op.factor, op.factor];
+        if (k.some((v) => !Number.isFinite(v) || Math.abs(v) < 1e-6)) {
+          issues.push({ clause: op.source, message: '缩放系数必须是非 0 的有限数', level: 'error' });
+          break;
+        }
+        const center = mid(cur.min, cur.max);
+        const f: ScaleFeature = {
+          id: newId('f'),
+          type: 'scale',
+          name: namer('scale'),
+          params: op.nonUniform
+            ? { center, factor: op.factor, nonUniform: true, factors: [k[0], k[1], k[2]] }
+            : { center, factor: op.factor },
+        };
+        features.push(f);
+        names.push(f.name);
+        lastId = f.id;
+        cur = scaleBox(cur, center, k);
+        boxForRefs = boxForRefs ? scaleBox(boxForRefs, center, k) : null;
+        break;
+      }
+
+      case 'mirror': {
+        if (!lastId) {
+          issues.push({ clause: op.source, message: '镜像需要先有一个特征', level: 'error' });
+          break;
+        }
+        // 基准面都过「模型自己的原点」：新建模式下编译层已把实体居中，用世界原点；
+        // 追加模式下用现有模型包围盒中心，等价于它的「原点」。
+        const planePoint: Vec3 = opts.initialBBox
+          ? mid(opts.initialBBox.min, opts.initialBBox.max)
+          : [0, 0, 0];
+        const planeNormal: Vec3 =
+          op.plane === 'right' ? [1, 0, 0] : op.plane === 'top' ? [0, 1, 0] : [0, 0, 1];
+        const f: MirrorFeature = {
+          id: newId('f'),
+          type: 'mirror',
+          name: namer('mirror'),
+          params: { seedFeatureId: lastId, planePoint, planeNormal },
+        };
+        features.push(f);
+        names.push(f.name);
+        lastId = f.id;
+        // 镜像只复制「上一个特征」，但整个模型关于该平面的包络 = cur ∪ mirror(cur)
+        if (cur) cur = unionBox(cur, mirrorBox(cur, planePoint, planeNormal));
+        boxForRefs = null;
+        break;
+      }
+
+      case 'draft': {
+        if (!boxForRefs) {
+          issues.push({
+            clause: op.source,
+            message: '拔模目前只支持作用在长方体上（且需紧跟在长方体之后）',
+            level: 'error',
+          });
+          break;
+        }
+        const ang = Math.abs(op.angleDeg);
+        if (!Number.isFinite(ang) || ang <= 0 || ang >= 90) {
+          issues.push({ clause: op.source, message: `拔模角 ${op.angleDeg}° 不合理（须在 0°~90° 之间）`, level: 'error' });
+          break;
+        }
+        const f: DraftFeature = {
+          id: newId('f'),
+          type: 'draft',
+          name: namer('draft'),
+          params: {
+            neutralFace: boxFace(boxForRefs, 'bottom'),
+            draftFaces: boxSideFaces(boxForRefs),
+            angleDeg: ang,
+            reverse: op.reverse,
+          },
+        };
+        features.push(f);
+        names.push(f.name);
+        lastId = f.id;
+        // 拔模会让侧面外扩：按「高 × tan(角)」保守放大包围盒
+        const size = sub(boxForRefs.max, boxForRefs.min);
+        const grow = size[2] * Math.tan((ang * Math.PI) / 180);
+        const grown: Box = {
+          min: [boxForRefs.min[0] - grow, boxForRefs.min[1] - grow, boxForRefs.min[2]],
+          max: [boxForRefs.max[0] + grow, boxForRefs.max[1] + grow, boxForRefs.max[2]],
+        };
+        cur = cur ? unionBox(cur, grown) : grown;
         boxForRefs = null;
         break;
       }

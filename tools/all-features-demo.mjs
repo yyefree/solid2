@@ -700,6 +700,32 @@ async function tour() {
   })()`, 2600);
   check('AI：在现有模型上追加凸台并改尺寸', !!aiEdit && aiEdit.volume > 0,
     aiEdit ? aiEdit.volume.toFixed(1) + ' mm³' : 'null');
+
+  // 再演示一句「变换 / 曲线」类指令（缩放 / 镜像 / 拔模 / 涡状线）
+  // 注意：点「应用」会关闭对话框，所以这里要重新打开「AI 建模」（它默认就是「新建模型」模式）
+  const aiTfPreview = await act(`(async () => {
+    const btn = [...document.querySelectorAll('.rbtn')].find(b => /AI 建模/.test(b.textContent));
+    if (!btn) return 'no-button';
+    btn.click();
+    await new Promise(r => setTimeout(r, 240));
+    const ta = document.querySelector('.ai-input');
+    if (!ta) return 'no-input';
+    ta.value = ${q(S.ai.transform)};
+    ta.dispatchEvent(new Event('input'));
+    await new Promise(r => setTimeout(r, 260));
+    return document.querySelector('.ai-preview')?.textContent ?? '';
+  })()`, 1900);
+  check('AI：变换 / 曲线类指令实时解析（缩放 / 镜像 / 拔模 / 涡状线）',
+    /缩放|镜像|拔模|涡状线/.test(String(aiTfPreview)), String(aiTfPreview).slice(0, 70));
+  const aiTf = await act(`(async () => {
+    const b = [...document.querySelectorAll('.modal-foot .btn')].find(x => /应用/.test(x.textContent));
+    b?.click();
+    await new Promise(r => setTimeout(r, 650));
+    await __D.app.rebuild();
+    return __D.app.model.stats;
+  })()`, 2600);
+  check('AI：变换 / 曲线模型落地', !!aiTf && aiTf.volume > 0,
+    aiTf ? aiTf.volume.toFixed(1) + ' mm³' : 'null');
   await closeModals();
   await isoView(1300);
 

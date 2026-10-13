@@ -84,6 +84,55 @@ export interface AiSpringOp extends AiOpBase {
   place: Placement;
 }
 
+/**
+ * 缩放（整体变换）：以「当前模型包围盒中心」为不动点，各轴乘系数。
+ * 「整体放大 1.5 倍」「缩小一半」「沿 X 放大 2 倍」都归到这里。
+ */
+export interface AiScaleOp extends AiOpBase {
+  kind: 'scale';
+  /** 统一缩放系数（nonUniform 为假时使用） */
+  factor: number;
+  /** 非均匀缩放：各轴分别给系数 */
+  nonUniform?: boolean;
+  /** 非均匀时各轴系数 [x, y, z] */
+  factors?: [number, number, number];
+}
+
+/** 镜像：把上一个特征关于某个默认基准面镜像到另一侧 */
+export interface AiMirrorOp extends AiOpBase {
+  kind: 'mirror';
+  /**
+   * 基准面（对应文档的三个默认基准面）：
+   * front = 前视（XY，法向 +Z）/ right = 右视（YZ，法向 +X）/ top = 上视（XZ，法向 +Y）
+   */
+  plane: 'front' | 'right' | 'top';
+}
+
+/** 涡状线带材（涡卷弹簧 / 发条）：平面阿基米德螺线加厚成闭合轮廓再沿法向拉伸 */
+export interface AiSpiralOp extends AiOpBase {
+  kind: 'spiral';
+  /** 起始半径（带材中线） */
+  startRadius: number;
+  /** 每圈径向增量（螺距） */
+  pitch: number;
+  turns: number;
+  /** 带材径向厚度 */
+  thickness: number;
+  /** 带材宽度（沿平面法向） */
+  width: number;
+  handedness: 'right' | 'left';
+  operation: AiBoolOp;
+  place: Placement;
+}
+
+/** 拔模：中性面固定，侧面倾斜给定角度 */
+export interface AiDraftOp extends AiOpBase {
+  kind: 'draft';
+  angleDeg: number;
+  /** 反向（向内 / 向外互换） */
+  reverse?: boolean;
+}
+
 export interface AiFilletOp extends AiOpBase {
   kind: 'fillet';
   radius: number;
@@ -125,7 +174,11 @@ export type AiOp =
   | AiShellOp
   | AiLinearPatternOp
   | AiCircularPatternOp
-  | AiSpringOp;
+  | AiSpringOp
+  | AiScaleOp
+  | AiMirrorOp
+  | AiSpiralOp
+  | AiDraftOp;
 
 /** 解析层问题：某个子句没读懂，或读懂了但缺参数 */
 export interface ParseIssue {

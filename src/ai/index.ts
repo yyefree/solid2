@@ -16,7 +16,17 @@
  * 换解析后端时只改 `provider` 参数（本地规则 ↔ 云端大模型），编译与 UI 不变。
  */
 
-import { compilePlan, springBounds, type CompileOptions, type CompileResult, type Box } from './compile';
+import {
+  boxSideFaces,
+  compilePlan,
+  mirrorBox,
+  scaleBox,
+  spiralBounds,
+  springBounds,
+  type CompileOptions,
+  type CompileResult,
+  type Box,
+} from './compile';
 import { localProvider, parseHoleDetail, parseText, summarize, describeOp, normalizeInput } from './parse';
 import {
   applyEdits,
@@ -70,7 +80,20 @@ export async function interpret(
   return { plan, compiled };
 }
 
-export { compilePlan, localProvider, parseText, summarize, describeOp, normalizeInput, springBounds, parseHoleDetail };
+export {
+  boxSideFaces,
+  compilePlan,
+  localProvider,
+  mirrorBox,
+  normalizeInput,
+  parseHoleDetail,
+  parseText,
+  scaleBox,
+  spiralBounds,
+  springBounds,
+  summarize,
+  describeOp,
+};
 export type { CompileOptions, CompileResult, Box };
 export * from './types';
 

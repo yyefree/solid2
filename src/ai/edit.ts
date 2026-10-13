@@ -22,8 +22,12 @@ import {
   compilePlan,
   DEFAULT_LABELS,
   edgeLimit,
+  mirrorBox,
   primitiveBounds,
+  scaleBox,
+  spiralBounds,
   springBounds,
+  unionBox,
   type Box,
   type CompileResult,
 } from './compile';
@@ -37,8 +41,9 @@ import {
   scanClause,
   splitClauses,
   summarize,
+  applyModifierTo,
 } from './parse';
-import type { AiHoleOp, AiOp, ParseIssue, PrimitiveKind } from './types';
+import type { AiHoleOp, AiOp, ParseIssue, PrimitiveKind, Vec3 } from './types';
 
 // ============================================================
 // 1. 编辑意图（IR）
@@ -91,13 +96,18 @@ const RESIZE_WORDS = ['调整为', '调整成', '设置为', '改成', '改为',
 
 /** 角色词 → 语义 tag（用于「把高改成20」里的「高」） */
 const ROLE_WORDS: [string, string][] = [
+  ['起始半径', 'startRadius'],
+  ['拔模角', 'draftAngle'],
   ['直径', 'diameter'],
   ['半径', 'radius'],
   ['厚度', 'thickness'],
   ['深度', 'depth'],
   ['高度', 'height'],
+  ['长度', 'length'],
+  ['宽度', 'width'],
   ['边长', 'side'],
   ['距离', 'distance'],
+  ['角度', 'angle'],
   ['中径', 'meanDia'],
   ['线径', 'wireDia'],
   ['丝径', 'wireDia'],
@@ -126,11 +136,15 @@ const RESIZE_ROLES = new Set([
   'diameter',
   'side',
   'distance',
+  'startRadius',
   'meanDia',
   'wireDia',
   'pitch',
   'turns',
   'taper',
+  'angle',
+  'draftAngle',
+  'factor',
 ]);
 
 const OP_FEATURE: Record<string, string> = {
@@ -141,6 +155,10 @@ const OP_FEATURE: Record<string, string> = {
   linearPattern: 'linearPattern',
   circularPattern: 'circularPattern',
   spring: 'spring',
+  spiral: 'spiral',
+  scale: 'scale',
+  mirror: 'mirror',
+  draft: 'draft',
 };
 
 const KIND_LABEL: Record<PrimitiveKind, string> = {
@@ -153,7 +171,7 @@ const KIND_LABEL: Record<PrimitiveKind, string> = {
 
 const ROLE_LABEL: Record<string, string> = {
   length: '长',
-  width: '宽',
+  width: '宽度',
   height: '高',
   thickness: '厚度',
   depth: '深度',
@@ -161,11 +179,15 @@ const ROLE_LABEL: Record<string, string> = {
   diameter: '直径',
   side: '边长',
   distance: '距离',
+  startRadius: '起始半径',
   meanDia: '中径',
   wireDia: '线径',
   pitch: '螺距',
   turns: '圈数',
   taper: '锥度',
+  angle: '角度',
+  draftAngle: '拔模角',
+  factor: '倍数',
   dims: '三边尺寸',
 };
 
@@ -188,6 +210,8 @@ export function parseEdit(raw: string, features: Feature[] = []): { edits: AiEdi
   let hasPrior = features.length > 0;
   /** 最近一个追加进来的孔 —— 供「沉头直径14深6」这类细节子句回填 */
   let lastHole: AiHoleOp | null = null;
+  /** 最近一个追加进来的动作 —— 供「修饰词」子句回填（反向 / 左旋…） */
+  let lastOp: AiOp | null = null;
 
   for (const clause of clauses) {
     // (1) 删除
@@ -199,6 +223,7 @@ export function parseEdit(raw: string, features: Feature[] = []): { edits: AiEdi
       }
       edits.push({ kind: 'delete', target, source: clause });
       lastHole = null;
+      lastOp = null;
       continue;
     }
 
@@ -207,6 +232,7 @@ export function parseEdit(raw: string, features: Feature[] = []): { edits: AiEdi
     if (rs) {
       edits.push(rs);
       lastHole = null;
+      lastOp = null;
       continue;
     }
 
@@ -218,13 +244,16 @@ export function parseEdit(raw: string, features: Feature[] = []): { edits: AiEdi
       else edits.push({ kind: 'append', ops: [r.op], source: clause });
       hasPrior = true;
       lastHole = r.op.kind === 'hole' ? r.op : null;
+      lastOp = r.op;
       continue;
     }
     if (r.issue) {
       const detail = lastHole ? parseHoleDetail(clause) : null;
       if (detail && lastHole) Object.assign(lastHole, detail);
       else issues.push(r.issue);
+      continue;
     }
+    if (lastOp && applyModifierTo(lastOp, clause)) continue;
   }
 
   return { edits, issues };
@@ -292,9 +321,11 @@ function parseResize(clause: string): AiEdit | null {
   }
 
   // 单个数值：角色优先取「改」之前的文字，其次取数值自带的角色（如「改成直径10」）
-  const role = roleIn(before) ?? roleIn(after) ?? null;
+  let role = roleIn(before) ?? roleIn(after) ?? null;
   const value = scanAfter.hits.length ? scanAfter.hits[0].value : undefined;
   if (value === undefined) return null;
+  // 「把缩放改成 2 倍」——「倍」在数字**后面**，角色词（前缀匹配）取不到，这里补一刀
+  if (!role && clause.includes('倍')) role = 'factor';
   if (!role || !RESIZE_ROLES.has(role)) return null;
 
   return { kind: 'resize', target, role, value, source: clause };
@@ -596,6 +627,52 @@ export function writeParam(f: Feature, role: string, value: number): WriteResult
       }
       return null;
     }
+    case 'spiral': {
+      const p = f.params;
+      if (role === 'startRadius' || role === 'radius') {
+        const from = p.startRadius;
+        p.startRadius = value;
+        return { label: '起始半径', from, to: value };
+      }
+      if (role === 'pitch') {
+        const from = p.pitch;
+        p.pitch = value;
+        return { label: '螺距', from, to: value };
+      }
+      if (role === 'turns') {
+        const from = p.turns;
+        p.turns = value;
+        return { label: '圈数', from, to: value };
+      }
+      if (role === 'thickness') {
+        const from = p.thickness;
+        p.thickness = value;
+        return { label: '带厚', from, to: value };
+      }
+      if (role === 'width') {
+        const from = p.width;
+        p.width = value;
+        return { label: '带宽', from, to: value };
+      }
+      return null;
+    }
+    case 'draft': {
+      if (role !== 'angle' && role !== 'draftAngle') return null;
+      const p = f.params;
+      const from = p.angleDeg;
+      p.angleDeg = value;
+      return { label: '拔模角', from, to: value };
+    }
+    case 'scale': {
+      if (role !== 'factor') return null;
+      const p = f.params;
+      const from = p.factor;
+      p.factor = value;
+      // 一旦直接改倍数，就退回「统一缩放」
+      p.nonUniform = false;
+      delete p.factors;
+      return { label: '倍数', from, to: value };
+    }
     case 'hole': {
       const p = f.params;
       if (role === 'radius') {
@@ -703,10 +780,37 @@ function pruneDangling(features: Feature[]): { kept: Feature[]; removed: Feature
   return { kept, removed };
 }
 
-/** 解析式估算包围盒（基本体 + 弹簧；孔/圆角不改变外轮廓，与编译层口径一致） */
+/** 解析式估算包围盒（基本体 + 弹簧 + 涡状线，并跟进缩放/镜像/拔模等变换；
+ *  孔/圆角/倒角不改变外轮廓，与编译层口径一致） */
 export function estimateBBox(features: Feature[]): Box | null {
   let cur: Box | null = null;
   for (const f of features) {
+    // ---- 变换类：直接改写当前累计包围盒 ----
+    if (f.type === 'scale') {
+      if (!cur) continue;
+      const p = f.params;
+      const k: Vec3 = p.nonUniform
+        ? [p.factors?.[0] ?? 1, p.factors?.[1] ?? 1, p.factors?.[2] ?? 1]
+        : [p.factor, p.factor, p.factor];
+      cur = scaleBox(cur, p.center, k);
+      continue;
+    }
+    if (f.type === 'mirror') {
+      if (!cur) continue;
+      const p = f.params;
+      cur = unionBox(cur, mirrorBox(cur, p.planePoint, p.planeNormal));
+      continue;
+    }
+    if (f.type === 'draft') {
+      if (!cur) continue;
+      const grow = (cur.max[2] - cur.min[2]) * Math.tan((Math.abs(f.params.angleDeg) * Math.PI) / 180);
+      cur = {
+        min: [cur.min[0] - grow, cur.min[1] - grow, cur.min[2]],
+        max: [cur.max[0] + grow, cur.max[1] + grow, cur.max[2]],
+      };
+      continue;
+    }
+
     let b: Box | null = null;
     if (f.type === 'primitive') {
       const p = f.params;
@@ -733,38 +837,54 @@ export function estimateBBox(features: Feature[]): Box | null {
         },
         p.origin
       );
+    } else if (f.type === 'spiral') {
+      const p = f.params;
+      b = spiralBounds(
+        { startRadius: p.startRadius, pitch: p.pitch, turns: p.turns, thickness: p.thickness, width: p.width },
+        p.plane
+      );
     }
     if (!b) continue;
-    cur = cur
-      ? {
-          min: [Math.min(cur.min[0], b.min[0]), Math.min(cur.min[1], b.min[1]), Math.min(cur.min[2], b.min[2])],
-          max: [Math.max(cur.max[0], b.max[0]), Math.max(cur.max[1], b.max[1]), Math.max(cur.max[2], b.max[2])],
-        }
-      : b;
+    cur = cur ? unionBox(cur, b) : b;
   }
   return cur;
 }
 
 /**
  * 若「最后产生的实体是一个长方体」，返回它的包围盒 —— 供圆角/倒角/抽壳/孔
- * 解析式生成边/面引用。孔 / 圆角 / 倒角不改变外轮廓，向前穿透继续找。
+ * 解析式生成边/面引用。孔 / 圆角 / 倒角不改变外轮廓，向前穿透继续找；
+ * 其后的缩放会把包围盒一起变换（缩放后的长方体仍然是长方体）。
  */
 export function boxRefOf(features: Feature[]): Box | null {
-  for (let i = features.length - 1; i >= 0; i--) {
-    const f = features[i];
-    if (f.type === 'hole' || f.type === 'fillet' || f.type === 'chamfer') continue;
-    if (f.type === 'primitive') {
-      const p = f.params;
-      if (p.kind !== 'box') return null;
-      const o = p.origin ?? [0, 0, 0];
-      return {
-        min: [o[0], o[1], o[2]],
-        max: [o[0] + p.dims[0], o[1] + p.dims[1], o[2] + p.dims[2]],
-      };
+  let i = features.length - 1;
+  for (; i >= 0; i--) {
+    const t = features[i].type;
+    if (t === 'hole' || t === 'fillet' || t === 'chamfer') continue;
+    break;
+  }
+  if (i < 0) return null;
+  const last = features[i];
+  if (last.type !== 'primitive' || last.params.kind !== 'box') return null;
+  const o = last.params.origin ?? [0, 0, 0];
+  let box: Box = {
+    min: [o[0], o[1], o[2]],
+    max: [o[0] + last.params.dims[0], o[1] + last.params.dims[1], o[2] + last.params.dims[2]],
+  };
+  // 其后的变换：缩放跟着走；其它产生几何的特征则让解析式引用失效
+  for (let k = i + 1; k < features.length; k++) {
+    const g = features[k];
+    if (g.type === 'hole' || g.type === 'fillet' || g.type === 'chamfer') continue;
+    if (g.type === 'scale') {
+      const p = g.params;
+      const kk: Vec3 = p.nonUniform
+        ? [p.factors?.[0] ?? 1, p.factors?.[1] ?? 1, p.factors?.[2] ?? 1]
+        : [p.factor, p.factor, p.factor];
+      box = scaleBox(box, p.center, kk);
+      continue;
     }
     return null;
   }
-  return null;
+  return box;
 }
 
 /** 基本体的世界包围盒（非基本体返回 null） */
