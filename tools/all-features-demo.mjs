@@ -7,8 +7,16 @@
  *
  * 视频里会有一个「步骤横幅」浮层，标明当前正在演示/测试的功能，便于观看。
  *
+ * **每次巡演使用不同的脚本**：内容全部来自 `tools/tour/scripts.mjs` 的脚本库。
+ * 默认「轮换」——自动挑一个与上次不同的脚本（上次选择记在 `tools/tour/.last-script.json`），
+ * 于是每次录出来的视频都不一样。
+ *
  * 用法：
- *   node tools/all-features-demo.mjs                 # 自动起 dev server + 录制
+ *   node tools/all-features-demo.mjs                 # 轮换脚本 + 自动起 dev server + 录制
+ *   node tools/all-features-demo.mjs --list          # 列出全部脚本
+ *   node tools/all-features-demo.mjs --script flange # 指定脚本
+ *   node tools/all-features-demo.mjs --probe         # 只跑各脚本的「专属场景」并断言（不录视频）
+ *   node tools/all-features-demo.mjs --no-encode     # 跑完整巡演 + 断言，但不编码 MP4（验证用）
  *   node tools/all-features-demo.mjs --url http://127.0.0.1:5173/
  *   node tools/all-features-demo.mjs --out dist/solid2-all-features.mp4
  *   node tools/all-features-demo.mjs --no-serve      # 复用已启动的 dev server
@@ -19,10 +27,11 @@
  *   DEMO_KEEP_FRAMES  保留临时帧目录（调试）
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readdirSync, statSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SCRIPTS, scriptById, withDefaults } from './tour/scripts.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(here, '..');
@@ -36,10 +45,56 @@ const argOf = (name, dflt) => {
 const URL_ = argOf('--url', 'http://127.0.0.1:5173/');
 const OUT = path.resolve(ROOT, argOf('--out', 'dist/solid2-all-features.mp4'));
 const NO_SERVE = argv.includes('--no-serve');
+const PROBE = argv.includes('--probe');
+const NO_ENCODE = argv.includes('--no-encode');
 const W = Number(process.env.DEMO_W ?? 1600);
 const H = Number(process.env.DEMO_H ?? 900);
 const PORT = Number(process.env.DEMO_CDP_PORT ?? 9344);
 const KEEP_FRAMES = process.env.DEMO_KEEP_FRAMES === '1';
+
+// ---------------- 脚本选择（轮换） ----------------
+const LAST_FILE = path.join(here, 'tour', '.last-script.json');
+
+/** 记录上一次用过的脚本 id */
+function readLastScript() {
+  try { return JSON.parse(readFileSync(LAST_FILE, 'utf8')).id ?? null; } catch { return null; }
+}
+function writeLastScript(id) {
+  try { mkdirSync(path.dirname(LAST_FILE), { recursive: true }); writeFileSync(LAST_FILE, JSON.stringify({ id, at: new Date().toISOString() }, null, 2)); } catch { /* 只读环境忽略 */ }
+}
+
+/** `--list`：打印脚本库后直接退出 */
+if (argv.includes('--list')) {
+  console.log('可用巡演脚本：\n');
+  for (const s of SCRIPTS) {
+    console.log(`  ${s.id.padEnd(10)} ${s.label}`);
+    console.log(`  ${' '.repeat(10)} ${s.desc}`);
+    console.log(`  ${' '.repeat(10)} 专属场景 ${s.extras?.length ?? 0} 个\n`);
+  }
+  console.log('用法： node tools/all-features-demo.mjs --script <id>     （不带 --script 则自动轮换）');
+  process.exit(0);
+}
+
+const wantId = argOf('--script', null);
+let SCRIPT;
+if (wantId) {
+  SCRIPT = scriptById(wantId);
+  if (!SCRIPT) {
+    console.error(`✗ 未知脚本：${wantId}`);
+    console.error(`  可用：${SCRIPTS.map((s) => s.id).join(', ')}`);
+    process.exit(1);
+  }
+} else {
+  const lastId = readLastScript();
+  const lastIdx = SCRIPTS.findIndex((s) => s.id === lastId);
+  SCRIPT = SCRIPTS[(lastIdx + 1) % SCRIPTS.length]; // lastId 找不到时 lastIdx=-1 → 取第一个
+}
+const S = withDefaults(SCRIPT);
+if (!PROBE) writeLastScript(S.id); // 探针不参与轮换，不改写「上次用过的脚本」
+
+console.log(`▶ 巡演脚本：${S.label}  [${S.id}]${wantId ? '（--script 指定）' : '（自动轮换）'}`);
+console.log(`  ${S.desc}`);
+console.log(`  专属场景 ${S.extras.length} 个${S.extras.length ? '：' + S.extras.map((e) => e.title.replace(/^专属场景 · /, '')).join(' / ') : ''}\n`);
 
 const BROWSERS = [
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -441,10 +496,15 @@ async function installHelpers() {
           params: { direction: dir, spacing, count, ...(seedFeatureId ? { seedFeatureId } : {}) } }, { rebuild: false });
         return id;
       },
-      cirPattern(axisOrigin, axisDir, count, totalAngleDeg, equalSpacing) {
+      /**
+       * 圆周阵列。⚠️ seedFeatureId 必须传：不给时引擎会把「整个当前模型」绕轴复制 N 份再 fuse，
+       * 对轴对称的圆盘等于白做、还会把已开的孔盖回去。种子是孔/切除特征时阵列的是刀具体。
+       */
+      cirPattern(axisOrigin, axisDir, count, totalAngleDeg, equalSpacing, seedFeatureId) {
         const id = newId('f');
         app.addFeature({ id, type: 'circularPattern', name: '圆周阵列',
-          params: { axisOrigin, axisDir, count, totalAngleDeg, equalSpacing: equalSpacing !== false } }, { rebuild: false });
+          params: { axisOrigin, axisDir, count, totalAngleDeg, equalSpacing: equalSpacing !== false,
+                    ...(seedFeatureId ? { seedFeatureId } : {}) } }, { rebuild: false });
         return id;
       },
       mirrorFeat(planePoint, planeNormal, seedFeatureId) {
@@ -509,10 +569,15 @@ async function installHelpers() {
         for (const m of ms) if (m.area > best.area) best = m;
         return best;
       },
+      /**
+       * 顶面：法向朝上、面积最大的**平面**。
+       * ⚠️ 必须限定 surfaceType === 'plane'：圆柱侧面（面积 2πrh 在 2h > r 时大于顶面 πr²）
+       * 在法向退化时曾被当成「顶面」，导致孔被放到圆柱中高、通孔只切掉一半。
+       */
       topFace() {
         const ms = app.model.mesh.faceMetas;
         let best = null;
-        for (const m of ms) if (m.normal[2] > 0.9 && (!best || m.area > best.area)) best = m;
+        for (const m of ms) if (m.surfaceType === 'plane' && m.normal[2] > 0.9 && (!best || m.area > best.area)) best = m;
         return best;
       },
       bbox() { return app.model.bbox; },
@@ -526,7 +591,44 @@ async function installHelpers() {
 // ==================================================================
 // 5. 全功能巡演
 // ==================================================================
-const TOTAL_STEPS = 23;
+// 步骤号：1..21 为固定能力巡演；22 起是脚本的「专属场景」；末尾两步是收尾与汇总。
+const N_EXTRA = S.extras.length;
+const EXTRA_BASE = 22;
+const FINAL_ORBIT_STEP = EXTRA_BASE + N_EXTRA;
+const SUMMARY_STEP = FINAL_ORBIT_STEP + 1;
+const TOTAL_STEPS = SUMMARY_STEP;
+
+/**
+ * 校验脚本「专属场景」的 `expect` 断言。
+ * 支持：solids（精确）、volumeBetween [lo,hi]、volumeNear [v,tol]、volumeGt v。
+ */
+function checkExpect(label, stats, expect = {}) {
+  if (!stats || typeof stats.volume !== 'number') { check(label, false, '无结果'); return; }
+  const parts = [];
+  let ok = true;
+  if (expect.solids != null) {
+    const c = stats.solids === expect.solids;
+    ok = ok && c;
+    parts.push(`${stats.solids} 实体${c ? '' : `（期望 ${expect.solids}）`}`);
+  }
+  if (expect.volumeBetween) {
+    const [lo, hi] = expect.volumeBetween;
+    const c = stats.volume >= lo && stats.volume <= hi;
+    ok = ok && c;
+    parts.push(`${stats.volume.toFixed(1)} mm³ ∈ [${lo}, ${hi}]${c ? '' : ' ✗'}`);
+  } else if (expect.volumeNear) {
+    const [v, tol] = expect.volumeNear;
+    const c = Math.abs(stats.volume - v) <= tol;
+    ok = ok && c;
+    parts.push(`${stats.volume.toFixed(1)} mm³ ≈ ${v} ±${tol}${c ? '' : ' ✗'}`);
+  } else if (expect.volumeGt != null) {
+    const c = stats.volume > expect.volumeGt;
+    ok = ok && c;
+    parts.push(`${stats.volume.toFixed(1)} mm³ > ${expect.volumeGt}${c ? '' : ' ✗'}`);
+  }
+  if (stats.extra) parts.push('诊断 ' + JSON.stringify(stats.extra));
+  check(label, ok, parts.join(' · '));
+}
 
 async function tour() {
   // ---------- ① 启动 ----------
@@ -544,7 +646,7 @@ async function tour() {
   await hold(300);
 
   // ---------- ③ AI 建模助手 ----------
-  await banner(3, 'AI 建模助手 · 自然语言 → 参数化特征树', '一句话建模 + 一句话改模型，离线本地解析');
+  await banner(3, 'AI 建模助手 · 自然语言 → 参数化特征树', `脚本「${S.label}」：一句话建模 + 一句话改模型，离线本地解析`);
   await closeModals();
   await tab('AI');
   await hold(400);
@@ -557,13 +659,13 @@ async function tour() {
     await new Promise(r => setTimeout(r, 220));
     const ta = document.querySelector('.ai-input');
     if (!ta) return 'no-input';
-    ta.value = '长80宽60高20的板，中心开Φ8的沉头孔，沉头直径14深3，四角倒圆角R4';
+    ta.value = ${q(S.ai.create)};
     ta.dispatchEvent(new Event('input'));
     await new Promise(r => setTimeout(r, 220));
     return document.querySelector('.ai-preview')?.textContent ?? '';
   })()`, 1600);
-  check('AI：自然语言实时解析出特征摘要',
-    /沉头/.test(String(aiPreview)) && /圆角/.test(String(aiPreview)),
+  check(`AI：自然语言实时解析出特征摘要（${S.ai.createKw.join('/')}）`,
+    S.ai.createKw.some((k) => String(aiPreview).includes(k)),
     String(aiPreview).slice(0, 70));
 
   // 点「应用」→ 特征树落地 + 真几何
@@ -574,7 +676,7 @@ async function tour() {
     await __D.app.rebuild();
     return __D.app.model.stats;
   })()`, 2600);
-  check('AI：一句话建出带沉头孔与圆角的板', !!aiBuild && aiBuild.volume > 0,
+  check('AI：一句话建出参数化模型', !!aiBuild && aiBuild.volume > 0,
     aiBuild ? aiBuild.volume.toFixed(1) + ' mm³' : 'null');
   await isoView(1250);
 
@@ -585,7 +687,7 @@ async function tour() {
     btn.click();
     await new Promise(r => setTimeout(r, 220));
     const ta = document.querySelector('.ai-input');
-    if (ta) { ta.value = '上面加一个半径8高12的圆柱，把高改成20'; ta.dispatchEvent(new Event('input')); }
+    if (ta) { ta.value = ${q(S.ai.edit)}; ta.dispatchEvent(new Event('input')); }
     return 1;
   })()`, 1700);
   await hold(900);
@@ -746,28 +848,31 @@ async function tour() {
   await hold(200);
 
   // ---------- ⑤ 拉伸 / 切除（主零件起点） ----------
-  await banner(7, '拉伸凸台 / 拉伸切除', '80×60 底板 + φ24 中心孔');
+  await banner(7, '拉伸凸台 / 拉伸切除', `${S.base.w}×${S.base.h} 底板 + φ${S.base.holeR * 2} 中心孔`);
   await tab('特征');
   await act(`__D.reset(); 1`, 200);
   await act(`(() => {
     __D.sketch('front', h => {
-      const p1 = h.pt(-40,-30), p2 = h.pt(40,-30), p3 = h.pt(40,30), p4 = h.pt(-40,30);
+      const hw = ${S.base.w / 2}, hh = ${S.base.h / 2};
+      const p1 = h.pt(-hw,-hh), p2 = h.pt(hw,-hh), p3 = h.pt(hw,hh), p4 = h.pt(-hw,hh);
       h.line(p1,p2); h.line(p2,p3); h.line(p3,p4); h.line(p4,p1);
-      const c = h.pt(0,0); h.circle(c, 12);
+      const c = h.pt(0,0); h.circle(c, ${S.base.holeR});
     });
     return 1;
   })()`, 500);
-  const s1 = await act(`__D.extrude(__D.app.doc.features.find(f=>f.type==='sketch').id, 14, 'new') && __D.rebuild()`, 1600);
-  check('拉伸：80×60 底板（含 φ24 孔）体积正确',
-    near(s1.volume, (80 * 60 - Math.PI * 144) * 14, 2e-3), `体积 ${s1.volume.toFixed(1)} mm³`);
+  const s1 = await act(`__D.extrude(__D.app.doc.features.find(f=>f.type==='sketch').id, ${S.base.t}, 'new') && __D.rebuild()`, 1600);
+  check(`拉伸：${S.base.w}×${S.base.h} 底板（含 φ${S.base.holeR * 2} 孔）体积正确`,
+    near(s1.volume, (S.base.w * S.base.h - Math.PI * S.base.holeR ** 2) * S.base.t, 2e-3), `体积 ${s1.volume.toFixed(1)} mm³`);
   check('拉伸：单实体', s1.solids === 1, `${s1.solids} 实体`);
   await isoView();
 
   // ---------- ⑥ 工程特征 ----------
   await banner(8, '工程特征 · 圆角 / 变半径圆角 / 倒角 / 抽壳 / 拔模 / 筋 / 异形孔');
+  const varR1 = Math.max(0.5, +(S.features.filletR * 0.4).toFixed(2));
+  const varR2 = +Math.min(S.features.filletR * 1.7, S.base.t * 0.4).toFixed(2);
   const sFillet = await act(`(() => {
     const e = __D.longestEdge();
-    __D.fillet([{ point: [...e.mid], dir: [...e.dir] }], 3);
+    __D.fillet([{ point: [...e.mid], dir: [...e.dir] }], ${S.features.filletR});
     return __D.rebuild();
   })()`, 1800);
   check('圆角：产生新面且体积略减', sFillet.faces > s1.faces && sFillet.volume < s1.volume,
@@ -775,17 +880,17 @@ async function tour() {
 
   const sChamfer = await act(`(() => {
     const e = __D.longestEdge();
-    __D.chamfer([{ point: [...e.mid], dir: [...e.dir] }], 2);
+    __D.chamfer([{ point: [...e.mid], dir: [...e.dir] }], ${S.features.chamferD});
     return __D.rebuild();
   })()`, 1600);
   check('倒角：求值成功、体积再减', sChamfer.volume < sFillet.volume, `${sChamfer.volume.toFixed(1)} mm³`);
 
   const sVar = await act(`(() => {
     const e = __D.longestEdge();
-    __D.fillet([{ point: [...e.mid], dir: [...e.dir] }], 1, 5);
+    __D.fillet([{ point: [...e.mid], dir: [...e.dir] }], ${varR1}, ${varR2});
     return __D.rebuild();
   })()`, 1800);
-  check('变半径圆角：体积介于两定半径之间（几何合理）',
+  check(`变半径圆角（R${varR1}→R${varR2}）：体积介于两定半径之间（几何合理）`,
     sVar.volume > 0 && sVar.volume < sChamfer.volume, `${sVar.volume.toFixed(1)} mm³`);
   await isoView(1000);
 
@@ -794,10 +899,11 @@ async function tour() {
   const sBase = await act(`__D.rebuild()`, 1200);
   const sShell = await act(`(() => {
     const f = __D.topFace();
-    __D.shell([{ point: [...f.centroid], normal: [...f.normal] }], 3);
+    __D.shell([{ point: [...f.centroid], normal: [...f.normal] }], ${S.features.shellT});
     return __D.rebuild();
   })()`, 1700);
-  const expShell = 60 * 50 * 30 - (60 - 6) * (50 - 6) * (30 - 3);
+  const tS = S.features.shellT;
+  const expShell = 60 * 50 * 30 - (60 - 2 * tS) * (50 - 2 * tS) * (30 - tS);
   check('抽壳：开口盒体积正确', near(sShell.volume, expShell, 2e-3), `${sShell.volume.toFixed(1)} / 期望 ${expShell.toFixed(1)}`);
   await isoView(1000);
 
@@ -810,10 +916,10 @@ async function tour() {
     const side = fs.filter(f => Math.abs(f.normal[2]) < 0.1)[0];
     if (!bottom || !side) return null;
     __D.draft({ point: [...bottom.centroid], normal: [...bottom.normal] },
-              [{ point: [...side.centroid], normal: [...side.normal] }], 8);
+              [{ point: [...side.centroid], normal: [...side.normal] }], ${S.features.draftDeg});
     return __D.rebuild();
   })()`, 1800);
-  check('拔模：求值成功、几何被改变（侧面倾斜 → 体积变化）',
+  check(`拔模 ${S.features.draftDeg}°：求值成功、几何被改变（侧面倾斜 → 体积变化）`,
     !!sDraft && sDraft.solids === 1 && Math.abs(sDraft.volume - 120000) > 500,
     sDraft ? `${sDraft.volume.toFixed(1)} mm³（原始 120000）` : 'null');
   await isoView(1000);
@@ -826,7 +932,7 @@ async function tour() {
       const a = h.pt(0, 6), b = h.pt(0, 34);
       h.line(a, b);
     });
-    __D.rib(id, 6, 14);
+    __D.rib(id, ${S.features.ribT}, ${S.features.ribD});
     return __D.rebuild();
   })()`, 1700);
   check('筋：在底板法向加厚成薄壁并融合（体积增加）', sRib.volume > 80 * 60 * 12,
@@ -847,20 +953,23 @@ async function tour() {
   await isoView(1000);
 
   // ---------- ⑦ 基本体五种 ----------
-  await banner(9, '基本体 · 长方体 / 圆柱 / 球 / 圆锥 / 圆环', '五种原始几何体一次生成');
+  await banner(9, '基本体 · 长方体 / 圆柱 / 球 / 圆锥 / 圆环', `脚本「${S.label}」的尺寸组合，一次生成`);
+  const primLines = S.primitives.map(([k, d, o]) => `    __D.prim(${q(k)}, ${JSON.stringify(d)}, ${JSON.stringify(o)});`).join('\n');
   await act(`(() => {
     __D.reset();
-    __D.prim('box', [24,24,24], [-70,-10,0]);
-    __D.prim('cylinder', [12,40], [-30,-10,0]);
-    __D.prim('sphere', [14], [6,-10,0]);
-    __D.prim('cone', [14,6,36], [42,-10,0]);
-    __D.prim('torus', [16,5], [86,-10,0]);
+${primLines}
     return 1;
   })()`, 900);
   const sPrim = await act(`__D.rebuild()`, 1800);
-  // 立方 + 圆柱 + 球 + 圆台 + 圆环（解析体积）
-  const coneV = (Math.PI * 36 / 3) * (14 * 14 + 14 * 6 + 6 * 6);
-  const expPrim = 24 ** 3 + Math.PI * 144 * 40 + (4 / 3) * Math.PI * 14 ** 3 + coneV + 2 * Math.PI ** 2 * 16 * 25;
+  // 各基本体解析体积
+  const primVol = {
+    box: (d) => d[0] * d[1] * d[2],
+    cylinder: (d) => Math.PI * d[0] ** 2 * d[1],
+    sphere: (d) => (4 / 3) * Math.PI * d[0] ** 3,
+    cone: (d) => (Math.PI * d[2] / 3) * (d[0] ** 2 + d[0] * d[1] + d[1] ** 2),
+    torus: (d) => 2 * Math.PI ** 2 * d[0] * d[1] ** 2,
+  };
+  const expPrim = S.primitives.reduce((s, [k, d]) => s + primVol[k](d), 0);
   check('五种基本体：5 个独立实体、体积与解析值一致', sPrim.solids === 5 && near(sPrim.volume, expPrim, 0.02),
     `${sPrim.solids} 实体, ${sPrim.volume.toFixed(1)} / 期望 ${expPrim.toFixed(1)}`);
   await isoView(1200);
@@ -869,66 +978,77 @@ async function tour() {
 
   // ---------- ⑧ 旋转 / 放样 / 扫描 ----------
   await banner(10, '基于草图 · 旋转 / 放样 / 扫描', '旋转轴 + 多截面放样 + 轮廓沿路径扫掠');
+  const revRi = S.base.holeR, revRo = S.base.holeR * 2, revH = S.base.t * 2;
   const sRev = await act(`(() => {
     __D.reset();
     const id = __D.sketch('front', h => {
-      const p1 = h.pt(20,0), p2 = h.pt(40,0), p3 = h.pt(40,30), p4 = h.pt(20,30);
+      const p1 = h.pt(${revRi},0), p2 = h.pt(${revRo},0), p3 = h.pt(${revRo},${revH}), p4 = h.pt(${revRi},${revH});
       h.line(p1,p2); h.line(p2,p3); h.line(p3,p4); h.line(p4,p1);
     });
     __D.revolve(id, [0,0], [0,1], 360, 'new');
     return __D.rebuild();
   })()`, 1800);
   check('旋转：矩形绕 Y 轴 360° → 圆环柱体积 = π(R²−r²)h',
-    near(sRev.volume, Math.PI * (1600 - 400) * 30, 2e-3), `${sRev.volume.toFixed(1)} mm³`);
+    near(sRev.volume, Math.PI * (revRo ** 2 - revRi ** 2) * revH, 2e-3), `${sRev.volume.toFixed(1)} mm³`);
   await isoView(1000);
 
+  const loftR1 = S.base.holeR * 2, loftR2 = +(S.base.holeR * 0.7).toFixed(2), loftH = S.base.t * 4;
   const sLoft = await act(`(() => {
     __D.reset();
-    // 两个**平行**截面（前视 z=0 与自定义 z=60），否则 ThruSections 会退化
-    const a = __D.sketch('front', h => { const c = h.pt(0,0); h.circle(c, 22); });
-    const b = __D.sketch({ origin: [0,0,60], u: [1,0,0], v: [0,1,0], normal: [0,0,1], ref: 'z=60' },
-                          h => { const c = h.pt(0,0); h.circle(c, 8); });
+    // 两个**平行**截面（前视 z=0 与自定义 z=${loftH}），否则 ThruSections 会退化
+    const a = __D.sketch('front', h => { const c = h.pt(0,0); h.circle(c, ${loftR1}); });
+    const b = __D.sketch({ origin: [0,0,${loftH}], u: [1,0,0], v: [0,1,0], normal: [0,0,1], ref: 'z=${loftH}' },
+                          h => { const c = h.pt(0,0); h.circle(c, ${loftR2}); });
     __D.loft([a, b], 'new');
     return __D.rebuild();
   })()`, 1900);
-  const expLoft = (Math.PI * 60 / 3) * (22 * 22 + 22 * 8 + 8 * 8); // 圆台
-  check('放样：φ44 → φ16 平行截面之间过渡成体（≈ 圆台体积）',
+  const expLoft = (Math.PI * loftH / 3) * (loftR1 ** 2 + loftR1 * loftR2 + loftR2 ** 2); // 圆台
+  check(`放样：φ${loftR1 * 2} → φ${loftR2 * 2} 平行截面之间过渡成体（≈ 圆台体积）`,
     sLoft.solids === 1 && near(sLoft.volume, expLoft, 0.05),
     `${sLoft.volume.toFixed(1)} / 期望 ${expLoft.toFixed(1)}`);
   await isoView(1000);
 
+  const swR = Math.max(2, +(S.base.t * 0.3).toFixed(2)), swL = S.base.w * 0.6;
   const sSw = await act(`(() => {
     __D.reset();
-    const prof = __D.sketch('front', h => { const c = h.pt(0,0); h.circle(c, 4); });
-    const path = __D.sketch('top', h => { const a = h.pt(0,0), b = h.pt(50,0); h.line(a,b); });
+    const prof = __D.sketch('front', h => { const c = h.pt(0,0); h.circle(c, ${swR}); });
+    const path = __D.sketch('top', h => { const a = h.pt(0,0), b = h.pt(${swL},0); h.line(a,b); });
     __D.sweep(prof, path, 'new');
     return __D.rebuild();
   })()`, 1800);
-  check('扫描：φ8 圆截面沿 50mm 路径扫掠 → 体积 ≈ πr²L',
-    near(sSw.volume, Math.PI * 16 * 50, 0.03), `${sSw.volume.toFixed(1)} / 期望 ${(Math.PI * 16 * 50).toFixed(1)}`);
+  check(`扫描：φ${swR * 2} 圆截面沿 ${swL}mm 路径扫掠 → 体积 ≈ πr²L`,
+    near(sSw.volume, Math.PI * swR ** 2 * swL, 0.03), `${sSw.volume.toFixed(1)} / 期望 ${(Math.PI * swR ** 2 * swL).toFixed(1)}`);
   await isoView(1000);
 
   // ---------- ⑨ 阵列 ----------
-  await banner(11, '阵列 · 线性 / 圆周 / 镜像', '种子特征批量复制');
-  await act(`__D.reset(); __D.box(10, 10, 10, [-40,0,0]); 1`, 400);
+  await banner(11, '阵列 · 线性 / 圆周 / 镜像', `线性 ${S.pattern.linear.count} 份 · 圆周 ${S.pattern.circular.count} 份 · 镜像`);
+  const LP = S.pattern.linear;
+  await act(`__D.reset(); __D.box(${LP.size}, ${LP.size}, ${LP.size}, ${JSON.stringify(LP.at)}); 1`, 400);
   const sLin = await act(`(() => {
     const seed = __D.app.doc.features[0].id;
-    __D.linPattern([1,0,0], 20, 5, seed);
+    __D.linPattern([1,0,0], ${LP.spacing}, ${LP.count}, seed);
     return __D.rebuild();
   })()`, 1700);
-  check('线性阵列：5 份 → 5 实体、体积 ×5', sLin.solids === 5 && near(sLin.volume, 5000, 2e-3),
+  check(`线性阵列：${LP.count} 份 → ${LP.count} 实体、体积 ×${LP.count}`,
+    sLin.solids === LP.count && near(sLin.volume, LP.size ** 3 * LP.count, 2e-3),
     `${sLin.solids} 实体, ${sLin.volume.toFixed(0)} mm³`);
   await isoView(1000);
 
-  const sCir = await act(`(() => {
+  const CP = S.pattern.circular;
+  const sCir = await act(`(async () => {
     __D.reset();
-    __D.prim('cylinder', [5, 16], [30, 0, 0]);
-    const seed = __D.app.doc.features[0].id;
-    __D.cirPattern([0,0,0], [0,0,1], 6, 360);
+    __D.prim('cylinder', [${CP.discR}, ${CP.h}], [0,0,0]);
+    await __D.app.rebuild();
+    const f = __D.topFace();
+    const pl = { origin: [...f.centroid], u: [1,0,0], v: [0,1,0], normal: [...f.normal], ref: '顶面' };
+    const hb = __D.hole(pl, [${CP.at},0], 'simple', ${CP.holeR * 2}, ${CP.h}, true);
+    __D.cirPattern([0,0,0], [0,0,1], ${CP.count}, 360, true, hb);
     return __D.rebuild();
-  })()`, 1900);
-  check('圆周阵列：φ10 圆柱 6 份绕 Z 均布', sCir.solids === 6 && near(sCir.volume, Math.PI * 25 * 16 * 6, 0.03),
-    `${sCir.solids} 实体, ${sCir.volume.toFixed(1)} mm³`);
+  })()`, 2100);
+  const expCir = Math.PI * CP.discR ** 2 * CP.h - CP.count * Math.PI * CP.holeR ** 2 * CP.h;
+  check(`圆周阵列：φ${CP.holeR * 2} 孔绕 Z 均布 ${CP.count} 份（圆盘 φ${CP.discR * 2}）`,
+    sCir.solids === 1 && near(sCir.volume, expCir, 0.02),
+    `${sCir.solids} 实体, ${sCir.volume.toFixed(1)} / 期望 ${expCir.toFixed(1)}`);
   await isoView(1000);
 
   const sMir = await act(`(() => {
@@ -942,20 +1062,21 @@ async function tour() {
   await isoView(1000);
 
   // ---------- ⑩ 实体编辑族 ----------
-  await banner(12, '实体编辑 · 缩放 / 分割 / 移动复制 / 组合 / 删除实体', '多实体工作流');
+  await banner(12, '实体编辑 · 缩放 / 分割 / 移动复制 / 组合 / 删除实体', `多实体工作流（缩放 ${S.scale}×）`);
+  const F = S.scale;
   await act(`__D.reset(); __D.box(20, 20, 20, [0,0,0]); 1`, 400);
-  const sSc = await act(`__D.scale([0,0,0], 2) && __D.rebuild()`, 1400);
-  check('缩放 2×：体积 ×8 = 64000', near(sSc.volume, 64000, 1e-3), `${sSc.volume.toFixed(0)} mm³`);
+  const sSc = await act(`__D.scale([0,0,0], ${F}) && __D.rebuild()`, 1400);
+  check(`缩放 ${F}×：体积 ×${F ** 3} = ${8000 * F ** 3}`, near(sSc.volume, 8000 * F ** 3, 1e-3), `${sSc.volume.toFixed(0)} mm³`);
 
   const sSplit = await act(`(() => {
-    __D.split({ origin: [0,0,20], u: [1,0,0], v: [0,1,0], normal: [0,0,1], ref: 'z=20' }, 'both');
+    __D.split({ origin: [0,0,${10 * F}], u: [1,0,0], v: [0,1,0], normal: [0,0,1], ref: 'z=${10 * F}' }, 'both');
     return __D.rebuild();
   })()`, 1700);
-  check('分割：一分为二、体积守恒', sSplit.solids === 2 && near(sSplit.volume, 64000, 1e-3),
+  check('分割：一分为二、体积守恒', sSplit.solids === 2 && near(sSplit.volume, 8000 * F ** 3, 1e-3),
     `${sSplit.solids} 实体, ${sSplit.volume.toFixed(0)} mm³`);
 
-  const sMove = await act(`__D.moveBody([200,0,0], { copy: true, count: 1 }) && __D.rebuild()`, 1700);
-  check('移动/复制：复制 1 份 → 4 实体、体积 ×2', sMove.solids === 4 && near(sMove.volume, 128000, 1e-3),
+  const sMove = await act(`__D.moveBody([${100 * F},0,0], { copy: true, count: 1 }) && __D.rebuild()`, 1700);
+  check('移动/复制：复制 1 份 → 4 实体、体积 ×2', sMove.solids === 4 && near(sMove.volume, 16000 * F ** 3, 1e-3),
     `${sMove.solids} 实体, ${sMove.volume.toFixed(0)} mm³`);
   await isoView(1100);
 
@@ -984,28 +1105,30 @@ async function tour() {
   await isoView(1100);
 
   // ---------- ⑪ 参数化 · 表达式 / 参数表（参考 FreeCAD Expressions） ----------
-  await banner(13, '参数化 · 表达式 / 参数表', '全局参数 + 公式驱动几何');
+  await banner(13, '参数化 · 表达式 / 参数表', `全局参数「${S.param.name}」+ 公式驱动几何`);
+  const P = S.param;
+  const rectArea = P.rect[0] * P.rect[1];
   const sExpr = await act(`(async () => {
     __D.reset();
     __D.app.doc.params.length = 0;
-    __D.param('板厚', '8');
-    const sk = __D.sketch('front', (h) => h.rect(0, 0, 50, 30));
+    __D.param(${q(P.name)}, ${q(String(P.a))});
+    const sk = __D.sketch('front', (h) => h.rect(0, 0, ${P.rect[0]}, ${P.rect[1]}));
     const ex = __D.extrude(sk, 1, 'new');
-    __D.bind(ex, 'distance', '=板厚');
+    __D.bind(ex, 'distance', ${q('=' + P.name)});
     await __D.rebuild();
-    return { volume: __D.app.model.stats.volume, value: __D.app.paramValues['板厚'] };
+    return { volume: __D.app.model.stats.volume, value: __D.app.paramValues[${q(P.name)}] };
   })()`, 2000);
-  check('表达式驱动拉伸深度：板厚=8 → 12000', near(sExpr.volume, 12000, 1e-3),
+  check(`表达式驱动拉伸深度：${P.name}=${P.a} → ${rectArea * P.a}`, near(sExpr.volume, rectArea * P.a, 1e-3),
     `${sExpr.volume.toFixed(0)} mm³（参数值 ${sExpr.value}）`);
   await isoView(1100);
 
   // 改全局参数 → 几何自动联动
   const sExpr2 = await act(`(async () => {
-    __D.app.doc.setParam('板厚', '20');
+    __D.app.doc.setParam(${q(P.name)}, ${q(String(P.b))});
     await __D.rebuild();
     return { volume: __D.app.model.stats.volume };
   })()`, 1800);
-  check('改参数后几何自动联动：板厚=20 → 30000', near(sExpr2.volume, 30000, 1e-3),
+  check(`改参数后几何自动联动：${P.name}=${P.b} → ${rectArea * P.b}`, near(sExpr2.volume, rectArea * P.b, 1e-3),
     `${sExpr2.volume.toFixed(0)} mm³`);
   await isoView(1000);
 
@@ -1025,23 +1148,24 @@ async function tour() {
   await hold(400);
 
   // ---------- ⑫ 曲线族 ----------
-  await banner(14, '曲线 · 弹簧 / 涡状线', '螺旋线 + 阿基米德螺线成体');
+  const SP = S.curve.spring, SR = S.curve.spiral;
+  await banner(14, '曲线 · 弹簧 / 涡状线', `螺旋线（中径${SP.meanDiameter} × ${SP.turns} 圈）+ 阿基米德螺线成体`);
   const sSpring = await act(`(() => {
     __D.reset();
-    __D.spring({ meanDiameter: 30, wireDiameter: 4, pitch: 10, turns: 6 });
+    __D.spring({ meanDiameter: ${SP.meanDiameter}, wireDiameter: ${SP.wireDiameter}, pitch: ${SP.pitch}, turns: ${SP.turns} });
     return __D.rebuild();
   })()`, 1900);
-  check('弹簧：6 圈螺旋成体（周期性快路径）', sSpring.volume > 0, `${sSpring.volume.toFixed(1)} mm³`);
+  check(`弹簧：${SP.turns} 圈螺旋成体（周期性快路径）`, sSpring.volume > 0, `${sSpring.volume.toFixed(1)} mm³`);
   await act(`__D.app.setView('front'); __D.app.zoomFit(); 1`, 600);
   await hold(500);
   await isoView(1000);
 
   const sSpiral = await act(`(() => {
     __D.reset();
-    __D.spiral({ startRadius: 12, pitch: 6, turns: 4, thickness: 2.5, width: 5 });
+    __D.spiral({ startRadius: ${SR.startRadius}, pitch: ${SR.pitch}, turns: ${SR.turns}, thickness: ${SR.thickness}, width: ${SR.width} });
     return __D.rebuild();
   })()`, 1900);
-  check('涡状线：4 圈螺线带材成体', sSpiral.volume > 0, `${sSpiral.volume.toFixed(1)} mm³`);
+  check(`涡状线：${SR.turns} 圈螺线带材成体`, sSpiral.volume > 0, `${sSpiral.volume.toFixed(1)} mm³`);
   await isoView(1100);
 
   // ---------- ⑫ 参考几何体 ----------
@@ -1163,15 +1287,27 @@ async function tour() {
   await act(`__D.app.rebuild(); 1`, 1200);
   await isoView(1000);
 
-  // ---------- ⑲ 收尾：环绕 ----------
-  await banner(22, '收尾 · 模型环绕查看', 'OrbitControls 轨道旋转');
+  // ---------- ⑲ 专属场景（脚本独有） ----------
+  for (let i = 0; i < S.extras.length; i++) {
+    const ex = S.extras[i];
+    await banner(EXTRA_BASE + i, ex.title, ex.sub ?? '');
+    await act(`__D.app.setMode('model'); 1`, 400);
+    const stats = await act(ex.code, ex.holdMs ?? 2400);
+    await isoView(1300);
+    await orbit(120, -30, 18, 900);
+    await hold(300);
+    checkExpect(`专属场景 ${i + 1}/${S.extras.length}：${ex.title.replace(/^专属场景 · /, '')}`, stats, ex.expect);
+  }
+
+  // ---------- ⑳ 收尾：环绕 ----------
+  await banner(FINAL_ORBIT_STEP, '收尾 · 模型环绕查看', `脚本「${S.label}」 · OrbitControls 轨道旋转`);
   await act(`__D.app.setView('iso'); __D.app.zoomFit(); 1`, 900);
   await orbit(220, -40, 30, 1600);
   await orbit(-140, 40, 24, 1200);
   await hold(400);
 
-  // ---------- ⑳ 汇总 ----------
-  await banner(23, '演示结束 · 全部功能已自动测试通过', `${pass} 项断言`);
+  // ---------- ㉑ 汇总 ----------
+  await banner(SUMMARY_STEP, '演示结束 · 全部功能已自动测试通过', `脚本「${S.label}」 · ${pass} 项断言`);
   await hold(1200);
 }
 
@@ -1205,7 +1341,29 @@ async function orbit(dx, dy, steps = 24, holdMs = 1000) {
 }
 
 // ==================================================================
-// 6. 主流程
+// 6. 专属场景探针（--probe）：一次启动，验证**所有**脚本的 extras
+// ==================================================================
+async function probeAllExtras() {
+  await installOverlay();
+  await installHelpers();
+  let total = 0;
+  for (const sc of SCRIPTS) {
+    const s = withDefaults(sc);
+    if (!s.extras.length) continue;
+    console.log(`\n▸ 脚本 ${s.label}  [${s.id}]`);
+    for (let i = 0; i < s.extras.length; i++) {
+      const ex = s.extras[i];
+      await banner(0, ex.title, ex.sub ?? '');
+      const stats = await act(ex.code, ex.holdMs ?? 2400);
+      checkExpect(`[${s.id}] ${ex.title.replace(/^专属场景 · /, '')}`, stats, ex.expect);
+      total++;
+    }
+  }
+  console.log(`\n探针完成：${total} 个专属场景`);
+}
+
+// ==================================================================
+// 7. 主流程
 // ==================================================================
 console.log('▶ 等待应用启动与内核就绪…');
 const booted = await waitFor('!!(window.__solid2 && window.__solid2.app)', 30000, '应用启动');
@@ -1224,6 +1382,17 @@ if (!ready) {
 }
 console.log('');
 
+if (PROBE) {
+  console.log('▶ 探针模式：只跑各脚本的「专属场景」并断言（不录视频）');
+  await probeAllExtras();
+  ws.close(); cleanup();
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`专属场景探针：${pass} 通过 / ${fail} 失败（共 ${pass + fail} 项）`);
+  if (failures.length) console.log(`失败项：\n  - ${failures.join('\n  - ')}`);
+  console.log('='.repeat(60));
+  process.exit(fail ? 1 : 0);
+}
+
 console.log('▶ 开始全功能巡演 + 录制');
 const t0 = Date.now();
 await tour();
@@ -1231,7 +1400,7 @@ const tourMs = Date.now() - t0;
 console.log(`\n巡演完成，用时 ${(tourMs / 1000).toFixed(1)} s，抓帧 ${timeline.length} 张`);
 
 // ==================================================================
-// 7. 编码 MP4
+// 8. 编码 MP4
 // ==================================================================
 function findFfmpeg() {
   if (process.env.FFMPEG && existsSync(process.env.FFMPEG)) return process.env.FFMPEG;
@@ -1323,17 +1492,18 @@ async function encode() {
 }
 
 console.log('\n▶ 编码 MP4…');
-const okEncode = await encode();
+const okEncode = NO_ENCODE ? false : await encode();
 ws.close();
 cleanup();
 
 const sizeMB = okEncode && existsSync(OUT) ? (statSync(OUT).size / 1048576).toFixed(2) : '—';
 console.log(`\n${'='.repeat(60)}`);
+console.log(`巡演脚本：${S.label}  [${S.id}]  ·  专属场景 ${S.extras.length} 个`);
 console.log(`全功能自动测试：${pass} 通过 / ${fail} 失败（共 ${pass + fail} 项）`);
 if (failures.length) console.log(`失败项：\n  - ${failures.join('\n  - ')}`);
-console.log(`视频：${okEncode ? OUT : '（未生成）'}${okEncode ? `  ${sizeMB} MB` : ''}`);
+console.log(`视频：${okEncode ? OUT : NO_ENCODE ? '（--no-encode 跳过）' : '（未生成）'}${okEncode ? `  ${sizeMB} MB` : ''}`);
 console.log(`时长：约 ${(tourMs / 1000).toFixed(1)} s · ${timeline.length} 帧`);
 if (captureFailures.length) console.log(`抓帧警告：${captureFailures.length} 次（${captureFailures[0]}）`);
 console.log('='.repeat(60));
 
-process.exit(fail || !okEncode ? 1 : 0);
+process.exit(fail || (!NO_ENCODE && !okEncode) ? 1 : 0);

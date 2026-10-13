@@ -147,11 +147,19 @@ export function faceInfos(shape: any): FaceInfo[] {
     } catch {
       /* 退化面 */
     }
-    // 面积加权的平均法向（用三角网格）
+    // 面积加权的平均法向（用三角网格）。
+    // ⚠️ 闭合曲面（整圆柱侧面 / 球面 / 圆环面）的径向法向会**互相抵消**，和为 ~1e-15。
+    // 此时绝不能回落到固定的 [0,0,1]——那是个「朝上的假法向」，会让「按 normal[2] 挑顶面」
+    // 的逻辑误选到侧面上（2πrh > πr² 时侧面面积更大）。回落到**最大三角形**的法向：
+    // 同样是实测数据，且对圆柱侧面必然是径向（normal[2] ≈ 0），不会伪装成平面。
     const m = tessellate(f, { linearDeflection: 0.4, angularDeflection: 0.6 });
     let nx = 0;
     let ny = 0;
     let nz = 0;
+    let bx = 0;
+    let by = 0;
+    let bz = 0;
+    let bestCross = 0;
     for (let t = 0; t < m.triangleCount; t++) {
       const i0 = m.indices[t * 3] * 3;
       const i1 = m.indices[t * 3 + 1] * 3;
@@ -165,12 +173,20 @@ export function faceInfos(shape: any): FaceInfo[] {
       const cx = uy * vz - uz * vy;
       const cy = uz * vx - ux * vz;
       const cz = ux * vy - uy * vx;
-      const L = Math.hypot(cx, cy, cz) || 1;
-      nx += cx / L;
-      ny += cy / L;
-      nz += cz / L;
+      const cross = Math.hypot(cx, cy, cz); // = 2×三角形面积
+      if (cross < 1e-12) continue;
+      nx += cx / cross;
+      ny += cy / cross;
+      nz += cz / cross;
+      if (cross > bestCross) {
+        bestCross = cross;
+        bx = cx / cross;
+        by = cy / cross;
+        bz = cz / cross;
+      }
     }
     if (Math.hypot(nx, ny, nz) > 1e-9) normal = norm([nx, ny, nz]);
+    else if (bestCross > 0) normal = [bx, by, bz];
 
     // 解析曲面类型 + 轴线（供装配拾取：平面 / 圆柱面 / 圆锥面…）
     let surfaceType: FaceSurfaceType = 'other';

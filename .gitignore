@@ -13,6 +13,9 @@ dist/
 tools/.ktest/
 tools/.ocjs.esm.mjs
 
+# 巡演脚本轮换状态（每次运行都变，不入库）
+tools/tour/.last-script.json
+
 # 工具内部的应用标记文件（非项目产物）
 *.genie
 

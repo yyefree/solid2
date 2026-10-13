@@ -27,7 +27,9 @@
     "test:shape": "node tools/run-ts.mjs tools/sketch-shape-test.ts",
     "test:kernel": "node tools/run-ts.mjs tools/kernel-test.ts",
     "test:browser": "node tools/browser-smoke.mjs",
-    "demo:video": "node tools/all-features-demo.mjs"
+    "demo:video": "node tools/all-features-demo.mjs",
+    "demo:list": "node tools/all-features-demo.mjs --list",
+    "demo:probe": "node tools/all-features-demo.mjs --probe"
   },
   "dependencies": {
     "esbuild": "^0.28.2",
