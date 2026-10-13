@@ -17,6 +17,12 @@ import { buildMenubar } from './ui/menubar';
 import { buildStatusbar } from './ui/statusbar';
 import { buildViewcube } from './ui/viewcube';
 import { buildDrawingView } from './ui/drawingview';
+import { buildHeadsUp } from './ui/headsup';
+import { buildTriad } from './ui/triad';
+import { buildConfirmationCorner } from './ui/confirmation';
+import { installContextMenu } from './ui/contextmenu';
+import { installMouseGestures } from './ui/shortcutbar';
+import { installHotkeys } from './app/hotkeys';
 import { el } from './ui/dom';
 import './styles/theme.css';
 
@@ -87,13 +93,28 @@ async function boot() {
 
     buildDrawingView(app, drawingWrap);
 
-    // ---------- 视口浮动工具条 ----------
-    const vpToolbar = el('div', { class: 'vp-toolbar' });
-    vpToolbar.appendChild(el('button', { title: '整屏显示', onClick: () => app.zoomFit() }, '⊡'));
-    vpToolbar.appendChild(el('button', { title: '主视', onClick: () => app.setView('front') }, 'F'));
-    vpToolbar.appendChild(el('button', { title: '俯视', onClick: () => app.setView('top') }, 'T'));
-    vpToolbar.appendChild(el('button', { title: '等轴测', onClick: () => app.setView('iso') }, 'I'));
-    viewportWrap.appendChild(vpToolbar);
+    // ---------- SolidWorks 视口浮层 ----------
+    // Heads-up 视图工具栏（顶部居中）
+    const headsUpEl = el('div', { class: 'headsup-host' });
+    viewportWrap.appendChild(headsUpEl);
+    buildHeadsUp(app, headsUpEl);
+
+    // 参考三重轴（左下角）
+    const triadEl = el('div', { class: 'axis-triad' });
+    viewportWrap.appendChild(triadEl);
+    buildTriad(app, triadEl);
+
+    // 确认角（✓ / ✗，草图或选择时出现）
+    const confirmEl = el('div', { class: 'conf-host' });
+    viewportWrap.appendChild(confirmEl);
+    buildConfirmationCorner(app, confirmEl);
+
+    // 右键上下文菜单
+    installContextMenu(app, viewportEl);
+    // 鼠标手势（右键拖动）
+    installMouseGestures(app, viewportEl);
+    // 全局热键表（SolidWorks 一致）
+    installHotkeys(app);
 
     // ---------- 视口信息浮层 ----------
     const vpInfo = el('div', { class: 'vp-info' });

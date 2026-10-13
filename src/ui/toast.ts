@@ -128,6 +128,43 @@ export function promptNumber(
   });
 }
 
+/** 文本输入对话框 */
+export function promptText(
+  title: string,
+  label: string,
+  value: string,
+  onOk: (v: string) => void
+): void {
+  const input = el('input', { class: 'inp wide', type: 'text', value }) as HTMLInputElement;
+  const body = el('div', { class: 'field' }, el('label', { text: label }), el('div', { class: 'val' }, input));
+  const close = modal({
+    title,
+    body,
+    actions: [
+      { label: '取消' },
+      {
+        label: '确定',
+        primary: true,
+        onClick: () => {
+          const v = input.value.trim();
+          if (v) onOk(v);
+        },
+      },
+    ],
+  });
+  setTimeout(() => {
+    input.focus();
+    input.select();
+  }, 30);
+  input.addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Enter') {
+      const v = input.value.trim();
+      if (v) onOk(v);
+      close();
+    }
+  });
+}
+
 /** 确认对话框 */
 export function confirmDialog(title: string, message: string, onYes: () => void): void {
   modal({

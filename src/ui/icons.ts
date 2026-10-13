@@ -212,6 +212,103 @@ export const ICONS: Record<string, string> = {
   warning: S(`<path d="M8 2 14.5 13.5h-13z"/><path d="M8 6v3.5"/><circle cx="8" cy="11.6" r=".75" fill="currentColor" stroke="none"/>`),
   info: S(`<circle cx="8" cy="8" r="6"/><path d="M8 7.2v4"/><circle cx="8" cy="4.9" r=".75" fill="currentColor" stroke="none"/>`),
 
+  // ============ SolidWorks 界面：菜单 / 工具栏 / 状态栏 ============
+  /** 打印 */
+  print: S(`<path d="M4.5 6V2.5h7V6"/><path d="M2.5 6h11v5h-2.5v3h-6v-3H2.5z"/><path d="M11 8.4h.8"/>`),
+  /** 剪切 */
+  cut: S(`<path d="M4.4 2.2 11.6 11.4M11.6 2.2 4.4 11.4"/><circle cx="4.2" cy="13" r="1.8"/><circle cx="11.8" cy="13" r="1.8"/>`),
+  /** 复制 */
+  copy: S(`<rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5V3a.5.5 0 0 0-.5-.5H3a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .5.5h2.5"/>`),
+  /** 粘贴 */
+  paste: S(`<path d="M5.5 3H3.5v11h9V3h-2"/><rect x="5.5" y="1.6" width="5" height="2.6" rx=".7"/><path d="M5.5 8.5h5M5.5 11h3.5"/>`),
+  /** 删除（垃圾桶） */
+  trash: S(`<path d="M2.5 4.2h11"/><path d="M4 4.2 4.8 13.5h6.4L12 4.2"/><path d="M6 4.2V2.5h4v1.7"/><path d="M6.6 7v4M9.4 7v4"/>`),
+  /** 选项 / 齿轮（带滑块） */
+  options: S(`<path d="M2 4.5h12M2 11.5h12"/><circle cx="5.5" cy="4.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="10.5" cy="11.5" r="1.6" fill="currentColor" stroke="none"/>`),
+  /** 宏 / 脚本 */
+  macro: S(`<rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1.2"/><path d="M1.8 5.6h12.4"/><path d="M4.6 8.4 6.4 10.2l-1.8 1.8M8 12h3.4"/>`),
+  /** 窗口 */
+  window: S(`<rect x="1.6" y="3" width="12.8" height="10" rx="1.2"/><path d="M1.6 6h12.8"/><path d="M4 1.6h10.4v9" opacity=".5"/>`),
+  /** 关于 / 信息圆圈 */
+  about: S(`<circle cx="8" cy="8" r="6.2"/><path d="M8 7.4v4"/><circle cx="8" cy="4.9" r=".75" fill="currentColor" stroke="none"/>`),
+  /** 教程 / 书本 */
+  book: S(`<path d="M2.4 3.2c2-.9 3.6-.9 5.6 0v9.6c-2-.9-3.6-.9-5.6 0z"/><path d="M13.6 3.2c-2-.9-3.6-.9-5.6 0v9.6c2-.9 3.6-.9 5.6 0z"/>`),
+  /** 搜索 / 查找 */
+  search: S(`<circle cx="7" cy="7" r="4.4"/><path d="M10.3 10.3 14 14"/>`),
+  /** 放大镜（SolidWorks 视图工具） */
+  magnifier: S(`<circle cx="6.8" cy="6.8" r="4.2"/><path d="M9.9 9.9 14 14"/><path d="M4.8 6.8h4M6.8 4.8v4"/>`),
+  /** 上一视图 */
+  prevView: S(`<path d="M8 2.2 14 5.4v5.2L8 13.8 2 10.6V5.4z"/><path d="M2 5.4 8 8.6l6-3.2M8 8.6v5.2" opacity=".45"/><path d="M13.6 2.6A7 7 0 0 0 2.6 6" stroke-dasharray="2 1.4"/><path d="M1.6 3.2 2.7 6.1 5.5 5.2"/>`),
+  /** 剖面视图 */
+  sectionCut: S(`<path d="M2 2.6h12v10.8H2z"/><path d="M2 8h12"/><path d="M4.2 3.6 6.4 8l-2.2 4.4M11.8 3.6 9.6 8l2.2 4.4"/><path d="M2 8h12" stroke-dasharray="1.6 1.4"/>`),
+  /** 显示样式（半明暗球） */
+  displayStyle2: S(`<circle cx="8" cy="8" r="6.2"/><path d="M8 1.8a6.2 6.2 0 0 1 0 12.4z" fill="currentColor" stroke="none" opacity=".32"/>`),
+  /** 隐藏 / 显示项目（眼睛 + 齿轮） */
+  hideShowItems: S(`<path d="M1.6 7.4S4 3.6 8 3.6s6.4 3.8 6.4 3.8S12 11.2 8 11.2 1.6 7.4 1.6 7.4z"/><circle cx="8" cy="7.4" r="1.8"/><path d="M5.6 13.6h5.2" opacity=".6"/>`),
+  /** 应用布景（球 + 底板） */
+  applyScene: S(`<circle cx="8" cy="6.4" r="4"/><path d="M2.4 13.6h11.2"/><path d="M5.4 6.4a2.6 2.6 0 0 1 5.2 0" opacity=".55"/>`),
+  /** 视图设置（滑块面板） */
+  viewSettings: S(`<rect x="2" y="2.6" width="12" height="10.8" rx="1.2"/><path d="M4.6 5.6h6.8M4.6 8h6.8M4.6 10.4h4.4"/><circle cx="6.6" cy="5.6" r="1.1" fill="currentColor" stroke="none"/><circle cx="9.4" cy="8" r="1.1" fill="currentColor" stroke="none"/>`),
+  /** 显示模式：透视 */
+  perspective: S(`<path d="M2.6 3.4 8 5.4l5.4-2v9.2L8 10.6l-5.4 2z"/><path d="M8 5.4v5.2" opacity=".5"/>`),
+  /** 显示模式：正投影 */
+  orthographic: S(`<path d="M2.6 3.4h10.8v9.2H2.6z"/><path d="M2.6 6.6h10.8M2.6 9.6h10.8" opacity=".5"/>`),
+  /** 正视于（法向视图） */
+  normalTo: S(`<path d="M8 2.2 14 5.4v5.2L8 13.8 2 10.6V5.4z"/><path d="M2 5.4 8 8.6l6-3.2M8 8.6v5.2" opacity=".4"/><path d="M8 1.4v4.6"/><circle cx="8" cy="6.4" r="1.5" fill="currentColor" stroke="none"/>`),
+  /** 旋转视图 */
+  rotate: S(`<path d="M13 8a5 5 0 1 1-1.6-3.7"/><path d="M13.6 2.2v3.2h-3.2"/>`),
+  /** 平移视图 */
+  pan: S(`<path d="M8 1.8v12.4M1.8 8h12.4" opacity=".35"/><path d="M8 2.2 6.2 4M8 2.2l1.8 1.8M8 13.8 6.2 12M8 13.8l1.8-1.8M2.2 8 4 6.2M2.2 8l1.8 1.8M13.8 8 12 6.2M13.8 8l-1.8 1.8"/>`),
+  /** 缩放 */
+  zoom: S(`<circle cx="7" cy="7" r="4.4"/><path d="M10.3 10.3 14 14"/><path d="M4.8 7h4.4"/>`),
+  /** 重建（红绿灯式刷新箭头） */
+  rebuildModel: S(`<path d="M3 8a5 5 0 0 1 8.5-3.6"/><path d="M13 8a5 5 0 0 1-8.5 3.6"/><path d="M11.6 2v2.6h-2.6M4.4 14v-2.6h2.6"/>`),
+  /** 单位系统（砝码） */
+  unit: S(`<path d="M8 2.2 10.6 7H5.4z"/><path d="M3.2 7h9.6l1.4 6.4H1.8z"/><path d="M6.6 10h2.8"/>`),
+  /** 坐标系 */
+  coordSystem: S(`<path d="M3 13V3M3 13h10"/><path d="M3 13 12 6" opacity=".5"/><path d="M1.8 4.4 3 3l1.2 1.4M11.6 11.8 13 13l-1.4 1.2"/>`),
+  /** 选择过滤器 */
+  filter: S(`<path d="M2 3.4h12l-4.6 5.2v5L6.6 12V8.6z"/>`),
+  /** 快速提示（灯泡） */
+  tip: S(`<path d="M8 1.8a4.2 4.2 0 0 0-2.4 7.6v1.8h4.8V9.4A4.2 4.2 0 0 0 8 1.8z"/><path d="M6.2 13.6h3.6"/><path d="M8 6.2v3" opacity=".5"/>`),
+  /** 历史记录（时钟 + 箭头） */
+  history: S(`<circle cx="8" cy="8" r="5.6"/><path d="M8 4.6V8l2.4 1.6"/><path d="M2.4 3.4v2.8h2.8"/>`),
+  /** 注解 */
+  annotation2: S(`<path d="M2 3.2h12v7.2H8l-3 3.2v-3.2H2z"/><path d="M5 6.2h6M5 8.2h3.6"/>`),
+  /** 材料 */
+  material: S(`<path d="M8 1.8 13.6 5v6L8 14.2 2.4 11V5z"/><path d="M2.4 5 8 8.2 13.6 5M8 8.2v6" opacity=".5"/><path d="M5.2 3.4 10.8 6.6" opacity=".35"/>`),
+  /** 组合曲线 / 折线 */
+  polyline: S(`<path d="M2 12.6 5.6 6 9.4 10.4 14 3.4"/><circle cx="2" cy="12.6" r="1.1" fill="currentColor" stroke="none"/><circle cx="5.6" cy="6" r="1.1" fill="currentColor" stroke="none"/><circle cx="9.4" cy="10.4" r="1.1" fill="currentColor" stroke="none"/><circle cx="14" cy="3.4" r="1.1" fill="currentColor" stroke="none"/>`),
+  /** 3D 草图 */
+  sketch3d: S(`<path d="M2 12.6 5.6 6 9.4 10.4 14 3.4"/><path d="M2 12.6V3M2 12.6h12" opacity=".4"/>`),
+  /** 剪裁实体（剪刀） */
+  trimEntities: S(`<path d="M4.6 2.4 11.4 10.4M11.4 2.4 4.6 10.4"/><circle cx="4.4" cy="12.4" r="1.7"/><circle cx="11.6" cy="12.4" r="1.7"/>`),
+  /** 等距实体（偏移） */
+  offsetEntities: S(`<path d="M2.4 4.6h5.2a3.4 3.4 0 0 1 0 6.8H2.4"/><path d="M2.4 8h5.2a1.2 1.2 0 0 0 0-2.4H2.4" stroke-dasharray="1.6 1.3"/>`),
+  /** 添加几何关系 */
+  addRelation2: S(`<circle cx="4.4" cy="11.4" r="2.2"/><circle cx="11.6" cy="4.6" r="2.2"/><path d="M6.2 9.8 9.8 6.2" stroke-dasharray="1.6 1.3"/>`),
+  /** 显示隐藏（眼睛+箭头） */
+  hideShow: S(`<path d="M1.6 8S4 3.8 8 3.8 14.4 8 14.4 8 12 12.2 8 12.2 1.6 8 1.6 8z"/><circle cx="8" cy="8" r="1.9"/><path d="M8 1.2v1.8" opacity=".6"/>`),
+  /** 布景/灯光 */
+  lights: S(`<path d="M4.4 1.8h7.2v3.2L10 7.4H6L4.4 5z"/><path d="M6.6 9.4h2.8v2.2H6.6z"/><path d="M5.6 13.4h4.8"/>`),
+  /** 相机 / 视图 */
+  camera: S(`<path d="M1.8 5.4h3.4l1.2-1.8h3.2l1.2 1.8h3.4v7.2H1.8z"/><circle cx="8" cy="8.8" r="2.4"/>`),
+  /** 关闭文档 */
+  closeDoc: S(`<path d="M3.6 1.8h5.8L12.4 5v9.2H3.6z"/><path d="M9.4 1.8V5h3"/><path d="M6 8.2 10 12.2M10 8.2 6 12.2"/>`),
+  /** 重命名 */
+  rename: S(`<path d="M2.4 12.4 3 9.4 10.4 2l3 3L6 12.4z"/><path d="M9.2 3.2 12.2 6.2"/><path d="M2.4 14.4h11.2" opacity=".5"/>`),
+  /** 父子关系 */
+  parents: S(`<rect x="1.6" y="2.4" width="5" height="3.4" rx=".6"/><rect x="9.4" y="2.4" width="5" height="3.4" rx=".6"/><rect x="5.5" y="10.2" width="5" height="3.4" rx=".6"/><path d="M4.1 5.8v2.4h7.8V5.8M8 8.2v2"/>`),
+  /** 压缩 / 抑制 */
+  suppress: S(`<circle cx="8" cy="8" r="6"/><path d="M4.6 8h6.8"/>`),
+  /** 解压缩 / 恢复 */
+  unsuppress: S(`<circle cx="8" cy="8" r="6"/><path d="M4.6 8h6.8M8 4.6v6.8"/>`),
+  /** 回退控制棒 */
+  rollback: S(`<path d="M2 8h12"/><circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none"/><path d="M2 4.4v7.2M14 4.4v7.2"/>`),
+  /** 展开箭头（设计树） */
+  caretRight: `<svg class="ic" viewBox="0 0 16 16" width="12" height="12" fill="currentColor" stroke="none"><path d="M6 3.6 10.4 8 6 12.4z"/></svg>`,
+  caretDown: `<svg class="ic" viewBox="0 0 16 16" width="12" height="12" fill="currentColor" stroke="none"><path d="M3.6 6 8 10.4 12.4 6z"/></svg>`,
+
   // ============ AI ============
   /** 四角星火花（AI 助手） */
   ai: S(`<path d="M6.6 1.8 7.9 5.3 11.4 6.6 7.9 7.9 6.6 11.4 5.3 7.9 1.8 6.6 5.3 5.3z"/><path d="M12.4 10.2l.65 1.75 1.75.65-1.75.65-.65 1.75-.65-1.75-1.75-.65 1.75-.65z"/>`),

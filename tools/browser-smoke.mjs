@@ -18,7 +18,7 @@
  *   SMOKE_HEADFUL=1   显示浏览器窗口（调试用）
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -223,6 +223,32 @@ if (paramGroup) {
     check(`「${b.label}」图标 SVG 非空`, b.svgLen > 40, `svg ${b.svgLen} 字符`);
   }
 }
+
+// SolidWorks GUI 复刻一致性校验（纯 DOM，不依赖内核）
+const sw = await evaluate(`(() => {
+  const menuItems = [...document.querySelectorAll('.menubar .menu-item')].map(m => m.textContent.replace(/\\s+/g, ''));
+  const search = !!document.querySelector('.menu-search-input');
+  const headsUpBtns = document.querySelectorAll('.headsup .hu-btn').length;
+  const viewcube = !!document.querySelector('.viewcube svg');
+  const triad = !!document.querySelector('.axis-triad svg');
+  const conf = !!document.querySelector('.conf-host .conf-corner');
+  const statusRight = !!document.querySelector('.statusbar .sb-right');
+  const coord = !!document.querySelector('.sb-coord');
+  const unit = (document.querySelector('.sb-unit')?.textContent ?? '').trim();
+  const tabs = [...document.querySelectorAll('.rtab')].map(t => t.textContent.trim());
+  return { menuItems, search, headsUpBtns, viewcube, triad, conf, statusRight, coord, unit, tabs };
+})()`);
+const wantMenus = ['文件', '编辑', '视图', '插入', '工具', '窗口', '帮助'];
+check('菜单栏含 SolidWorks 七菜单', wantMenus.every((w) => sw.menuItems.some((m) => m.startsWith(w))), sw.menuItems.join(' '));
+check('菜单栏含命令搜索框', sw.search);
+const wantTabs = ['特征', '草图', '评估', '装配体', '工程图', '曲线', '视图', 'AI'];
+check('Ribbon 含 8 个 CommandManager 页签', wantTabs.every((w) => sw.tabs.includes(w)), sw.tabs.join(' '));
+check('Heads-up 视图工具栏已渲染（10 按钮）', sw.headsUpBtns === 10, '按钮数 ' + sw.headsUpBtns);
+check('视图立方（ViewCube）已渲染', sw.viewcube);
+check('参考三重轴（Triad）已渲染', sw.triad);
+check('确认角（✓/✗）已挂载', sw.conf);
+check('状态栏右侧区（坐标/单位/重建）已渲染', sw.statusRight && sw.coord);
+check('状态栏单位显示 mm', sw.unit === 'mm', sw.unit);
 
 // 点开「参数表」确认对话框与表达式表格渲染出来
 // 注意：Ribbon 点击会先 await 内核就绪，所以这里必须等内核加载完再做（放在 B 段之后）
@@ -1096,6 +1122,14 @@ check('AI「整体沿Z移动50」→ 体积不变 96000，包围盒上移',
   check('  平移后包围盒落在 X ∈ [90,110]',
     !!ai.extraMove.bbox && near(ai.extraMove.bbox.min[0], 90, 0.5),
     ai.extraMove.bbox ? JSON.stringify(ai.extraMove.bbox.min) : 'null');
+}
+
+if (process.env.SMOKE_SHOT) {
+  try {
+    const r = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(process.env.SMOKE_SHOT, Buffer.from(r.data, 'base64'));
+    console.log('screenshot ->', process.env.SMOKE_SHOT);
+  } catch (e) { console.log('shot failed', e.message); }
 }
 
 ws.close();

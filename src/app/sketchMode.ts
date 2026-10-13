@@ -926,11 +926,8 @@ export class SketchController {
       this.deleteSelection();
       return true;
     }
-    if (e.key === 'l' || e.key === 'L') this.setTool('line');
-    if (e.key === 'r' || e.key === 'R') this.setTool('rect');
-    if (e.key === 'c' || e.key === 'C') this.setTool('circle');
-    if (e.key === 'a' || e.key === 'A') this.setTool('arc');
-    if (e.key === 's' || e.key === 'S') this.setTool('select');
+    // 单字母草图工具键（L 直线 / C 圆 / A 圆弧 / T 剪裁 …）由 ../app/hotkeys 统一分发，
+    // 以保证与 SolidWorks 的全局键位表一致（S 必须是快捷方式栏，不能是「选择」）。
     return false;
   }
 

@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { CadDocument, newSketchFeature } from '../doc/model';
 import type { Feature, FeatureId, PlaneRef, SketchFeature } from '../doc/types';
+import { FEATURE_LABEL } from '../doc/types';
 import {
   resolveExpressions,
   previewExpression,
@@ -41,7 +42,19 @@ export interface Selection {
   edges: number[];
 }
 
-export type AppEvent = 'change' | 'selection' | 'mode' | 'status' | 'tree' | 'props' | 'drawing' | 'params';
+export type AppEvent =
+  | 'change'
+  | 'selection'
+  | 'mode'
+  | 'status'
+  | 'tree'
+  | 'props'
+  | 'drawing'
+  | 'params'
+  /** 视图状态变化（投影模式 / 布景 / 剖面 / 显示样式）—— 供参考三重轴与工具栏刷新 */
+  | 'view'
+  /** 命令激活状态变化 —— 供确认角刷新 */
+  | 'command';
 
 export interface StatusInfo {
   text: string;
@@ -131,7 +144,7 @@ export class App {
 
     this.viewport.start();
     this.bindPointer();
-    this.bindKeyboard();
+    // 键盘热键由 ../app/hotkeys 统一注册（SolidWorks 键位表）
   }
 
   /** 当前用于显示的可序列化模型（参数化优先，其次导入） */
@@ -400,7 +413,7 @@ export class App {
     this.displayStyle = style;
     this.shapeView?.applyStyle(style);
     this.viewport.invalidate();
-    this.emit('change');
+    this.emit('change', 'view');
   }
 
   // ============================================================
@@ -520,44 +533,6 @@ export class App {
     // 双击结束「连续点击」类工具（B 样条）
     dom.addEventListener('dblclick', () => {
       if (this.mode === 'sketch') this.sketch.finishBSpline();
-    });
-  }
-
-  private bindKeyboard(): void {
-    window.addEventListener('keydown', (e) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
-      if (this.sketch.handleKey(e)) {
-        e.preventDefault();
-        return;
-      }
-      if (e.ctrlKey || e.metaKey) {
-        if (e.key === 'z' || e.key === 'Z') {
-          e.preventDefault();
-          if (e.shiftKey) this.redo();
-          else this.undo();
-          return;
-        }
-        if (e.key === 'y' || e.key === 'Y') {
-          e.preventDefault();
-          this.redo();
-          return;
-        }
-        if (e.key === 'a' || e.key === 'A') {
-          e.preventDefault();
-          this.sketch.selectAll();
-          return;
-        }
-        if (e.key === 's' || e.key === 'S') {
-          e.preventDefault();
-          this.saveProject();
-          return;
-        }
-      }
-      if (e.key === 'Delete' && this.mode === 'model') {
-        this.clearSelection();
-      }
-      if (e.key === 'f' || e.key === 'F') this.zoomFit();
     });
   }
 
@@ -1126,7 +1101,7 @@ export class App {
     this.showOrigin = v;
     if (this.originGroup) this.originGroup.visible = v;
     this.viewport.invalidate();
-    this.emit('change');
+    this.emit('change', 'view');
   }
 
   get sketchPlane(): SketchPlane {
@@ -1283,24 +1258,187 @@ export class App {
 
   setView(dir: ViewDir): void {
     this.viewport.setView(dir);
+    this.emit('view');
   }
 
   zoomFit(): void {
     this.viewport.zoomFit(this.currentModel()?.bbox ?? null);
+    this.emit('view');
+  }
+
+  /** 缩小视图（SolidWorks: Z） */
+  zoomOut(): void {
+    this.viewport.zoomBy(1 / 1.25);
+    this.emit('view');
+  }
+
+  /** 放大视图（SolidWorks: Shift+Z） */
+  zoomIn(): void {
+    this.viewport.zoomBy(1.25);
+    this.emit('view');
+  }
+
+  /** 上一视图（SolidWorks 视图工具栏） */
+  prevView(): void {
+    if (!this.viewport.prevView()) notify.info('没有更早的视图');
+    this.emit('view');
+  }
+
+  /** 缩放至区域（SolidWorks 视图工具栏） */
+  zoomArea(rect: { x: number; y: number; w: number; h: number }): void {
+    this.viewport.zoomArea(rect);
+    this.emit('view');
+  }
+
+  /** 绕视点旋转视图（SolidWorks: 方向键 15°，Shift+方向键 90°） */
+  rotateView(yawDeg: number, pitchDeg = 0): void {
+    this.viewport.rotateView(yawDeg, pitchDeg);
+    this.emit('view');
+  }
+
+  /** 平移视图（SolidWorks: Ctrl+方向键） */
+  panView(dx: number, dy: number): void {
+    this.viewport.panView(dx, dy);
+    this.emit('view');
+  }
+
+  /** 正视于选中面（SolidWorks: Ctrl+8） */
+  normalToSelection(): void {
+    const faces = this.selectedFaceInfos();
+    if (faces.length === 1) {
+      const f = faces[0];
+      this.viewport.normalTo(f.normal as [number, number, number], f.centroid as [number, number, number]);
+    } else {
+      this.viewport.setView('front');
+    }
+    this.emit('view');
+  }
+
+  get projection(): 'perspective' | 'orthographic' {
+    return this.viewport.projection;
+  }
+
+  /** 透视 / 正投影（SolidWorks「显示模式」） */
+  setProjection(mode: 'perspective' | 'orthographic'): void {
+    this.viewport.setProjection(mode);
+    this.setStatus(mode === 'perspective' ? '显示模式：透视' : '显示模式：正投影', 'ok');
+    this.emit('view');
+  }
+
+  toggleProjection(): void {
+    this.setProjection(this.projection === 'perspective' ? 'orthographic' : 'perspective');
+  }
+
+  get sceneName(): string {
+    return this._sceneName;
+  }
+
+  /** 应用布景（SolidWorks 视图工具栏） */
+  setScene(name: '默认' | '单色灰' | '深色' | '白色'): void {
+    this._sceneName = name;
+    this.viewport.setScene(name);
+    this.setStatus(`布景：${name}`, 'ok');
+    this.emit('view');
+  }
+
+  /** 剖面视图（SolidWorks 视图工具栏） */
+  setSection(axis: 'none' | 'x' | 'y' | 'z'): void {
+    this._sectionAxis = axis;
+    this.viewport.setSection(axis, 0, this.currentModel()?.bbox ?? null);
+    this.setStatus(axis === 'none' ? '剖面视图：关闭' : `剖面视图：沿 ${axis.toUpperCase()} 轴`, 'ok');
+    this.emit('view');
+  }
+
+  toggleSection(axis: 'x' | 'y' | 'z'): void {
+    this.setSection(this._sectionAxis === axis ? 'none' : axis);
+  }
+
+  get sectionAxis(): 'none' | 'x' | 'y' | 'z' {
+    return this._sectionAxis;
+  }
+
+  private _sceneName: '默认' | '单色灰' | '深色' | '白色' = '默认';
+  private _sectionAxis: 'none' | 'x' | 'y' | 'z' = 'none';
+
+  /** 删除当前选择（SolidWorks: Delete） */
+  deleteSelection(): void {
+    if (this.mode === 'sketch') {
+      this.sketch.deleteSelection();
+      return;
+    }
+    if (this.selection.faces.length || this.selection.edges.length) {
+      const n = this.selection.faces.length + this.selection.edges.length;
+      this.clearSelection();
+      notify.info(`已清除 ${n} 项选择（删除几何请用「删除面/删除实体」命令）`);
+      return;
+    }
+    notify.info('没有可删除的对象');
+  }
+
+  /** Esc：退出当前命令 / 清除选择 / 退出草图 */
+  escape(): void {
+    if (this.mode === 'sketch') {
+      this.sketch.handleKey(new KeyboardEvent('keydown', { key: 'Escape' }));
+      return;
+    }
+    if (this.selection.faces.length || this.selection.edges.length) {
+      this.clearSelection();
+      return;
+    }
+    if (this.dimMode) {
+      this.toggleDimensionMode();
+    }
+  }
+
+  /** 新建文档（SolidWorks: Ctrl+N） */
+  newProject(): void {
+    this.pushUndo();
+    this.doc = new CadDocument();
+    this.model = null;
+    this.importedModel = null;
+    this.assembly = null;
+    this.drawing = null;
+    this.mode = 'model';
+    this.editingSketch = null;
+    this.activeSketchFeature = null;
+    this.rebuild({ fit: true });
+    this.emit('tree', 'props', 'params', 'mode');
+    notify.ok('已新建零件');
+  }
+
+  /** 重建并刷新视图（SolidWorks: Ctrl+B） */
+  rebuildModel(): void {
+    this.rebuild();
+    this.emit('view');
+  }
+
+  /** 强制重建（SolidWorks: Ctrl+Q）—— 丢弃表达式缓存重新求值 */
+  forceRebuild(): void {
+    this.lastResolve = null;
+    this.paramValues = {};
+    this.rebuild();
+    this.emit('view');
+    notify.ok('已强制重建');
+  }
+
+  /** 重绘屏幕（SolidWorks: Ctrl+R） */
+  redraw(): void {
+    this.viewport.invalidate();
+    this.emit('view');
   }
 
   togglePlanes(v: boolean): void {
     this.showPlanes = v;
     this.viewport.setPlanesVisible(v);
     this.viewport.invalidate();
-    this.emit('change');
+    this.emit('change', 'view');
   }
 
   toggleGrid(v: boolean): void {
     this.showGrid = v;
     this.viewport.setGridVisible(v);
     this.viewport.invalidate();
-    this.emit('change');
+    this.emit('change', 'view');
   }
 
   /** 实时预览（传入内核回传的网格结果，无 OCCT） */
@@ -1385,6 +1523,181 @@ export class App {
     if (!f) return;
     Object.assign(f.params as any, patch);
     this.rebuild();
+  }
+
+  // ============================================================
+  // 剪贴板 / 全选 / 属性 / 打印（SolidWorks 编辑菜单）
+  // ============================================================
+  /** 全选：草图选全部实体，模型选全部面，装配体选全部组件 */
+  selectAll(): void {
+    if (this.mode === 'sketch') {
+      this.sketch.selectAll();
+      return;
+    }
+    if (this.mode === 'assembly') {
+      const a = this.assembly;
+      if (!a) return;
+      const c = a.components[0];
+      if (c) {
+        this.assemblyPicks = [{ comp: c.id, localPoint: [0, 0, 0], localDir: [0, 0, 1], kind: 'planar' }];
+        this.emit('selection');
+      }
+      return;
+    }
+    const m = this.currentModel();
+    if (!m) {
+      notify.info('没有可选择的几何');
+      return;
+    }
+    this.selection = {
+      faces: m.mesh.faceMetas.map((_, i) => i),
+      edges: [],
+    };
+    this.refreshHighlight();
+    this.emit('selection', 'props');
+    this.setStatus(`已全选 ${this.selection.faces.length} 个面`, 'ok');
+  }
+
+  /** 复制：有选择时复制选择摘要，无选择时复制整份特征定义（JSON） */
+  private clipboardText(): string {
+    const n = this.selection.faces.length + this.selection.edges.length;
+    if (n) {
+      const faces = this.selectedFaceInfos().map((f) => ({
+        surfaceType: f.surfaceType,
+        area: round2(f.area),
+        centroid: f.centroid.map(round2),
+      }));
+      const edges = this.selectedEdgeInfos().map((e) => ({
+        curveType: e.curveType,
+        length: round2(e.length),
+        mid: e.mid.map(round2),
+      }));
+      return JSON.stringify({ kind: 'solid2.selection', faces, edges }, null, 2);
+    }
+    return JSON.stringify({ kind: 'solid2.features', features: this.doc.toJSON().features }, null, 2);
+  }
+
+  async copySelection(): Promise<void> {
+    const text = this.clipboardText();
+    try {
+      await navigator.clipboard.writeText(text);
+      const n = this.selection.faces.length + this.selection.edges.length;
+      notify.ok(n ? `已复制 ${n} 项选择信息` : '已复制零件特征定义');
+    } catch {
+      notify.err('剪贴板不可用（浏览器未授权）');
+    }
+  }
+
+  async cutSelection(): Promise<void> {
+    await this.copySelection();
+    if (this.selection.faces.length || this.selection.edges.length) this.clearSelection();
+  }
+
+  async pasteFromClipboard(): Promise<void> {
+    let text = '';
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      notify.err('剪贴板不可用（浏览器未授权）');
+      return;
+    }
+    try {
+      const data = JSON.parse(text);
+      const feats = data?.features ?? data?.doc?.features;
+      if (!Array.isArray(feats) || !feats.length) {
+        notify.info('剪贴板内容不是可识别的特征定义');
+        return;
+      }
+      this.loadFeatures(feats as Feature[], { replace: false, fit: true });
+      notify.ok(`已粘贴 ${feats.length} 个特征`);
+    } catch {
+      notify.info('剪贴板内容不是可识别的特征定义');
+    }
+  }
+
+  /** 属性（SolidWorks: Alt+Enter） */
+  showProperties(): void {
+    const s = this.modelSummary();
+    const rows: (string | number)[][] = [
+      ['文档类型', { model: '零件', sketch: '零件（编辑草图）', assembly: '装配体', drawing: '工程图' }[this.mode]],
+      ['特征数', this.doc.features.length],
+      ['重建次数', this.doc.rebuildCount],
+      ['面 / 边 / 实体', `${s.faces} / ${s.edges} / ${s.solids}`],
+      ['全局参数', this.doc.params.length],
+      ['单位系统', 'MMGS（毫米、克、秒）'],
+      ['投影模式', this.projection === 'perspective' ? '透视' : '正投影'],
+      ['布景', this._sceneName],
+    ];
+    const last = this.doc.features[this.doc.features.length - 1];
+    if (last) {
+      rows.push(['最后特征', last.name]);
+      rows.push(['最后特征类型', FEATURE_LABEL[last.type] ?? last.type]);
+    }
+    tableModal('属性', ['项目', '值'], rows, '按 Alt+Enter 随时查看当前文档属性。');
+  }
+
+  /** 打印当前视图（SolidWorks: Ctrl+P）—— 用离屏 iframe 只打印图形区截图 */
+  printView(): void {
+    const dataUrl = this.viewport.snapshot();
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument;
+    if (!doc) {
+      frame.remove();
+      notify.err('打印不可用');
+      return;
+    }
+    doc.open();
+    doc.write(
+      `<!doctype html><html><head><meta charset="utf-8"><title>Solid2 打印</title>` +
+        `<style>@page{margin:12mm}html,body{margin:0}img{width:100%;display:block}</style></head>` +
+        `<body><img src="${dataUrl}"></body></html>`
+    );
+    doc.close();
+    const go = () => {
+      try {
+        frame.contentWindow?.focus();
+        frame.contentWindow?.print();
+        notify.ok('已生成打印预览');
+      } catch (e) {
+        notify.err(`打印失败：${(e as Error).message}`);
+      }
+      setTimeout(() => frame.remove(), 8000);
+    };
+    const img = doc.querySelector('img');
+    if (img && !img.complete) img.addEventListener('load', go, { once: true });
+    else setTimeout(go, 120);
+  }
+
+  /** 切换文档类型（SolidWorks: Ctrl+Tab 的等价物：零件 → 装配体 → 工程图） */
+  cycleDocument(): void {
+    const order: AppMode[] = ['model', 'assembly', 'drawing'];
+    const i = order.indexOf(this.mode);
+    const next = order[(i + 1) % order.length];
+    this.setMode(next);
+    notify.info(`已切换到${next === 'model' ? '零件' : next === 'assembly' ? '装配体' : '工程图'}`);
+  }
+
+  /** 隐藏 / 显示（SolidWorks: Tab）—— 装配体下切换已拾取组件的可见性 */
+  toggleTabVisibility(): void {
+    if (this.mode !== 'assembly') {
+      notify.info('隐藏 / 显示（Tab）用于装配体中切换组件可见性');
+      return;
+    }
+    const a = this.assembly;
+    const ids = [...new Set(this.assemblyPicks.map((p) => p.comp))];
+    if (!a || !ids.length) {
+      notify.info('请先在图形区点选要隐藏 / 显示的组件');
+      return;
+    }
+    for (const id of ids) {
+      const c = a.getComponent(id);
+      if (c) c.visible = !c.visible;
+    }
+    this.assemblyPicks = [];
+    void this.syncAssemblyScene();
+    notify.ok('已切换组件显示状态');
   }
 }
 
