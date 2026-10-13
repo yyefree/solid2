@@ -74,6 +74,8 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
   ]);
   const huFit = btn('view.fit', '整屏显示', 'zoomFit', () => app.zoomFit());
   const huZoom = btn('view.zoomArea', '缩放至区域', 'zoomArea', () => startZoomArea(app));
+  const huZoomIn = btn('view.zoomIn', '放大', 'zoomIn', () => app.viewport.zoomBy(0.8));
+  const huZoomOut = btn('view.zoomOut', '缩小', 'zoomOut', () => app.viewport.zoomBy(1.25));
   const huPrev = btn('view.prevView', '上一视图', 'prevView', () => app.prevView());
   const huSet = btn('view.settings', '视图设置', 'viewSettings', () => openViewSettings(app));
   const huProj = dropdown('view.projection', '显示模式', 'perspective', () => [
@@ -90,7 +92,7 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
       run: () => app.setProjection('orthographic'),
     },
   ]);
-  bar.append(huOrient, huStyle, huHide, huScene, huSection, huFit, huZoom, huPrev, huSet, huProj);
+  bar.append(huOrient, huStyle, huHide, huScene, huSection, huFit, huZoom, huZoomIn, huZoomOut, huPrev, huSet, huProj);
 
   host.appendChild(bar);
 

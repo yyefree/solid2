@@ -243,7 +243,7 @@ check('菜单栏含 SolidWorks 七菜单', wantMenus.every((w) => sw.menuItems.s
 check('菜单栏含命令搜索框', sw.search);
 const wantTabs = ['特征', '草图', '评估', '装配体', '工程图', '曲线', '视图', 'AI'];
 check('Ribbon 含 8 个 CommandManager 页签', wantTabs.every((w) => sw.tabs.includes(w)), sw.tabs.join(' '));
-check('Heads-up 视图工具栏已渲染（10 按钮）', sw.headsUpBtns === 10, '按钮数 ' + sw.headsUpBtns);
+check('Heads-up 视图工具栏已渲染（12 按钮）', sw.headsUpBtns === 12, '按钮数 ' + sw.headsUpBtns);
 check('视图立方（ViewCube）已渲染', sw.viewcube);
 check('参考三重轴（Triad）已渲染', sw.triad);
 check('确认角（✓/✗）已挂载', sw.conf);

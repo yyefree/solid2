@@ -182,6 +182,8 @@ export const ICONS: Record<string, string> = {
   // ============ 视图 ============
   zoomFit: S(`<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 14 14"/><path d="M4.5 7h5M7 4.5v5"/>`),
   zoomArea: S(`<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 14 14"/><path d="M4.8 4.8h2M4.8 4.8v2M9.2 9.2h-2M9.2 9.2v-2"/>`),
+  zoomIn: S(`<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 14 14"/><path d="M4.8 7h4.4M7 4.8v4.4"/>`),
+  zoomOut: S(`<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 14 14"/><path d="M4.8 7h4.4"/>`),
   viewOrient: S(`<path d="M8 1.6 14 4.8v6.4L8 14.4 2 11.2V4.8z"/><path d="M2 4.8 8 8l6-3.2"/><path d="M11.5 1.5v3M10 3h3" opacity=".5"/>`),
   displayStyle: S(`<circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor" stroke="none" opacity=".35"/>`),
   shaded: S(`<circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor" stroke="none"/>`),

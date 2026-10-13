@@ -120,6 +120,9 @@ export function buildMenubar(app: App, host: HTMLElement): void {
     btn.click();
   });
 
+  // Standard 工具栏「帮助」按钮 → 弹出快捷键一览
+  window.addEventListener('solid2:help', () => showHotkeyHelp(app));
+
   // ---------- 搜索命令 ----------
   const spacer = el('div', { class: 'menu-spacer' });
   host.appendChild(spacer);

@@ -15,6 +15,7 @@ import { buildFeatureTree } from './ui/featuretree';
 import { buildPropertyPanel } from './ui/propertypanel';
 import { buildTaskPane, buildConfigPanel } from './ui/taskpane';
 import { buildMenubar } from './ui/menubar';
+import { buildStdToolbar } from './ui/stdtoolbar';
 import { buildStatusbar } from './ui/statusbar';
 import { buildViewcube } from './ui/viewcube';
 import { buildDrawingView } from './ui/drawingview';
@@ -24,7 +25,8 @@ import { buildConfirmationCorner } from './ui/confirmation';
 import { installContextMenu } from './ui/contextmenu';
 import { installMouseGestures } from './ui/shortcutbar';
 import { installHotkeys } from './app/hotkeys';
-import { el } from './ui/dom';
+import { el, clear } from './ui/dom';
+import { icon } from './ui/icons';
 import './styles/theme.css';
 
 async function boot() {
@@ -40,6 +42,7 @@ async function boot() {
     // ---------- 构建页面骨架（快，不需要内核） ----------
     const appRoot = el('div', { class: 'app hidden' });
     const menubarEl = el('div', { class: 'menubar' });
+    const stdToolbarEl = el('div', { class: 'menubar-std' });
     const ribbonTabsEl = el('div', { class: 'ribbon-tabs' });
     const ribbonPanelEl = el('div', { class: 'ribbon' });
     const mainEl = el('div', { class: 'main' });
@@ -61,7 +64,7 @@ async function boot() {
     mainEl.append(leftPanel, viewportWrap, rightPanel);
     const statusbarEl = el('div', { class: 'statusbar' });
 
-    appRoot.append(menubarEl, ribbonTabsEl, ribbonPanelEl, mainEl, statusbarEl);
+    appRoot.append(menubarEl, stdToolbarEl, ribbonTabsEl, ribbonPanelEl, mainEl, statusbarEl);
     appHost.appendChild(appRoot);
 
     // ---------- 左侧面板选项卡：特征管理器 / 属性管理器 / 配置管理器 ----------
@@ -108,6 +111,7 @@ async function boot() {
 
     // ---------- 挂载 UI ----------
     buildMenubar(app, menubarEl);
+    buildStdToolbar(app, stdToolbarEl);
     renderRibbon(app, ribbonTabsEl, ribbonPanelEl);
     buildFeatureTree(app, leftBodyTree);
     buildPropertyPanel(app, leftBodyProp);
@@ -143,6 +147,37 @@ async function boot() {
     installMouseGestures(app, viewportEl);
     // 全局热键表（SolidWorks 一致）
     installHotkeys(app);
+
+    // ---------- 文档标签栏（SolidWorks 图形区底部：零件 / 装配体 / 工程图） ----------
+    const docTabsEl = el('div', { class: 'doc-tabs' });
+    viewportWrap.appendChild(docTabsEl);
+    const DOC_TABS = [
+      { id: 'model', label: '零件', ic: 'part' },
+      { id: 'assembly', label: '装配体', ic: 'assembly' },
+      { id: 'drawing', label: '工程图', ic: 'drawing' },
+    ];
+    const renderDocTabs = () => {
+      clear(docTabsEl);
+      for (const t of DOC_TABS) {
+        const active = app.mode === t.id;
+        docTabsEl.appendChild(
+          el(
+            'button',
+            {
+              class: `dtab ${active ? 'active' : ''}`,
+              type: 'button',
+              title: `切换到${t.label}`,
+              dataset: { dtab: t.id },
+              onClick: () => app.setMode(t.id as never),
+            },
+            el('span', { class: 'ic', html: icon(t.ic, 14) }),
+            el('span', { class: 'lbl', text: t.label })
+          )
+        );
+      }
+    };
+    renderDocTabs();
+    app.on('mode', renderDocTabs);
 
     // ---------- 视口信息浮层 ----------
     const vpInfo = el('div', { class: 'vp-info' });
