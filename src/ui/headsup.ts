@@ -35,80 +35,62 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
       openPopup(items(), r.left, r.bottom + 2, { cls: 'hu-menu' });
     });
 
-  // 1. 整屏显示
-  bar.appendChild(btn('view.fit', '整屏显示', 'zoomFit', () => app.zoomFit()));
-  // 2. 缩放至区域
-  bar.appendChild(btn('view.zoomArea', '缩放至区域', 'zoomArea', () => startZoomArea(app)));
-  // 3. 上一视图
-  bar.appendChild(btn('view.prevView', '上一视图', 'prevView', () => app.prevView()));
-  // 4. 剖面视图
-  bar.appendChild(
-    dropdown('view.section', '剖面视图', 'sectionCut', () => [
-      { label: '关闭剖面', icon: 'sectionCut', checked: app.sectionAxis === 'none', run: () => app.setSection('none') },
-      { sep: true },
-      { label: '沿 X 轴剖切', icon: 'right', checked: app.sectionAxis === 'x', run: () => app.setSection('x') },
-      { label: '沿 Y 轴剖切', icon: 'top', checked: app.sectionAxis === 'y', run: () => app.setSection('y') },
-      { label: '沿 Z 轴剖切', icon: 'front', checked: app.sectionAxis === 'z', run: () => app.setSection('z') },
-    ])
+  // SolidWorks Heads-up 布局（左→右）：视图定向 · 显示样式 · 隐藏/显示 · 布景 · 剖面 · 整屏显示 · 缩放至区域 · 上一视图 · 视图设置 · 显示模式
+  const huOrient = btn('view.orientation', '视图定向', 'viewOrient', () => openViewOrientation(app));
+  const huStyle = dropdown('view.displayStyle', '显示样式', 'displayStyle2', () => {
+    const mk = (label: string, ic: string, style: string) => ({
+      label,
+      icon: ic,
+      checked: app.displayStyle === style,
+      run: () => app.setDisplayStyle(style as never),
+    });
+    return [
+      mk('带边线上色', 'shaded', 'shadedEdges'),
+      mk('上色', 'realview', 'shaded'),
+      mk('消除隐藏线', 'hiddenLines', 'hidden'),
+      mk('线架图', 'wireframe', 'wireframe'),
+      mk('透明', 'transparency', 'transparent'),
+    ];
+  });
+  const huHide = dropdown('view.hideShow', '隐藏/显示项目', 'hideShowItems', () => [
+    { label: '基准面', icon: 'plane', checked: app.showPlanes, run: () => app.togglePlanes(!app.showPlanes) },
+    { label: '网格', icon: 'grid', checked: app.showGrid, run: () => app.toggleGrid(!app.showGrid) },
+    { label: '原点', icon: 'origin', checked: app.showOrigin, run: () => app.toggleOrigin(!app.showOrigin) },
+  ]);
+  const huScene = dropdown('view.scene', '应用布景', 'applyScene', () =>
+    (['默认', '单色灰', '深色', '白色'] as const).map((n) => ({
+      label: n,
+      icon: 'applyScene',
+      checked: app.sceneName === n,
+      run: () => app.setScene(n),
+    }))
   );
-  // 5. 视图定向
-  bar.appendChild(btn('view.orientation', '视图定向', 'viewOrient', () => openViewOrientation(app)));
-  // 6. 显示样式
-  bar.appendChild(
-    dropdown('view.displayStyle', '显示样式', 'displayStyle2', () => {
-      const mk = (label: string, ic: string, style: string) => ({
-        label,
-        icon: ic,
-        checked: app.displayStyle === style,
-        run: () => app.setDisplayStyle(style as never),
-      });
-      return [
-        mk('带边线上色', 'shaded', 'shadedEdges'),
-        mk('上色', 'realview', 'shaded'),
-        mk('消除隐藏线', 'hiddenLines', 'hidden'),
-        mk('线架图', 'wireframe', 'wireframe'),
-        mk('透明', 'transparency', 'transparent'),
-      ];
-    })
-  );
-  // 7. 隐藏/显示项目
-  bar.appendChild(
-    dropdown('view.hideShow', '隐藏/显示项目', 'hideShowItems', () => [
-      { label: '基准面', icon: 'plane', checked: app.showPlanes, run: () => app.togglePlanes(!app.showPlanes) },
-      { label: '网格', icon: 'grid', checked: app.showGrid, run: () => app.toggleGrid(!app.showGrid) },
-      { label: '原点', icon: 'origin', checked: app.showOrigin, run: () => app.toggleOrigin(!app.showOrigin) },
-    ])
-  );
-  // 8. 应用布景
-  bar.appendChild(
-    dropdown('view.scene', '应用布景', 'applyScene', () =>
-      (['默认', '单色灰', '深色', '白色'] as const).map((n) => ({
-        label: n,
-        icon: 'applyScene',
-        checked: app.sceneName === n,
-        run: () => app.setScene(n),
-      }))
-    )
-  );
-  // 9. 视图设置
-  bar.appendChild(btn('view.settings', '视图设置', 'viewSettings', () => openViewSettings(app)));
-  // 10. 显示模式
-  bar.appendChild(
-    dropdown('view.projection', '显示模式', 'perspective', () => [
-      {
-        label: '透视',
-        icon: 'perspective',
-        checked: app.projection === 'perspective',
-        run: () => app.setProjection('perspective'),
-      },
-      {
-        label: '正投影',
-        icon: 'orthographic',
-        checked: app.projection === 'orthographic',
-        run: () => app.setProjection('orthographic'),
-      },
-    ])
-  );
+  const huSection = dropdown('view.section', '剖面视图', 'sectionCut', () => [
+    { label: '关闭剖面', icon: 'sectionCut', checked: app.sectionAxis === 'none', run: () => app.setSection('none') },
+    { sep: true },
+    { label: '沿 X 轴剖切', icon: 'right', checked: app.sectionAxis === 'x', run: () => app.setSection('x') },
+    { label: '沿 Y 轴剖切', icon: 'top', checked: app.sectionAxis === 'y', run: () => app.setSection('y') },
+    { label: '沿 Z 轴剖切', icon: 'front', checked: app.sectionAxis === 'z', run: () => app.setSection('z') },
+  ]);
+  const huFit = btn('view.fit', '整屏显示', 'zoomFit', () => app.zoomFit());
+  const huZoom = btn('view.zoomArea', '缩放至区域', 'zoomArea', () => startZoomArea(app));
+  const huPrev = btn('view.prevView', '上一视图', 'prevView', () => app.prevView());
+  const huSet = btn('view.settings', '视图设置', 'viewSettings', () => openViewSettings(app));
+  const huProj = dropdown('view.projection', '显示模式', 'perspective', () => [
+    {
+      label: '透视',
+      icon: 'perspective',
+      checked: app.projection === 'perspective',
+      run: () => app.setProjection('perspective'),
+    },
+    {
+      label: '正投影',
+      icon: 'orthographic',
+      checked: app.projection === 'orthographic',
+      run: () => app.setProjection('orthographic'),
+    },
+  ]);
+  bar.append(huOrient, huStyle, huHide, huScene, huSection, huFit, huZoom, huPrev, huSet, huProj);
 
   host.appendChild(bar);
 

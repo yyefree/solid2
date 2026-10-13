@@ -70,6 +70,8 @@ export class App {
   shapeView: ShapeView | null = null;
   mode: AppMode = 'model';
   selection: Selection = { faces: [], edges: [] };
+  /** 选择过滤器（SolidWorks 状态栏 / 快捷键 F5）—— 'all' 不过滤（默认，行为不变） */
+  selectionFilter: 'all' | 'face' | 'edge' = 'all';
   /** 设计树中当前选中的特征 id（供属性管理器显示）—— SolidWorks「属性管理器」接管选中的特征 */
   selectedFeatureId: string | null = null;
 
@@ -185,6 +187,17 @@ export class App {
   selectFeature(id: string | null): void {
     this.selectedFeatureId = id;
     this.emit('feature', 'props');
+  }
+
+  /** 设置选择过滤器（SolidWorks 状态栏 Filter） */
+  setSelectionFilter(f: 'all' | 'face' | 'edge'): void {
+    this.selectionFilter = f;
+    this.emit('selection', 'props');
+  }
+
+  /** 第一个有错误的特征 id（供状态栏「What's Wrong」定位），无则 null */
+  firstErrorFeatureId(): string | null {
+    return this.doc.features.find((f) => f.error)?.id ?? null;
   }
 
   setStatus(text: string, kind: StatusInfo['kind'] = 'ok', detail?: string): void {
@@ -436,6 +449,7 @@ export class App {
   }
 
   selectFace(index: number, additive = false): void {
+    if (this.selectionFilter === 'edge') return;
     if (!additive) this.selection.edges = [];
     if (additive) {
       const i = this.selection.faces.indexOf(index);
@@ -449,6 +463,7 @@ export class App {
   }
 
   selectEdge(index: number, additive = false): void {
+    if (this.selectionFilter === 'face') return;
     if (!additive) this.selection.faces = [];
     if (additive) {
       const i = this.selection.edges.indexOf(index);
