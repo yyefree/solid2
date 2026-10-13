@@ -642,10 +642,12 @@ console.log('\n▶ F. 组合');
   }
 
   {
+    // 语义扩展：空 toolIndices = 「其余全部实体」（AI 层「把两个实体合并」就靠这条）
     const d = overlapDoc();
     d.add(combineFeature(0, [], 'add'));
-    rebuild(d);
-    check('未选择工具体时报错', featureErrors(d).length > 0, featureErrors(d).join('; '));
+    const s = rebuild(d);
+    check('空 toolIndices = 其余全部实体 → 无错误', featureErrors(d).length === 0, featureErrors(d).join('; '));
+    check('  两块相交 20³ 合并 → 1 个实体', solidsOf(s) === 1, `${solidsOf(s)} 实体`);
   }
 }
 
@@ -690,6 +692,101 @@ console.log('\n▶ G. 「新建实体」多实体语义');
     const s = rebuild(d);
     check('三次「新建实体」→ 3 个独立实体', solidsOf(s) === 3, `${solidsOf(s)} 实体`);
     check('体积 = 3 × 8000 = 24000', nearRel(volOf(s), 24000, 1e-3), volOf(s).toFixed(2));
+  }
+}
+
+// ============================================================
+console.log('\n【H. 多实体语义扩展：负数下标 · 空工具体】');
+{
+  /** 20³ 长方体 + 沿 X 错开 offset 的第二块（operation='new' 保持独立实体） */
+  function twoBoxes(offset: number): CadDocument {
+    const d = new CadDocument();
+    d.add(boxFeature(20, 20, 20));
+    d.add({
+      id: newId('f'),
+      type: 'primitive',
+      name: '长方体2',
+      params: { kind: 'box', dims: [20, 20, 20], origin: [offset, 0, 0], operation: 'new' },
+    } as Feature);
+    return d;
+  }
+
+  {
+    // deleteBody 负数下标：-1 = 最后一个（bodiesOf 展开顺序由拓扑决定，用负数才可靠）
+    const d = twoBoxes(30);
+    const before = solidsOf(rebuild(d));
+    d.add({
+      id: newId('f'),
+      type: 'deleteBody',
+      name: '删除实体1',
+      params: { indices: [-1] },
+    } as Feature);
+    const s = rebuild(d);
+    check('删除实体前是 2 个实体', before === 2, `${before} 实体`);
+    check('deleteBody indices=[-1] → 删掉最后一个，剩 1 个', solidsOf(s) === 1, `${solidsOf(s)} 实体`);
+    check('  体积 = 8000（剩下原件）', nearRel(volOf(s), 8000, 1e-3), volOf(s).toFixed(2));
+  }
+
+  {
+    // 越界负数：-3 对 2 个实体 → 归一成 -1，越界报错
+    const d = twoBoxes(30);
+    d.add({
+      id: newId('f'),
+      type: 'deleteBody',
+      name: '删除实体1',
+      params: { indices: [-3] },
+    } as Feature);
+    const { errors } = rebuildFeatures(d.features);
+    check('deleteBody indices=[-3] 越界 → 明确报错', errors.length === 1 && /越界/.test(errors[0].message),
+      errors.map((e) => e.message).join('; '));
+  }
+
+  {
+    // combine 空工具体 = 「其余全部实体」：两块 20³ 错开 10（重叠 4000）
+    for (const [op, exp] of [['add', 12000], ['subtract', 4000], ['common', 4000]] as const) {
+      const d = twoBoxes(10);
+      d.add({
+        id: newId('f'),
+        type: 'combine',
+        name: '组合1',
+        params: { mainIndex: 0, toolIndices: [], operation: op },
+      } as Feature);
+      const s = rebuild(d);
+      check(`combine 空 toolIndices（${op}）→ 体积 ${exp}`, nearRel(volOf(s), exp, 1e-3), volOf(s).toFixed(2));
+    }
+  }
+
+  {
+    // combine 单实体 + 空工具体 → 没有其它实体，应报错而不是静默通过
+    const d = new CadDocument();
+    d.add(boxFeature(20, 20, 20));
+    d.add({
+      id: newId('f'),
+      type: 'combine',
+      name: '组合1',
+      params: { mainIndex: 0, toolIndices: [], operation: 'add' },
+    } as Feature);
+    const { errors } = rebuildFeatures(d.features);
+    check('combine 只有 1 个实体 → 报「没有选择工具体」',
+      errors.length === 1 && /没有选择工具体/.test(errors[0].message),
+      errors.map((e) => e.message).join('; '));
+  }
+
+  {
+    // moveBody 仍按原语义：indices 省略 = 全部实体
+    const d = twoBoxes(30);
+    d.add({
+      id: newId('f'),
+      type: 'moveBody',
+      name: '移动1',
+      params: { delta: [0, 0, 100], axisOrigin: [0, 0, 0], axisDir: [0, 0, 1], angleDeg: 0 },
+    } as Feature);
+    const s = rebuild(d);
+    check('moveBody 省略 indices → 两个实体一起抬升', solidsOf(s) === 2, `${solidsOf(s)} 实体`);
+    check('  体积守恒 = 16000', nearRel(volOf(s), 16000, 1e-3), volOf(s).toFixed(2));
+    const bb = S.shapeBBox(s);
+    check('  包围盒整体上移 100（Z ∈ [100,120]）', nearRel(bb.min[2], 100, 1e-3) && nearRel(bb.max[2], 120, 1e-3),
+      `Z ∈ [${bb.min[2].toFixed(2)}, ${bb.max[2].toFixed(2)}]`);
   }
 }
 

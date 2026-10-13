@@ -27,6 +27,7 @@ import type {
   ParseIssue,
   Placement,
   PrimitiveKind,
+  Vec3,
 } from './types';
 
 // ============================================================
@@ -152,6 +153,13 @@ const OP_WORDS: [string, string][] = [
   ['放大', 'scale'],
   ['缩小', 'scale'],
   ['阵列', 'linearPattern'],
+  ['移动实体', 'moveBody'],
+  ['平移实体', 'moveBody'],
+  ['复制实体', 'moveBody'],
+  ['移动', 'moveBody'],
+  ['平移', 'moveBody'],
+  ['旋转', 'moveBody'],
+  ['复制', 'moveBody'],
 ];
 
 /** 数字角色词（紧贴在数字之前；按长度降序） */
@@ -433,6 +441,12 @@ function parseClause(ctx: ClauseCtx): { op?: AiOp; issue?: ParseIssue } {
   const opTag = ops.length ? ops[ops.length - 1].tag : null;
   const kind = lastKind(kinds);
 
+  // ---------- 多实体编辑（以「实体」为宾语）----------
+  // ⚠️ 必须在动作词判定**之前**：「删除第2个实体」里「删除」与「实体」并不相邻，
+  //    靠 OP_WORDS 的连续子串匹配抓不到；「把两个实体合并」也会被误判成基本体。
+  const bodyOp = parseBodyOp(clause);
+  if (bodyOp) return bodyOp;
+
   // ---------- 特征动作 ----------
   if (opTag) {
     if (opTag === 'hole') {
@@ -473,6 +487,10 @@ function parseClause(ctx: ClauseCtx): { op?: AiOp; issue?: ParseIssue } {
 
     if (opTag === 'scale') {
       return parseScale(clause);
+    }
+
+    if (opTag === 'moveBody') {
+      return parseMoveBody(clause);
     }
 
     if (opTag === 'mirror') {
@@ -772,6 +790,162 @@ function draftAngleOf(clause: string, hits: NumHit[], bare: number[]): number | 
   return bare[0];
 }
 
+// ---------- 多实体编辑 ----------
+
+/** 「实体」宾语的删除动词 */
+const BODY_DELETE_VERBS = ['删除', '删掉', '删去', '移除', '去掉', '去除'];
+/** 「实体」宾语的组合动词 */
+const BODY_COMBINE_VERBS = [
+  '合并',
+  '组合',
+  '求交集',
+  '求并集',
+  '求差集',
+  '求交',
+  '求差',
+  '交集',
+  '并集',
+  '差集',
+  '相交',
+  '共同',
+  '公共',
+  '相减',
+  '减去',
+  '减掉',
+  '布尔',
+];
+/** 「实体」宾语的移动动词 */
+const BODY_MOVE_VERBS = ['移动', '平移', '旋转', '复制', '偏移'];
+
+/** 方向词 → [轴下标, 符号] */
+const DIR_WORDS: [string, 0 | 1 | 2, number][] = [
+  ['向右', 0, 1],
+  ['往右', 0, 1],
+  ['右移', 0, 1],
+  ['向左', 0, -1],
+  ['往左', 0, -1],
+  ['左移', 0, -1],
+  ['向前', 1, 1],
+  ['往前', 1, 1],
+  ['向后', 1, -1],
+  ['往后', 1, -1],
+  ['向上', 2, 1],
+  ['往上', 2, 1],
+  ['升高', 2, 1],
+  ['向下', 2, -1],
+  ['往下', 2, -1],
+  ['下降', 2, -1],
+];
+
+/** 取轴向（`沿X` / `X轴` / `X方向` / `绕Z轴`） */
+function axisOf(clause: string): 'x' | 'y' | 'z' {
+  const m = /(?:沿|绕|朝)([xyz])/.exec(clause) ?? /([xyz])(?:轴|方向)/.exec(clause);
+  return m ? (m[1] as 'x' | 'y' | 'z') : 'z';
+}
+
+/**
+ * 平移量提取：三种写法
+ *   - 轴向 + 距离：「沿X移动20」「X方向偏移30」
+ *   - 方向词 + 距离：「向右移动20」「向上移动10」
+ *   - 单独写距离：不认（宁可报缺，也不猜方向）
+ */
+function moveDeltaOf(clause: string): Vec3 {
+  const d: Vec3 = [0, 0, 0];
+  const ax = /沿([xyz])(?:轴|方向)?(?:方向)?(?:移动|平移|偏移|位移)?(\d+(?:\.\d+)?)/.exec(clause)
+    ?? /([xyz])(?:轴|方向)(?:移动|平移|偏移|位移)?(\d+(?:\.\d+)?)/.exec(clause);
+  if (ax) {
+    const i = ax[1] === 'x' ? 0 : ax[1] === 'y' ? 1 : 2;
+    const v = parseFloat(ax[2]);
+    d[i] = hasAny(clause, ['负', '反向', '相反', '朝反']) ? -v : v;
+    return d;
+  }
+  for (const [word, i, sign] of DIR_WORDS) {
+    const at = clause.indexOf(word);
+    if (at < 0) continue;
+    const m = /(\d+(?:\.\d+)?)/.exec(clause.slice(at + word.length));
+    if (!m) continue;
+    d[i] = sign * parseFloat(m[1]);
+    return d;
+  }
+  return d;
+}
+
+/** 移动/复制实体解析 */
+function parseMoveBody(clause: string): { op?: AiOp; issue?: ParseIssue } {
+  const rotM = /旋转(?:了)?(\d+(?:\.\d+)?)/.exec(clause);
+  let angleDeg = rotM ? parseFloat(rotM[1]) : 0;
+  if (angleDeg && hasAny(clause, ['逆时针', '反向', '负'])) angleDeg = -angleDeg;
+
+  const delta = moveDeltaOf(clause);
+  const copy = hasAny(clause, ['复制', '拷贝']);
+  const countM = /(\d+)\s*份/.exec(clause);
+  const count = countM ? parseInt(countM[1], 10) : copy ? 1 : undefined;
+
+  if (!angleDeg && !delta[0] && !delta[1] && !delta[2]) {
+    return {
+      issue: {
+        clause,
+        message: '移动/旋转缺少距离或角度（可写「整体沿X移动20」「绕Z轴旋转90度」）',
+        level: 'error',
+      },
+    };
+  }
+
+  const op: AiOp = { kind: 'moveBody', source: clause, delta, angleDeg, axis: axisOf(clause) };
+  if (copy) {
+    (op as { copy?: boolean; count?: number }).copy = true;
+    (op as { copy?: boolean; count?: number }).count = count;
+  }
+  return { op };
+}
+
+/** 删除实体解析：第N个 / 最后一个 / 第一个 */
+function parseDeleteBody(clause: string): { op?: AiOp; issue?: ParseIssue } {
+  const m = /第(\d+)/.exec(clause);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (n >= 1) return { op: { kind: 'deleteBody', source: clause, indices: [n - 1] } };
+  }
+  if (hasAny(clause, ['最后', '末尾', '末端', '最新'])) {
+    return { op: { kind: 'deleteBody', source: clause, indices: [-1] } };
+  }
+  if (hasAny(clause, ['最前', '第一个', '首个', '头一个'])) {
+    return { op: { kind: 'deleteBody', source: clause, indices: [0] } };
+  }
+  return {
+    issue: {
+      clause,
+      message: '删除实体要说明是哪一个（可写「删除最后一个实体」「删除第2个实体」）',
+      level: 'error',
+    },
+  };
+}
+
+/** 组合方式判定：交集 → 差集 → 并集（默认） */
+function combineOpOf(clause: string): 'add' | 'subtract' | 'common' {
+  if (hasAny(clause, ['交集', '求交', '共同', '公共', '相交'])) return 'common';
+  if (hasAny(clause, ['差集', '求差', '减去', '减掉', '相减', '切除', '挖去'])) return 'subtract';
+  return 'add';
+}
+
+/**
+ * 「以实体为宾语」的多实体编辑识别。
+ * 只有子句里出现「实体」二字时才生效 —— 这样既不会抢走「合并/删除」在别处的语义
+ * （「删除孔」是删特征、「挖去一个圆柱」是布尔切除），又能覆盖
+ * 「删除第2个实体」这种动作词与宾语不相邻的写法。
+ *
+ * 返回 null 表示这不是一条多实体编辑指令。
+ */
+export function parseBodyOp(clause: string): { op?: AiOp; issue?: ParseIssue } | null {
+  if (!clause.includes('实体')) return null;
+  if (hasAny(clause, BODY_DELETE_VERBS)) return parseDeleteBody(clause);
+  if (hasAny(clause, BODY_COMBINE_VERBS)) {
+    return { op: { kind: 'combine', source: clause, operation: combineOpOf(clause) } };
+  }
+  if (hasAny(clause, BODY_MOVE_VERBS)) return parseMoveBody(clause);
+  return null;
+}
+
 /**
  * 「孔细节」子句：跟在孔后面、只补参数不产生新特征的一段。
  * 如「沉头直径14深6」「埋头Φ12深3」——通常被逗号切成了独立子句，
@@ -1037,6 +1211,25 @@ export function describeOp(op: AiOp): string {
     }
     case 'draft':
       return `拔模 ${fmt([op.angleDeg])}°${op.reverse ? '（反向）' : ''}`;
+    case 'moveBody': {
+      const parts: string[] = [];
+      const d = op.delta;
+      const nz = ([0, 1, 2] as const).filter((i) => Math.abs(d[i]) > 1e-9);
+      if (nz.length) parts.push(`沿${nz.map((i) => 'XYZ'[i]).join('')}移动 ${fmt(nz.map((i) => d[i]))}`);
+      if (op.angleDeg) parts.push(`绕${op.axis.toUpperCase()}轴旋转 ${fmt([op.angleDeg])}°`);
+      const verb = op.copy
+        ? `复制${op.count && op.count > 1 ? `${op.count}份` : '一份'}`
+        : nz.length
+          ? '移动'
+          : '旋转';
+      return `${verb}全部实体（${parts.join(' + ')}）`;
+    }
+    case 'deleteBody':
+      return `删除实体 ${op.indices.map((i) => (i < 0 ? `倒数第${-i}个` : `第${i + 1}个`)).join('、')}`;
+    case 'combine': {
+      const name = { add: '并集', subtract: '差集', common: '交集' }[op.operation];
+      return `组合全部实体（${name}）`;
+    }
   }
 }
 

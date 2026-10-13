@@ -748,5 +748,161 @@ console.log('\n【23. 编辑：变换与曲线】');
 }
 
 // ============================================================
+console.log('\n【24. 多实体编辑：移动/复制 · 删除 · 组合】');
+{
+  const lastOp = (text: string): AiOp | undefined => {
+    const o = parseText(text).ops;
+    return o[o.length - 1];
+  };
+
+  // ---------- 移动 / 复制 ----------
+  const m1 = lastOp('20x20x20的长方体，复制一份沿X偏移30') as any;
+  check(
+    '「复制一份沿X偏移30」→ moveBody 且 copy',
+    m1?.kind === 'moveBody' && m1.copy === true && m1.count === 1,
+    JSON.stringify(m1)
+  );
+  check('  位移 [30,0,0]', JSON.stringify(m1?.delta) === '[30,0,0]', JSON.stringify(m1?.delta));
+
+  const m2 = lastOp('80x60x20的板，整体沿Z移动50') as any;
+  check(
+    '「整体沿Z移动50」→ delta [0,0,50]',
+    m2?.kind === 'moveBody' && JSON.stringify(m2.delta) === '[0,0,50]',
+    JSON.stringify(m2?.delta)
+  );
+  check('  无旋转角、不复制', m2?.angleDeg === 0 && m2.copy === undefined, `${m2?.angleDeg}/${m2?.copy}`);
+
+  const m3 = lastOp('80x60x20的板，绕Z轴旋转90度') as any;
+  check(
+    '「绕Z轴旋转90度」→ angleDeg 90 / axis z',
+    m3?.kind === 'moveBody' && m3.angleDeg === 90 && m3.axis === 'z',
+    JSON.stringify(m3)
+  );
+  check('  位移为 0', JSON.stringify(m3?.delta) === '[0,0,0]', JSON.stringify(m3?.delta));
+
+  const m4 = lastOp('80x60的板，整体向右移动20') as any;
+  check('方向词「向右移动20」→ delta [20,0,0]', JSON.stringify(m4?.delta) === '[20,0,0]', JSON.stringify(m4?.delta));
+
+  const m5 = lastOp('60x40x10的长方体，绕X轴逆时针旋转30度') as any;
+  check('「逆时针旋转30度」→ -30° / axis x', m5?.angleDeg === -30 && m5.axis === 'x', JSON.stringify(m5));
+
+  check(
+    '「移动」缺距离/角度 → 明确报错',
+    parseText('60x40x10的长方体，整体移动').issues.some((i) => /缺少距离或角度/.test(i.message)),
+    JSON.stringify(parseText('60x40x10的长方体，整体移动').issues)
+  );
+
+  // ---------- 组合 ----------
+  const c1 = lastOp('20x20x20的长方体，复制一份沿X偏移30，把两个实体合并') as any;
+  check('「把两个实体合并」→ combine/add', c1?.kind === 'combine' && c1.operation === 'add', JSON.stringify(c1));
+  const c2 = lastOp('把两个实体的交集取出来') as any;
+  check('「交集」→ combine/common', c2?.kind === 'combine' && c2.operation === 'common', JSON.stringify(c2));
+  const c3 = lastOp('把两个实体相减') as any;
+  check('「相减」→ combine/subtract', c3?.kind === 'combine' && c3.operation === 'subtract', JSON.stringify(c3));
+  const c4 = lastOp('把三个实体做布尔并集') as any;
+  check('「布尔并集」→ combine/add', c4?.kind === 'combine' && c4.operation === 'add', JSON.stringify(c4));
+
+  // ---------- 删除实体 ----------
+  const d1 = lastOp('删除最后一个实体') as any;
+  check('「删除最后一个实体」→ indices [-1]', d1?.kind === 'deleteBody' && JSON.stringify(d1.indices) === '[-1]', JSON.stringify(d1));
+  const d2 = lastOp('删除第2个实体') as any;
+  check('「删除第2个实体」→ indices [1]', d2?.kind === 'deleteBody' && JSON.stringify(d2.indices) === '[1]', JSON.stringify(d2));
+  const d3 = lastOp('删掉第一个实体') as any;
+  check('「删掉第一个实体」→ indices [0]', d3?.kind === 'deleteBody' && JSON.stringify(d3.indices) === '[0]', JSON.stringify(d3));
+  check(
+    '「删除实体」没给序号 → 明确报错',
+    parseText('删除实体').issues.some((i) => /说明是哪一个/.test(i.message)),
+    JSON.stringify(parseText('删除实体').issues)
+  );
+
+  // ---------- describeOp ----------
+  check('describeOp 复制', /复制一份/.test(describeOp(lastOp('20x20x20的长方体，复制一份沿X偏移30')!)),
+    describeOp(lastOp('20x20x20的长方体，复制一份沿X偏移30')!));
+  check('describeOp 旋转', /旋转 90°/.test(describeOp(lastOp('80x60x20的板，绕Z轴旋转90度')!)),
+    describeOp(lastOp('80x60x20的板，绕Z轴旋转90度')!));
+  check('describeOp 组合', /交集/.test(describeOp(lastOp('把两个实体的交集取出来')!)),
+    describeOp(lastOp('把两个实体的交集取出来')!));
+  check('describeOp 删除实体', /倒数第1个/.test(describeOp(lastOp('删除最后一个实体')!)),
+    describeOp(lastOp('删除最后一个实体')!));
+
+  // ---------- 编译 ----------
+  const cm = compilePlan(parseText('20x20x20的长方体，复制一份沿X偏移30').ops);
+  const mf = cm.features[1] as any;
+  check('编译 moveBody：indices 省略（= 全部实体）', mf.type === 'moveBody' && mf.params.indices === undefined, JSON.stringify(mf.params));
+  check('  旋转轴过模型中心 [0,0,0]', JSON.stringify(mf.params.axisOrigin) === '[0,0,0]', JSON.stringify(mf.params.axisOrigin));
+  check(
+    '  复制后包围盒 X ∈ [-10,40]',
+    cm.bbox !== null && near(cm.bbox.min[0], -10) && near(cm.bbox.max[0], 40),
+    JSON.stringify(cm.bbox)
+  );
+  check('  复制后 refBox 失效（已不是单个长方体）', cm.refBox === null, JSON.stringify(cm.refBox));
+
+  const cm2 = compilePlan(parseText('80x60x20的板，整体沿Z移动50').ops);
+  check(
+    '纯平移后 refBox 跟着走 → Z ∈ [40,60]',
+    cm2.refBox !== null && near(cm2.refBox.min[2], 40) && near(cm2.refBox.max[2], 60),
+    JSON.stringify(cm2.refBox)
+  );
+
+  const cm3 = compilePlan(parseText('80x60x20的板，绕Z轴旋转45度').ops);
+  check(
+    '绕Z轴旋转45°：包围盒 X ∈ ±(80+60)/√2',
+    cm3.bbox !== null && near(cm3.bbox.max[0], 70 / Math.SQRT2, 1e-6),
+    JSON.stringify(cm3.bbox)
+  );
+  check('旋转后 refBox 失效（轴向已不对齐）', cm3.refBox === null, JSON.stringify(cm3.refBox));
+
+  const cc = compilePlan(parseText('20x20x20的长方体，复制一份沿X偏移30，把两个实体合并').ops);
+  const cf = cc.features[2] as any;
+  check(
+    '编译 combine：主体 0 / 工具体空（= 其余全部）',
+    cf.type === 'combine' && cf.params.mainIndex === 0 && cf.params.toolIndices.length === 0,
+    JSON.stringify(cf.params)
+  );
+
+  const cd = compilePlan(parseText('20x20x20的长方体，复制一份沿X偏移30，删除最后一个实体').ops);
+  const df = cd.features[2] as any;
+  check('编译 deleteBody：indices [-1]', df.type === 'deleteBody' && JSON.stringify(df.params.indices) === '[-1]', JSON.stringify(df.params));
+
+  check(
+    '空模型上组合 → 明确报错',
+    compilePlan(parseText('把两个实体合并').ops).issues.some((i) => /组合需要先有实体/.test(i.message)),
+    JSON.stringify(compilePlan(parseText('把两个实体合并').ops).issues)
+  );
+
+  // ---------- 编辑现有模型 ----------
+  const ebase = compilePlan(parseText('20x20x20的长方体').ops);
+  const e1 = editModel('整体沿X移动100', { features: ebase.features, bbox: ebase.bbox, boxForRefs: ebase.refBox });
+  check(
+    '编辑模式追加「整体沿X移动100」',
+    e1.features.length === 2 && e1.features[1].type === 'moveBody',
+    e1.features.map((f) => f.type).join(',')
+  );
+  const est1 = estimateBBox(e1.features);
+  check('  estimateBBox 跟随平移 → X ∈ [90,110]', est1 !== null && near(est1.min[0], 90) && near(est1.max[0], 110), JSON.stringify(est1));
+
+  const e2 = editModel('删除最后一个实体', { features: ebase.features, bbox: ebase.bbox, boxForRefs: ebase.refBox });
+  check(
+    '「删除最后一个实体」→ 追加 deleteBody 而非删特征',
+    e2.features.length === 2 && e2.features[1].type === 'deleteBody',
+    e2.features.map((f) => f.type).join(',')
+  );
+
+  const hbase = compilePlan(parseText('60x40x10的长方体，中心开Φ16通孔').ops);
+  const e3 = editModel('删掉孔', { features: hbase.features, bbox: hbase.bbox, boxForRefs: hbase.refBox });
+  check('「删掉孔」仍是删除特征（不被多实体逻辑抢走）',
+    e3.features.length === 1 && e3.features[0].type === 'primitive', e3.features.map((f) => f.type).join(','));
+
+  // 平移后仍能解析式倒圆角（长方体引用跟着走）
+  const e4 = editModel('四角倒圆角R2', {
+    features: e1.features,
+    bbox: e1.bbox,
+    boxForRefs: boxRefOf(e1.features),
+  });
+  check('平移后「四角倒圆角R2」仍可解析式生成棱引用',
+    e4.features.length === 3 && e4.features[2].type === 'fillet', e4.features.map((f) => f.type).join(','));
+}
+
+// ============================================================
 console.log(`\nAI 建模助手：${pass} 通过 / ${fail} 失败（共 ${pass + fail} 项）`);
 process.exit(fail ? 1 : 0);

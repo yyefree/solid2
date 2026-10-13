@@ -646,7 +646,7 @@ async function tour() {
   await hold(300);
 
   // ---------- ③ AI 建模助手 ----------
-  await banner(3, 'AI 建模助手 · 自然语言 → 参数化特征树', `脚本「${S.label}」：一句话建模 + 一句话改模型，离线本地解析`);
+  await banner(3, 'AI 建模助手 · 自然语言 → 参数化特征树', `脚本「${S.label}」：一句话建模 + 一句话改模型 + 变换/曲线 + 多实体编辑，离线本地解析`);
   await closeModals();
   await tab('AI');
   await hold(400);
@@ -726,6 +726,34 @@ async function tour() {
   })()`, 2600);
   check('AI：变换 / 曲线模型落地', !!aiTf && aiTf.volume > 0,
     aiTf ? aiTf.volume.toFixed(1) + ' mm³' : 'null');
+  await closeModals();
+  await isoView(1300);
+
+  // 再演示一句「多实体编辑」指令（移动/复制 · 删除实体 · 组合），同样不新增步骤号。
+  // 注意：点「应用」会关闭对话框，所以要重新点 Ribbon 的「AI 建模」。
+  const aiBodyPreview = await act(`(async () => {
+    const btn = [...document.querySelectorAll('.rbtn')].find(b => /AI 建模/.test(b.textContent));
+    if (!btn) return 'no-button';
+    btn.click();
+    await new Promise(r => setTimeout(r, 240));
+    const ta = document.querySelector('.ai-input');
+    if (!ta) return 'no-input';
+    ta.value = ${q(S.ai.bodies)};
+    ta.dispatchEvent(new Event('input'));
+    await new Promise(r => setTimeout(r, 260));
+    return document.querySelector('.ai-preview')?.textContent ?? '';
+  })()`, 1900);
+  check('AI：多实体编辑指令实时解析（移动/复制 / 删除实体 / 组合）',
+    /实体/.test(String(aiBodyPreview)), String(aiBodyPreview).slice(0, 70));
+  const aiBody = await act(`(async () => {
+    const b = [...document.querySelectorAll('.modal-foot .btn')].find(x => /应用/.test(x.textContent));
+    b?.click();
+    await new Promise(r => setTimeout(r, 650));
+    await __D.app.rebuild();
+    return __D.app.model.stats;
+  })()`, 2600);
+  check('AI：多实体编辑模型落地', !!aiBody && aiBody.volume > 0,
+    aiBody ? `${aiBody.volume.toFixed(1)} mm³ / ${aiBody.solids} 实体` : 'null');
   await closeModals();
   await isoView(1300);
 

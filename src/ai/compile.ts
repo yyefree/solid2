@@ -20,6 +20,8 @@ import { newId, DEFAULT_PLANE, type SketchPlane } from '../sketch/types';
 import type {
   ChamferFeature,
   CircularPatternFeature,
+  CombineFeature,
+  DeleteBodyFeature,
   DraftFeature,
   EdgeRef,
   FaceRef,
@@ -28,6 +30,7 @@ import type {
   HoleFeature,
   LinearPatternFeature,
   MirrorFeature,
+  MoveBodyFeature,
   PrimitiveFeature,
   ScaleFeature,
   ShellFeature,
@@ -85,6 +88,9 @@ export const DEFAULT_LABELS: Record<string, string> = {
   scale: '缩放',
   mirror: '镜像',
   draft: '拔模',
+  moveBody: '移动/复制实体',
+  deleteBody: '删除实体',
+  combine: '组合',
 };
 
 /** 内置名称分配器（与 doc.nextName 的标签一致） */
@@ -101,6 +107,7 @@ function makeNamer(): (type: string) => string {
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const mid = (a: Vec3, b: Vec3): Vec3 => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+const axisVec = (a: 'x' | 'y' | 'z'): Vec3 => (a === 'x' ? [1, 0, 0] : a === 'y' ? [0, 1, 0] : [0, 0, 1]);
 
 /**
  * 基本体在「引擎原生坐标系」里的包围盒（未加 origin 偏移）。
@@ -276,6 +283,72 @@ export function scaleBox(b: Box, center: Vec3, k: Vec3): Box {
     min: [at(b.min, 0), at(b.min, 1), at(b.min, 2)],
     max: [at(b.max, 0), at(b.max, 1), at(b.max, 2)],
   };
+}
+
+/** 包围盒平移 */
+export function translateBox(b: Box, d: Vec3): Box {
+  return { min: add(b.min, d), max: add(b.max, d) };
+}
+
+/** 包围盒的 8 个角点 */
+function boxCorners(b: Box): Vec3[] {
+  const out: Vec3[] = [];
+  for (const x of [b.min[0], b.max[0]])
+    for (const y of [b.min[1], b.max[1]]) for (const z of [b.min[2], b.max[2]]) out.push([x, y, z]);
+  return out;
+}
+
+/** 点集的最小轴对齐包围盒 */
+function boxFromPoints(ps: Vec3[]): Box {
+  const mn: Vec3 = [Infinity, Infinity, Infinity];
+  const mx: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const p of ps) {
+    for (let i = 0; i < 3; i++) {
+      if (p[i] < mn[i]) mn[i] = p[i];
+      if (p[i] > mx[i]) mx[i] = p[i];
+    }
+  }
+  return { min: mn, max: mx };
+}
+
+/** 绕「过 origin、轴向对齐」的轴旋转一点 */
+function rotateAboutAxis(p: Vec3, origin: Vec3, axis: 'x' | 'y' | 'z', ang: number): Vec3 {
+  const v: Vec3 = [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]];
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  let r: Vec3;
+  if (axis === 'x') r = [v[0], v[1] * c - v[2] * s, v[1] * s + v[2] * c];
+  else if (axis === 'y') r = [v[0] * c + v[2] * s, v[1], -v[0] * s + v[2] * c];
+  else r = [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]];
+  return [r[0] + origin[0], r[1] + origin[1], r[2] + origin[2]];
+}
+
+/**
+ * 「移动/复制实体」之后的解析式包围盒。
+ *
+ * 与引擎 `moveBody` 的口径严格对齐：**先绕轴旋转 `k` 倍角、再平移 `k` 倍位移**。
+ * 旋转轴过包围盒中心（编译层把 `axisOrigin` 也设成中心）。
+ * 长方体绕轴向对齐的轴旋转后仍是长方体，所以用 8 个角点求包围盒是**精确解**，不是保守估计。
+ */
+export function moveBox(
+  b: Box,
+  delta: Vec3,
+  angleDeg: number,
+  axis: 'x' | 'y' | 'z',
+  copy?: boolean,
+  count?: number
+): Box {
+  const origin = mid(b.min, b.max);
+  const ang = (angleDeg * Math.PI) / 180;
+  const at = (k: number): Box => {
+    const pts = boxCorners(b).map((p) => rotateAboutAxis(p, origin, axis, ang * k));
+    return boxFromPoints(pts.map((p) => add(p, [delta[0] * k, delta[1] * k, delta[2] * k])));
+  };
+  if (!copy) return at(1);
+  const n = Math.max(1, Math.round(count ?? 1));
+  let out = b; // 原件留在原位
+  for (let i = 1; i <= n; i++) out = unionBox(out, at(i));
+  return out;
 }
 
 /**
@@ -533,6 +606,74 @@ export function compilePlan(ops: AiOp[], opts: CompileOptions = {}): CompileResu
           max: [boxForRefs.max[0] + grow, boxForRefs.max[1] + grow, boxForRefs.max[2]],
         };
         cur = cur ? unionBox(cur, grown) : grown;
+        boxForRefs = null;
+        break;
+      }
+
+      case 'moveBody': {
+        if (!cur) {
+          issues.push({ clause: op.source, message: '移动/复制实体需要先有一个实体', level: 'error' });
+          break;
+        }
+        const f: MoveBodyFeature = {
+          id: newId('f'),
+          type: 'moveBody',
+          name: namer('moveBody'),
+          // 作用于**全部实体**（indices 省略）；旋转轴过当前模型包围盒中心
+          params: {
+            delta: op.delta,
+            axisOrigin: mid(cur.min, cur.max),
+            axisDir: axisVec(op.axis),
+            angleDeg: op.angleDeg,
+            copy: op.copy,
+            count: op.count,
+          },
+        };
+        features.push(f);
+        names.push(f.name);
+        lastId = f.id;
+        cur = moveBox(cur, op.delta, op.angleDeg, op.axis, op.copy, op.count);
+        // 只有「纯平移、不复制」时长方体引用才跟着走；旋转会破坏轴向对齐
+        boxForRefs =
+          boxForRefs && !op.copy && Math.abs(op.angleDeg) < 1e-9
+            ? translateBox(boxForRefs, op.delta)
+            : null;
+        break;
+      }
+
+      case 'deleteBody': {
+        if (!cur) {
+          issues.push({ clause: op.source, message: '删除实体需要先有实体', level: 'error' });
+          break;
+        }
+        const f: DeleteBodyFeature = {
+          id: newId('f'),
+          type: 'deleteBody',
+          name: namer('deleteBody'),
+          params: { indices: op.indices },
+        };
+        features.push(f);
+        names.push(f.name);
+        lastId = f.id;
+        boxForRefs = null;
+        break;
+      }
+
+      case 'combine': {
+        if (!cur) {
+          issues.push({ clause: op.source, message: '组合需要先有实体', level: 'error' });
+          break;
+        }
+        const f: CombineFeature = {
+          id: newId('f'),
+          type: 'combine',
+          name: namer('combine'),
+          // 主体 = 第一个实体，工具体 = 其余全部（空数组由引擎解析成「所有其它实体」）
+          params: { mainIndex: 0, toolIndices: [], operation: op.operation },
+        };
+        features.push(f);
+        names.push(f.name);
+        lastId = f.id;
         boxForRefs = null;
         break;
       }

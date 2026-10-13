@@ -133,6 +133,42 @@ export interface AiDraftOp extends AiOpBase {
   reverse?: boolean;
 }
 
+/**
+ * 移动/复制实体（SolidWorks「移动/复制实体」）。
+ * 作用于**全部实体**：先绕轴旋转、再平移（与引擎 `moveBody` 的顺序一致）。
+ * 旋转轴过「当前模型包围盒中心」，方向由 `axis` 指定。
+ */
+export interface AiMoveBodyOp extends AiOpBase {
+  kind: 'moveBody';
+  /** 平移量 [x, y, z]（mm） */
+  delta: Vec3;
+  /** 绕轴旋转角度（度），0 = 只平移 */
+  angleDeg: number;
+  /** 旋转轴（过模型中心，轴向对齐） */
+  axis: 'x' | 'y' | 'z';
+  /** 是否复制（否则原地移动） */
+  copy?: boolean;
+  /** 复制份数（含原件共 count+1 份） */
+  count?: number;
+}
+
+/**
+ * 删除实体：从多实体零件里移除指定的实体。
+ * 下标 0 起；**负数从末尾数**（-1 = 最后一个）—— 因为 `bodiesOf` 的展开顺序由拓扑决定，
+ * 用户说「最后一个」比说「第 2 个」更可靠。
+ */
+export interface AiDeleteBodyOp extends AiOpBase {
+  kind: 'deleteBody';
+  indices: number[];
+}
+
+/** 组合（布尔运算多个实体）：把当前所有实体按 `operation` 合成一个 */
+export interface AiCombineOp extends AiOpBase {
+  kind: 'combine';
+  /** 添加（并集）/ 减除（差集，主体 = 第一个实体）/ 共同（交集） */
+  operation: 'add' | 'subtract' | 'common';
+}
+
 export interface AiFilletOp extends AiOpBase {
   kind: 'fillet';
   radius: number;
@@ -178,7 +214,10 @@ export type AiOp =
   | AiScaleOp
   | AiMirrorOp
   | AiSpiralOp
-  | AiDraftOp;
+  | AiDraftOp
+  | AiMoveBodyOp
+  | AiDeleteBodyOp
+  | AiCombineOp;
 
 /** 解析层问题：某个子句没读懂，或读懂了但缺参数 */
 export interface ParseIssue {

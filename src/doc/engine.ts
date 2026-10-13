@@ -462,7 +462,9 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
     case 'deleteBody': {
       if (!current) throw new Error('删除实体：没有可操作的实体');
       const bodies = S.bodiesOf(current);
-      const del = new Set(f.params.indices ?? []);
+      // 支持负数下标：-1 = 最后一个。因为 bodiesOf 的展开顺序由拓扑决定，
+      // 「最后一个」往往比「第 N 个」更贴近用户意图（AI 层就是这么用的）。
+      const del = new Set((f.params.indices ?? []).map((i) => (i < 0 ? bodies.length + i : i)));
       if (!del.size) throw new Error('删除实体：没有选择要删除的实体');
       for (const i of del) {
         if (!Number.isInteger(i) || i < 0 || i >= bodies.length) {
@@ -481,7 +483,9 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       if (!Number.isInteger(mainIndex) || mainIndex < 0 || mainIndex >= bodies.length) {
         throw new Error(`组合：主体下标 ${mainIndex} 越界（当前 ${bodies.length} 个实体）`);
       }
-      const tools = (toolIndices ?? []).filter((i) => i !== mainIndex);
+      const tools = (toolIndices ?? []).length
+        ? (toolIndices ?? []).filter((i) => i !== mainIndex)
+        : bodies.map((_, i) => i).filter((i) => i !== mainIndex);
       if (!tools.length) throw new Error('组合：没有选择工具体');
       for (const i of tools) {
         if (!Number.isInteger(i) || i < 0 || i >= bodies.length) {

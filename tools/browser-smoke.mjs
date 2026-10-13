@@ -924,6 +924,10 @@ const ai = await (async () => {
     '长40宽30高10的板，右边加一个半径5高10的圆柱，沿右视基准面镜像',
     '涡状线起始半径12螺距6圈数4厚度2.5宽度5',
     '60x40x10 的长方体，侧面拔模5度',
+    '20x20x20 的长方体，复制一份沿X偏移10，把两个实体合并',
+    '20x20x20 的长方体，复制一份沿X偏移10，把两个实体相减',
+    '20x20x20 的长方体，复制一份沿X偏移30，删除最后一个实体',
+    '80x60x20 的长方体，整体沿Z移动50',
   ];
   for (const text of extraCases) {
     const { compiled } = await ai.interpret(text);
@@ -932,10 +936,29 @@ const ai = await (async () => {
     out.extra.push({
       text,
       volume: app.model?.stats.volume ?? 0,
+      solids: app.model?.stats.solids ?? 0,
       features: compiled.features.length,
       errs: compiled.issues.filter((i) => i.level === 'error').map((i) => i.message),
     });
   }
+
+  // 编辑模式：整体平移 + 平移后仍能解析式倒圆角
+  const box20 = await ai.interpret('20x20x20 的长方体');
+  app.loadFeatures(box20.compiled.features, { replace: true, fit: false });
+  await app.rebuild();
+  const runMove = ai.editModel('整体沿X移动100，四角倒圆角R2', {
+    features: box20.compiled.features,
+    bbox: box20.compiled.bbox,
+    boxForRefs: ai.boxRefOf(box20.compiled.features),
+  });
+  app.setFeatures(runMove.features, { fit: false });
+  await app.rebuild();
+  out.extraMove = {
+    volume: app.model?.stats.volume ?? 0,
+    bbox: app.model?.bbox ?? null,
+    features: runMove.features.length,
+    errs: runMove.issues.filter((i) => i.level === 'error').map((i) => i.message),
+  };
 
   // 编辑模式里加沉头孔（含「孔细节」子句回填）
   const plate = await ai.interpret('60x40x10 的长方体');
@@ -1049,6 +1072,30 @@ check('AI「涡状线」→ 带材多边形面积 × 宽度 = 7501.60',
   check('AI「侧面拔模5度」→ 线性锥化解析值 24885.09',
     ai.extra[6].features === 2 && ai.extra[6].errs.length === 0 && near(ai.extra[6].volume, draftExp, 1),
     `vol=${ai.extra[6].volume.toFixed(2)} 期望=${draftExp.toFixed(2)} err=${ai.extra[6].errs.join(';') || '无'}`);
+}
+
+// --- G7. 多实体编辑：移动/复制 · 删除 · 组合 ---
+check('AI「复制一份沿X偏移10 + 合并」→ 1 实体 / 12000',
+  ai.extra[7].solids === 1 && ai.extra[7].errs.length === 0 && near(ai.extra[7].volume, 12000, 1),
+  `vol=${ai.extra[7].volume.toFixed(2)} solids=${ai.extra[7].solids} err=${ai.extra[7].errs.join(';') || '无'}`);
+check('AI「复制一份沿X偏移10 + 相减」→ 4000（只留不重叠部分）',
+  ai.extra[8].errs.length === 0 && near(ai.extra[8].volume, 4000, 1),
+  `vol=${ai.extra[8].volume.toFixed(2)} err=${ai.extra[8].errs.join(';') || '无'}`);
+check('AI「复制一份沿X偏移30 + 删除最后一个实体」→ 1 实体 / 8000',
+  ai.extra[9].solids === 1 && ai.extra[9].errs.length === 0 && near(ai.extra[9].volume, 8000, 1),
+  `vol=${ai.extra[9].volume.toFixed(2)} solids=${ai.extra[9].solids} err=${ai.extra[9].errs.join(';') || '无'}`);
+check('AI「整体沿Z移动50」→ 体积不变 96000，包围盒上移',
+  ai.extra[10].errs.length === 0 && near(ai.extra[10].volume, 96000, 1),
+  `vol=${ai.extra[10].volume.toFixed(2)} err=${ai.extra[10].errs.join(';') || '无'}`);
+
+{
+  const filletExp = 8000 - (4 - Math.PI) * 4 * 20;
+  check('AI 编辑「整体沿X移动100，四角倒圆角R2」→ 3 特征 / 解析体积 7931.33',
+    ai.extraMove.features === 3 && ai.extraMove.errs.length === 0 && near(ai.extraMove.volume, filletExp, 1),
+    `vol=${ai.extraMove.volume.toFixed(2)} 期望=${filletExp.toFixed(2)} err=${ai.extraMove.errs.join(';') || '无'}`);
+  check('  平移后包围盒落在 X ∈ [90,110]',
+    !!ai.extraMove.bbox && near(ai.extraMove.bbox.min[0], 90, 0.5),
+    ai.extraMove.bbox ? JSON.stringify(ai.extraMove.bbox.min) : 'null');
 }
 
 ws.close();

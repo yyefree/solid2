@@ -23,10 +23,12 @@ import {
   DEFAULT_LABELS,
   edgeLimit,
   mirrorBox,
+  moveBox,
   primitiveBounds,
   scaleBox,
   spiralBounds,
   springBounds,
+  translateBox,
   unionBox,
   type Box,
   type CompileResult,
@@ -37,6 +39,7 @@ import {
   normalizeInput,
   opTagOf,
   parseHoleDetail,
+  parseBodyOp,
   parseSingleClause,
   scanClause,
   splitClauses,
@@ -159,6 +162,9 @@ const OP_FEATURE: Record<string, string> = {
   scale: 'scale',
   mirror: 'mirror',
   draft: 'draft',
+  moveBody: 'moveBody',
+  deleteBody: 'deleteBody',
+  combine: 'combine',
 };
 
 const KIND_LABEL: Record<PrimitiveKind, string> = {
@@ -214,6 +220,23 @@ export function parseEdit(raw: string, features: Feature[] = []): { edits: AiEdi
   let lastOp: AiOp | null = null;
 
   for (const clause of clauses) {
+    // (0) 多实体编辑（以「实体」为宾语）—— 必须排在「删除」之前，
+    //     否则「删除最后一个实体」会被当成删特征。
+    const bodyOp = parseBodyOp(clause);
+    if (bodyOp?.op) {
+      const last = edits[edits.length - 1];
+      if (last && last.kind === 'append') last.ops.push(bodyOp.op);
+      else edits.push({ kind: 'append', ops: [bodyOp.op], source: clause });
+      hasPrior = true;
+      lastHole = null;
+      lastOp = bodyOp.op;
+      continue;
+    }
+    if (bodyOp?.issue) {
+      issues.push(bodyOp.issue);
+      continue;
+    }
+
     // (1) 删除
     if (isDeleteClause(clause)) {
       const target = resolveTarget(clause, true);
@@ -810,6 +833,17 @@ export function estimateBBox(features: Feature[]): Box | null {
       };
       continue;
     }
+    if (f.type === 'moveBody') {
+      if (!cur) continue;
+      const p = f.params;
+      // 轴向量 → 轴名（引擎允许任意轴向量，AI 层只产出轴向对齐的）
+      const axis: 'x' | 'y' | 'z' =
+        Math.abs(p.axisDir[0]) > 0.5 ? 'x' : Math.abs(p.axisDir[1]) > 0.5 ? 'y' : 'z';
+      cur = moveBox(cur, p.delta, p.angleDeg ?? 0, axis, p.copy, p.count);
+      continue;
+    }
+    // deleteBody / combine 只改变实体个数或实体划分，不改变整体包围盒
+    if (f.type === 'deleteBody' || f.type === 'combine') continue;
 
     let b: Box | null = null;
     if (f.type === 'primitive') {
@@ -852,14 +886,21 @@ export function estimateBBox(features: Feature[]): Box | null {
 
 /**
  * 若「最后产生的实体是一个长方体」，返回它的包围盒 —— 供圆角/倒角/抽壳/孔
- * 解析式生成边/面引用。孔 / 圆角 / 倒角不改变外轮廓，向前穿透继续找；
- * 其后的缩放会把包围盒一起变换（缩放后的长方体仍然是长方体）。
+ * 解析式生成边/面引用。
+ *
+ * 穿透规则：
+ *   - 孔 / 圆角 / 倒角：不改变外轮廓 → 继续向前找；
+ *   - 缩放 / 平移（不复制、不旋转）：只做仿射变换，长方体**仍是长方体** → 向前穿透，
+ *     并在回程里把变换施加到包围盒上；
+ *   - 删除实体 / 组合：实体集合已变，解析式引用不再可靠 → 直接判失效。
  */
 export function boxRefOf(features: Feature[]): Box | null {
   let i = features.length - 1;
   for (; i >= 0; i--) {
     const t = features[i].type;
     if (t === 'hole' || t === 'fillet' || t === 'chamfer') continue;
+    if (t === 'scale' || t === 'moveBody') continue;
+    if (t === 'deleteBody' || t === 'combine') return null;
     break;
   }
   if (i < 0) return null;
@@ -870,7 +911,7 @@ export function boxRefOf(features: Feature[]): Box | null {
     min: [o[0], o[1], o[2]],
     max: [o[0] + last.params.dims[0], o[1] + last.params.dims[1], o[2] + last.params.dims[2]],
   };
-  // 其后的变换：缩放跟着走；其它产生几何的特征则让解析式引用失效
+  // 其后的变换：缩放 / 纯平移跟着走；其它产生新几何的特征则让解析式引用失效
   for (let k = i + 1; k < features.length; k++) {
     const g = features[k];
     if (g.type === 'hole' || g.type === 'fillet' || g.type === 'chamfer') continue;
@@ -881,6 +922,15 @@ export function boxRefOf(features: Feature[]): Box | null {
         : [p.factor, p.factor, p.factor];
       box = scaleBox(box, p.center, kk);
       continue;
+    }
+    // 纯平移（不复制、不旋转）不破坏长方体的轴向对齐，引用继续有效
+    if (g.type === 'moveBody') {
+      const p = g.params;
+      if (!p.copy && Math.abs(p.angleDeg ?? 0) < 1e-9) {
+        box = translateBox(box, p.delta);
+        continue;
+      }
+      return null;
     }
     return null;
   }

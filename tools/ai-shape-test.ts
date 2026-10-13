@@ -321,5 +321,116 @@ console.log('\n【H. 变换与曲线：缩放 / 镜像 / 涡状线 / 拔模】')
 }
 
 // ============================================================
+console.log('\n【I. 多实体编辑：移动/复制 · 删除 · 组合】');
+{
+  /** 需要体积 / 实体数 / 包围盒的完整构建 */
+  async function buildFull(text: string) {
+    const { compiled } = await interpret(text);
+    const doc = new CadDocument();
+    for (const f of compiled.features) doc.add(f);
+    const { shape, errors } = rebuildFeatures(doc.features);
+    return {
+      vol: shape ? S.volume(shape) : 0,
+      solids: shape ? S.bodiesOf(shape).length : 0,
+      bb: shape ? S.shapeBBox(shape) : null,
+      errors: errors.map((e) => e.message),
+    };
+  }
+
+  // ---- 平移：体积不变、位置整体移动 ----
+  const t1 = await buildFull('80x60x20的长方体，整体沿Z移动50');
+  check('平移：无内核错误', t1.errors.length === 0, t1.errors.join('; '));
+  check('平移：体积不变 = 96000', near(t1.vol, 96000, 0.5), `= ${t1.vol.toFixed(2)}`);
+  check(
+    '平移：包围盒 Z 由 [-10,10] → [40,60]',
+    !!t1.bb && near(t1.bb.min[2], 40, 0.5) && near(t1.bb.max[2], 60, 0.5),
+    t1.bb ? `Z ∈ [${t1.bb.min[2].toFixed(2)}, ${t1.bb.max[2].toFixed(2)}]` : 'null'
+  );
+  check('平移：仍是 1 个实体', t1.solids === 1, `${t1.solids} 实体`);
+
+  // ---- 旋转：体积不变、包围盒按解析式扩张 ----
+  const r1 = await buildFull('80x60x20的长方体，绕Z轴旋转90度');
+  check('绕Z轴旋转90°：无内核错误', r1.errors.length === 0, r1.errors.join('; '));
+  check('绕Z轴旋转90°：体积不变 = 96000', near(r1.vol, 96000, 0.5), `= ${r1.vol.toFixed(2)}`);
+  check(
+    '绕Z轴旋转90°：X/Y 尺寸互换（80×60 → 60×80）',
+    !!r1.bb &&
+      near(r1.bb.max[0] - r1.bb.min[0], 60, 0.5) &&
+      near(r1.bb.max[1] - r1.bb.min[1], 80, 0.5),
+    r1.bb
+      ? `${(r1.bb.max[0] - r1.bb.min[0]).toFixed(2)} × ${(r1.bb.max[1] - r1.bb.min[1]).toFixed(2)}`
+      : 'null'
+  );
+
+  const r45 = await buildFull('80x60x20的长方体，绕Z轴旋转45度');
+  const w45 = 70 / Math.SQRT2;
+  check(
+    '绕Z轴旋转45°：包围盒 X ∈ ±(80+60)/√2',
+    !!r45.bb && near(r45.bb.max[0], w45, 0.5),
+    r45.bb ? `X ∈ [${r45.bb.min[0].toFixed(2)}, ${r45.bb.max[0].toFixed(2)}] 期望 ±${w45.toFixed(2)}` : 'null'
+  );
+
+  // ---- 复制实体：体积 ×2、2 个实体 ----
+  const c1 = await buildFull('20x20x20的长方体，复制一份沿X偏移30');
+  check('复制一份：无内核错误', c1.errors.length === 0, c1.errors.join('; '));
+  check('复制一份：2 个实体', c1.solids === 2, `${c1.solids} 实体`);
+  check('复制一份：体积 ×2 = 16000', near(c1.vol, 16000, 0.5), `= ${c1.vol.toFixed(2)}`);
+
+  // ---- 组合（并集 · 分离体）：体积守恒，但 OCCT 的 Fuse 对分离体仍返回多实体复合体 ----
+  const cb = await buildFull('20x20x20的长方体，复制一份沿X偏移30，把两个实体合并');
+  check('组合（并集·分离体）：无内核错误', cb.errors.length === 0, cb.errors.join('; '));
+  check('组合（并集·分离体）：体积守恒 = 16000', near(cb.vol, 16000, 0.5), `= ${cb.vol.toFixed(2)}`);
+  check(
+    '组合（并集·分离体）：仍是 2 个实体（OCCT 语义：Fuse 不连接分离体）',
+    cb.solids === 2,
+    `${cb.solids} 实体`
+  );
+
+  // ---- 组合（并集 / 差集 / 交集）：用**相交**的两块验证真合并 ----
+  // 两块 20³ 沿 X 错开 10 → 重叠 10×20×20 = 4000
+  const ovAdd = await buildFull('20x20x20的长方体，复制一份沿X偏移10，把两个实体合并');
+  check('组合（并集·相交）：合并成 1 个实体', ovAdd.solids === 1, `${ovAdd.solids} 实体`);
+  check('组合（并集·相交）：体积 = 16000 − 4000 = 12000', near(ovAdd.vol, 12000, 0.5), `= ${ovAdd.vol.toFixed(2)}`);
+
+  const ovSub = await buildFull('20x20x20的长方体，复制一份沿X偏移10，把两个实体相减');
+  check('组合（差集）：无内核错误', ovSub.errors.length === 0, ovSub.errors.join('; '));
+  check('组合（差集）：体积 = 4000（只留下不重叠的部分）', near(ovSub.vol, 4000, 0.5), `= ${ovSub.vol.toFixed(2)}`);
+
+  const ovCom = await buildFull('20x20x20的长方体，复制一份沿X偏移10，把两个实体的交集取出来');
+  check('组合（交集）：无内核错误', ovCom.errors.length === 0, ovCom.errors.join('; '));
+  check('组合（交集）：体积 = 重叠部分 4000', near(ovCom.vol, 4000, 0.5), `= ${ovCom.vol.toFixed(2)}`);
+
+  // ---- 删除实体：倒数第 1 个 → 剩原件 ----
+  const dl = await buildFull('20x20x20的长方体，复制一份沿X偏移30，删除最后一个实体');
+  check('删除最后一个实体：无内核错误', dl.errors.length === 0, dl.errors.join('; '));
+  check('删除最后一个实体：回到 1 个实体', dl.solids === 1, `${dl.solids} 实体`);
+  check('删除最后一个实体：体积 = 8000', near(dl.vol, 8000, 0.5), `= ${dl.vol.toFixed(2)}`);
+
+  // ---- 平移后仍能解析式倒圆角（长方体引用跟着走） ----
+  const base = await interpret('20x20x20的长方体');
+  const doc = new CadDocument();
+  for (const f of base.compiled.features) doc.add(f);
+  const first = rebuildFeatures(doc.features);
+  const run = editModel('整体沿X移动100，四角倒圆角R2', {
+    features: doc.features,
+    bbox: first.shape ? S.shapeBBox(first.shape) : null,
+    boxForRefs: boxRefOf(doc.features),
+  });
+  const doc2 = new CadDocument();
+  for (const f of run.features) doc2.add(f);
+  const r2 = rebuildFeatures(doc2.features);
+  const v2 = r2.shape ? S.volume(r2.shape) : 0;
+  // 20³ 四角 R2 竖直圆角：8000 − (4 − π)·R²·H = 8000 − (4−π)·4·20
+  const filletExp = 8000 - (4 - PI) * 4 * 20;
+  check('平移 100 后四角倒圆角 R2：无内核错误', r2.errors.length === 0, r2.errors.map((e) => e.message).join('; '));
+  check('  体积 = 解析值', near(v2, filletExp, 1), `= ${v2.toFixed(2)} 期望 ${filletExp.toFixed(2)}`);
+  check(
+    '  包围盒随平移落到 X ∈ [90,110]',
+    !!r2.shape && near(S.shapeBBox(r2.shape).min[0], 90, 0.5),
+    r2.shape ? JSON.stringify(S.shapeBBox(r2.shape).min) : 'null'
+  );
+}
+
+// ============================================================
 console.log(`\nAI 几何验证：${pass} 通过 / ${fail} 失败（共 ${pass + fail} 项）`);
 process.exit(fail ? 1 : 0);

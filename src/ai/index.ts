@@ -20,14 +20,24 @@ import {
   boxSideFaces,
   compilePlan,
   mirrorBox,
+  moveBox,
   scaleBox,
   spiralBounds,
   springBounds,
+  translateBox,
   type CompileOptions,
   type CompileResult,
   type Box,
 } from './compile';
-import { localProvider, parseHoleDetail, parseText, summarize, describeOp, normalizeInput } from './parse';
+import {
+  localProvider,
+  parseBodyOp,
+  parseHoleDetail,
+  parseText,
+  summarize,
+  describeOp,
+  normalizeInput,
+} from './parse';
 import {
   applyEdits,
   boxRefOf,
@@ -85,7 +95,9 @@ export {
   compilePlan,
   localProvider,
   mirrorBox,
+  moveBox,
   normalizeInput,
+  parseBodyOp,
   parseHoleDetail,
   parseText,
   scaleBox,
@@ -93,6 +105,7 @@ export {
   springBounds,
   summarize,
   describeOp,
+  translateBox,
 };
 export type { CompileOptions, CompileResult, Box };
 export * from './types';
