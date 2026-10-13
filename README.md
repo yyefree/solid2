@@ -1,9 +1,41 @@
 # Solid2 — Web 参数化三维 CAD
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-0093D0?logo=apache&logoColor=white)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![three.js](https://img.shields.io/badge/three.js-0.186-000000?logo=threedotjs&logoColor=white)](https://threejs.org/)
+[![Kernel](https://img.shields.io/badge/kernel-OpenCASCADE_WASM-00599C?logo=c%2B%2B&logoColor=white)](https://github.com/donalffons/opencascade.js)
+[![Platform](https://img.shields.io/badge/platform-Web_%7C_Windows-6E9E3E)](#桌面版windows-免安装-exe)
+[![Tests](https://img.shields.io/badge/tests-12%E5%A5%97%E4%BB%B6-brightgreen)](#测试与类型检查)
+
 仿 SolidWorks 的浏览器端参数化 CAD，几何内核使用 **OpenCASCADE (OCCT) 的 WebAssembly 构建**
 （`opencascade.js`，工业级 B-rep 精确布尔/圆角/STEP 读写，非 CSG 网格近似）。
 
 技术栈：Vite + TypeScript + three.js + opencascade.js。
+
+## 目录
+
+- [亮点](#亮点)
+- [界面截图](#界面截图)
+- [快速开始](#快速开始)
+- [目录结构](#目录结构)
+- [开发](#开发)
+- [测试与类型检查](#测试与类型检查)
+  - [浏览器端到端冒烟测试](#浏览器端到端冒烟测试)
+  - [全功能自动巡演录像（MP4）](#全功能自动巡演录像mp4)
+- [桌面版（Windows 免安装 exe）](#桌面版windows-免安装-exe)
+- [已知限制](#已知限制)
+- [贡献指南](#贡献指南)
+- [许可证](#许可证)
+- [致谢](#致谢)
+
+## 界面截图
+
+| 界面 | 说明 |
+|------|------|
+| ![Solid2 主界面](screenshot-solidworks.png) | 复刻 SolidWorks 的外壳：七菜单 + CommandManager Ribbon + 特征管理器 + 属性管理器 + ViewCube + 参考三重轴 + 确认角 + 状态栏 |
+| ![任务窗格快速上手](screenshot-sw2.png) | 任务窗格内置「快速上手」，界面对照 SolidWorks 布局（显示式 / 布景 / 剖面 / 视图定向） |
+| ![模型与特征树](screenshot-sw3.png) | 80×60×20 底板 + φ8 通孔 + 柱形沉头孔的特征树，图形区带 3D 标记与智能捕捉 |
+| ![Standard 工具栏](screenshot-sw4.png) | 菜单栏下方一行：新建 / 打开 / 保存 / 打印 · 撤销 / 重做 / 重建 · 选项 / 帮助 |
 
 ## 亮点
 
@@ -167,6 +199,28 @@
 - **桌面版（Windows 免安装 exe）**：`npm run desktop:build` 一条命令装配出 `Solid2.exe`（约 200 MB，内含 WASM 内核），
   双击即用、不装 Node、不装浏览器、不联网。全程零外部下载 —— 手工装配 Electron 运行时、
   纯 Python 生成图标、纯标准库改写 PE 资源段写入 exe 图标。详见下文「桌面版」。
+
+## 快速开始
+
+只关心「跑起来看效果」的话，三步就够：
+
+```bash
+npm install      # 已用项目级 .npmrc 直连 npmmirror 并关掉失效代理
+npm run dev      # 打开 http://127.0.0.1:5173
+```
+
+第一次加载会拉取 62 MB 的 OCCT WebAssembly 内核（Worker 线程里加载，主线程不阻塞），
+随后就能在图形区里建模。想快速体验建模能力，点 Ribbon 的 **AI 建模** 页签，输入一句话：
+
+```text
+60x40x10 的长方体，中心开Φ8的沉头孔，沉头直径14深3，四角倒圆角 R4
+```
+
+想要一个双击即用的绿色版可执行文件（不装 Node、不装浏览器、不联网）：
+
+```bash
+npm run desktop:build    # → release/Solid2-win32-x64/Solid2.exe
+```
 
 ## 目录结构
 
@@ -494,3 +548,46 @@ Solid2 是「ES module + Web Worker + 62 MB WASM」的纯前端应用，用 `fil
   新建模式下「去掉」仍是布尔切除，两种语境各取更自然的读法。
 - **改尺寸不会自动求解「孔深 > 新板厚」这类约束**：圆角/倒角/壁厚超过新尺寸时只给 `warn` 提示并放行，
   由内核在重建时给出最终判定，不做自动夹取（避免悄悄改掉用户给的数值）。
+
+## 贡献指南
+
+欢迎提 Issue 与 PR——仓库里已经配好了模板，照着填能省去大量来回沟通：
+
+| 想做什么 | 去哪里 |
+|----------|--------|
+| 报告缺陷 | [New issue → Bug 报告](https://github.com/yyefree/solid2/issues/new/choose) |
+| 提功能建议 | [New issue → 功能建议](https://github.com/yyefree/solid2/issues/new/choose) |
+| 使用疑问 / 交流 | [Discussions](https://github.com/yyefree/solid2/discussions) |
+| 提功能前对照差距 | [`docs/solidworks-comparison.md`](docs/solidworks-comparison.md) |
+
+提交 PR 前建议在本地跑一遍「三连」，这也是流水线会检查的内容：
+
+```bash
+npx tsc --noEmit   # 类型干净
+npm test           # 12 个套件：草图/表达式/AI/工程图/装配体/内核…
+npm run build      # 生产构建 + 预压缩 + 「主线程不引用 OCCT」架构不变量校验
+```
+
+改动落在浏览器交互或几何语义上时，请补对应断言（`tools/*-test.ts` 的体积 / 面数 / 实体数，
+或 `npm run test:browser` 的 DOM/端到端检查）——本项目的历史回归大多是「静默产出错误几何」，
+一条解析解断言比十行描述更管用。PR 模板里列了完整的自查清单。
+
+## 许可证
+
+本项目采用 [Apache License 2.0](LICENSE) 授权。
+
+这意味着你可以自由地使用、修改、分发本项目的代码（含商业用途），
+只需保留原始版权声明与许可证文本，并在修改文件时说明「你改过」。
+Apache-2.0 同时提供了显式的专利授权条款。
+
+第三方组件保留其各自许可证：几何内核为
+[MIT 许可的 opencascade.js](https://github.com/donalffons/opencascade.js)
+（封装的是 LGPL-2.1 的 OpenCASCADE 库），图形层为
+[MIT 许可的 three.js](https://github.com/mrdoob/three.js)。
+
+## 致谢
+
+- [OpenCASCADE](https://www.opencascade.com/) —— 工业级开源几何内核，本项目的 B-rep 精确建模能力全部来自它。
+- [opencascade.js](https://github.com/donalffons/opencascade.js) —— 把 OCCT 编译成 WebAssembly，使浏览器端获得 STEP 读写与精确布尔。
+- [three.js](https://github.com/mrdoob/three.js) —— WebGL 渲染层。
+- [SolidWorks](https://www.solidworks.com/) —— 界面与交互设计的对标对象；本项目为学习性质的复刻，与其无任何关联。

@@ -1,0 +1,119 @@
+name: Bug 报告
+description: 报告一个缺陷，帮助我们把 Solid2 修得更好
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！提交前请先：
+        1. 搜索 [已有 Issues](https://github.com/yyefree/solid2/issues)，避免重复；
+        2. 确认你跑的是最新代码（`git pull` 后重试）；
+        3. 附上**复现步骤**——只写「打不开」我们很难定位。
+
+  - type: textarea
+    id: describe
+    attributes:
+      label: 问题描述
+      description: 出了什么问题？尽量一句话说清「期望行为」与「实际行为」的差异。
+      placeholder: 例：对长方体四角倒圆角 R5 后体积没变化。
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 按步骤写下你怎么操作的，我们能照着做一遍。
+      placeholder: |
+        1. 新建零件，插入 60x40x10 的长方体
+        2. 选中「特征 → 圆角」，四角设为 R5
+        3. 点确认，观察状态栏体积
+    validations:
+      required: true
+
+  - type: dropdown
+    id: entry
+    attributes:
+      label: 入口
+      description: 你是从哪个入口触发这个问题的？
+      options:
+        - 图形区鼠标操作
+        - Ribbon 工具栏 / 菜单 / 热键
+        - AI 建模助手（自然语言）
+        - 草图模式
+        - 工程图 / 装配体
+        - 桌面版 exe
+        - 单元测试 / 构建
+    validations:
+      required: true
+
+  - type: textarea
+    id: ai-input
+    attributes:
+      label: AI 指令原文（如与 AI 助手相关）
+      description: 原样贴出你输入的自然语言，不要改写——解析结果对措辞敏感。
+      render: text
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+      description: 你认为正确的表现是什么？有解析解/参考值请一并给出。
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 报错信息 / 控制台输出
+      description: 打开浏览器 DevTools（F12）复制 Console 与 Network 里的红色报错。
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / 提交号
+      description: 见页面左下角状态栏或 `git rev-parse --short HEAD`。
+      placeholder: 例：b68b799
+    validations:
+      required: true
+
+  - type: dropdown
+    id: env-os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: env-browser
+    attributes:
+      label: 浏览器及版本
+      description: 桌面版 exe 请填「桌面版」。
+      placeholder: 例：Edge 141.0.3537.57 / Chrome 140 / Firefox 142
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图 / 录屏
+      description: 直接拖拽图片到输入框；几何问题建议附上带尺寸标注的画面。
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前自查
+      options:
+        - label: 我已搜索过现有 Issues，没有重复
+          required: true
+        - label: 我用最新代码复现过此问题
+          required: false
+        - label: 这是一个缺陷，而非使用疑问（使用疑问请去 [Discussions](https://github.com/yyefree/solid2/discussions)）
+          required: true

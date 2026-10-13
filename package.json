@@ -4,6 +4,28 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Solid2 - A web-based parametric CAD system powered by OpenCASCADE (OCCT) WASM kernel",
+  "license": "Apache-2.0",
+  "author": "一飞 (yyefree) <yyefree@qq.com>",
+  "homepage": "https://github.com/yyefree/solid2#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yyefree/solid2.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yyefree/solid2/issues"
+  },
+  "keywords": [
+    "cad",
+    "parametric-cad",
+    "opencascade",
+    "occt",
+    "wasm",
+    "webassembly",
+    "webgl",
+    "threejs",
+    "step",
+    "solidworks"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build && node tools/precompress.mjs && node tools/verify-bundle.mjs",

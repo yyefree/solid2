@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用疑问 / 经验交流
+    url: https://github.com/yyefree/solid2/discussions
+    about: 「这个该怎么用」「换个说法会怎样」这类问题请发到 Discussions，Issue 只留给缺陷与功能建议。
+  - name: 功能差距对照表
+    url: https://github.com/yyefree/solid2/blob/ai/docs/solidworks-comparison.md
+    about: 与 SolidWorks 界面/功能差距的逐项对照与路线图，提功能建议前建议先看一遍。
+  - name: 安全漏洞
+    url: https://github.com/yyefree/solid2/security/advisories/new
+    about: 涉及安全的请通过私密漏洞报告提交，不要开公开 Issue。

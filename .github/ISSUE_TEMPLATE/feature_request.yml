@@ -1,0 +1,74 @@
+name: 功能建议
+description: 提出一个新功能或改进想法
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        欢迎提想法！请先搜索 [已有 Issues](https://github.com/yyefree/solid2/issues) 与
+        [Discussions](https://github.com/yyefree/solid2/discussions)，避免重复。
+        与 SolidWorks 的功能差距对照见 [`docs/solidworks-comparison.md`](https://github.com/yyefree/solid2/blob/ai/docs/solidworks-comparison.md)。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决什么问题
+      description: 描述你遇到的场景/痛点，而不是直接给方案——背景信息比结论更有价值。
+      placeholder: 例：批量修改多个孔的直径时，只能一个一个改。
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: 期望的行为
+      description: 你希望它怎么工作？尽量具体到可验证的步骤。
+      placeholder: 例：在设计树多选同类型孔，属性面板里改一次直径，全部联动。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 所属模块
+      multiple: true
+      options:
+        - 图形区 / 视图交互
+        - 特征建模（拉伸/旋转/放样/扫描/布尔）
+        - 圆角 / 倒角 / 抽壳 / 拔模
+        - 草图与约束
+        - 高级曲线（弹簧/涡状线/B 样条/圆锥曲线）
+        - 参数化与表达式
+        - AI 建模助手
+        - 装配体 / 配合 / 干涉
+        - 工程图
+        - 文件导入导出（STEP/STL/OBJ）
+        - 桌面版 exe
+        - 构建 / 测试 / 文档
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案
+      description: 有没有别的绕法？为什么不够好？
+
+  - type: textarea
+    id: references
+    attributes:
+      label: 参考资料
+      description: SolidWorks / FreeCAD / Onshape 的对应功能、文档链接、示意图等。
+      placeholder: |
+        - SolidWorks: 编辑 → 查找并替换参数
+        - 相关文档: ...
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前自查
+      options:
+        - label: 我已搜索过现有 Issues / Discussions，没有重复提案
+          required: true
+        - label: 这个功能对**其他使用者**也有价值（而非只满足我个人的特殊流程）
+          required: false
