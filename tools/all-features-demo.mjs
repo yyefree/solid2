@@ -526,7 +526,7 @@ async function installHelpers() {
 // ==================================================================
 // 5. 全功能巡演
 // ==================================================================
-const TOTAL_STEPS = 20;
+const TOTAL_STEPS = 23;
 
 async function tour() {
   // ---------- ① 启动 ----------
@@ -543,8 +543,66 @@ async function tour() {
   }
   await hold(300);
 
+  // ---------- ③ AI 建模助手 ----------
+  await banner(3, 'AI 建模助手 · 自然语言 → 参数化特征树', '一句话建模 + 一句话改模型，离线本地解析');
+  await closeModals();
+  await tab('AI');
+  await hold(400);
+
+  // 打开「AI 建模」对话框，敲一句中文描述，看实时解析
+  const aiPreview = await act(`(async () => {
+    const btn = [...document.querySelectorAll('.rbtn')].find(b => /AI 建模/.test(b.textContent));
+    if (!btn) return 'no-button';
+    btn.click();
+    await new Promise(r => setTimeout(r, 220));
+    const ta = document.querySelector('.ai-input');
+    if (!ta) return 'no-input';
+    ta.value = '长80宽60高20的板，中心开Φ8的沉头孔，沉头直径14深3，四角倒圆角R4';
+    ta.dispatchEvent(new Event('input'));
+    await new Promise(r => setTimeout(r, 220));
+    return document.querySelector('.ai-preview')?.textContent ?? '';
+  })()`, 1600);
+  check('AI：自然语言实时解析出特征摘要',
+    /沉头/.test(String(aiPreview)) && /圆角/.test(String(aiPreview)),
+    String(aiPreview).slice(0, 70));
+
+  // 点「应用」→ 特征树落地 + 真几何
+  const aiBuild = await act(`(async () => {
+    const b = [...document.querySelectorAll('.modal-foot .btn')].find(x => /应用/.test(x.textContent));
+    b?.click();
+    await new Promise(r => setTimeout(r, 650));
+    await __D.app.rebuild();
+    return __D.app.model.stats;
+  })()`, 2600);
+  check('AI：一句话建出带沉头孔与圆角的板', !!aiBuild && aiBuild.volume > 0,
+    aiBuild ? aiBuild.volume.toFixed(1) + ' mm³' : 'null');
+  await isoView(1250);
+
+  // 再在现有模型上继续用中文改（追加凸台 + 改尺寸）
+  await act(`(async () => {
+    const btn = [...document.querySelectorAll('.rbtn')].find(b => /AI 编辑/.test(b.textContent));
+    if (!btn) return 'no-edit-button';
+    btn.click();
+    await new Promise(r => setTimeout(r, 220));
+    const ta = document.querySelector('.ai-input');
+    if (ta) { ta.value = '上面加一个半径8高12的圆柱，把高改成20'; ta.dispatchEvent(new Event('input')); }
+    return 1;
+  })()`, 1700);
+  await hold(900);
+  const aiEdit = await act(`(async () => {
+    const b = [...document.querySelectorAll('.modal-foot .btn')].find(x => /应用/.test(x.textContent));
+    b?.click();
+    await new Promise(r => setTimeout(r, 650));
+    await __D.app.rebuild();
+    return __D.app.model.stats;
+  })()`, 2600);
+  check('AI：在现有模型上追加凸台并改尺寸', !!aiEdit && aiEdit.volume > 0,
+    aiEdit ? aiEdit.volume.toFixed(1) + ' mm³' : 'null');
+  await closeModals();
+  await isoView(1300);
+
   // ---------- ③ 草图实体族 ----------
-  await banner(3, '草图实体族 · 直线/矩形/圆/圆弧/椭圆/槽口/点/多边形', '在真实草图模式下用工具逐一点击绘制');
+  await banner(4, '草图实体族 · 直线/矩形/圆/圆弧/椭圆/槽口/点/多边形', '在真实草图模式下用工具逐一点击绘制');
   await tab('草图');
   await act(`__D.app.startSketch('front')`, 900);
   // 注意：attach() 已把相机摆到正对草图平面；不要再调 setView('front')
@@ -601,7 +659,7 @@ async function tour() {
   await hold(300);
 
   // ---------- ④ 草图曲线族（圆锥曲线 + B 样条） ----------
-  await banner(4, '草图曲线族 · 抛物线 / 双曲线 / B 样条', '圆锥曲线按参数方程生成；B 样条严格穿过每个通过点');
+  await banner(5, '草图曲线族 · 抛物线 / 双曲线 / B 样条', '圆锥曲线按参数方程生成；B 样条严格穿过每个通过点');
   await tab('草图');
   await act(`__D.app.startSketch('front')`, 900);
   await hold(300);
@@ -650,7 +708,7 @@ async function tour() {
   await hold(200);
 
   // ---------- ⑤ 约束草图 ----------
-  await banner(5, '约束草图 · 水平/竖直/平行 + LM 求解器', '画歪的线在加约束后被求解器「弹正」');
+  await banner(6, '约束草图 · 水平/竖直/平行 + LM 求解器', '画歪的线在加约束后被求解器「弹正」');
   await act(`__D.app.startSketch('front')`, 800);
   await draw('line', [[-60, -10], [-10, 4]]);
   await draw('line', [[0, -14], [46, -6]]);
@@ -688,7 +746,7 @@ async function tour() {
   await hold(200);
 
   // ---------- ⑤ 拉伸 / 切除（主零件起点） ----------
-  await banner(6, '拉伸凸台 / 拉伸切除', '80×60 底板 + φ24 中心孔');
+  await banner(7, '拉伸凸台 / 拉伸切除', '80×60 底板 + φ24 中心孔');
   await tab('特征');
   await act(`__D.reset(); 1`, 200);
   await act(`(() => {
@@ -706,7 +764,7 @@ async function tour() {
   await isoView();
 
   // ---------- ⑥ 工程特征 ----------
-  await banner(7, '工程特征 · 圆角 / 变半径圆角 / 倒角 / 抽壳 / 拔模 / 筋 / 异形孔');
+  await banner(8, '工程特征 · 圆角 / 变半径圆角 / 倒角 / 抽壳 / 拔模 / 筋 / 异形孔');
   const sFillet = await act(`(() => {
     const e = __D.longestEdge();
     __D.fillet([{ point: [...e.mid], dir: [...e.dir] }], 3);
@@ -789,7 +847,7 @@ async function tour() {
   await isoView(1000);
 
   // ---------- ⑦ 基本体五种 ----------
-  await banner(8, '基本体 · 长方体 / 圆柱 / 球 / 圆锥 / 圆环', '五种原始几何体一次生成');
+  await banner(9, '基本体 · 长方体 / 圆柱 / 球 / 圆锥 / 圆环', '五种原始几何体一次生成');
   await act(`(() => {
     __D.reset();
     __D.prim('box', [24,24,24], [-70,-10,0]);
@@ -810,7 +868,7 @@ async function tour() {
   await hold(300);
 
   // ---------- ⑧ 旋转 / 放样 / 扫描 ----------
-  await banner(9, '基于草图 · 旋转 / 放样 / 扫描', '旋转轴 + 多截面放样 + 轮廓沿路径扫掠');
+  await banner(10, '基于草图 · 旋转 / 放样 / 扫描', '旋转轴 + 多截面放样 + 轮廓沿路径扫掠');
   const sRev = await act(`(() => {
     __D.reset();
     const id = __D.sketch('front', h => {
@@ -851,7 +909,7 @@ async function tour() {
   await isoView(1000);
 
   // ---------- ⑨ 阵列 ----------
-  await banner(10, '阵列 · 线性 / 圆周 / 镜像', '种子特征批量复制');
+  await banner(11, '阵列 · 线性 / 圆周 / 镜像', '种子特征批量复制');
   await act(`__D.reset(); __D.box(10, 10, 10, [-40,0,0]); 1`, 400);
   const sLin = await act(`(() => {
     const seed = __D.app.doc.features[0].id;
@@ -884,7 +942,7 @@ async function tour() {
   await isoView(1000);
 
   // ---------- ⑩ 实体编辑族 ----------
-  await banner(11, '实体编辑 · 缩放 / 分割 / 移动复制 / 组合 / 删除实体', '多实体工作流');
+  await banner(12, '实体编辑 · 缩放 / 分割 / 移动复制 / 组合 / 删除实体', '多实体工作流');
   await act(`__D.reset(); __D.box(20, 20, 20, [0,0,0]); 1`, 400);
   const sSc = await act(`__D.scale([0,0,0], 2) && __D.rebuild()`, 1400);
   check('缩放 2×：体积 ×8 = 64000', near(sSc.volume, 64000, 1e-3), `${sSc.volume.toFixed(0)} mm³`);
@@ -926,7 +984,7 @@ async function tour() {
   await isoView(1100);
 
   // ---------- ⑪ 参数化 · 表达式 / 参数表（参考 FreeCAD Expressions） ----------
-  await banner(12, '参数化 · 表达式 / 参数表', '全局参数 + 公式驱动几何');
+  await banner(13, '参数化 · 表达式 / 参数表', '全局参数 + 公式驱动几何');
   const sExpr = await act(`(async () => {
     __D.reset();
     __D.app.doc.params.length = 0;
@@ -967,7 +1025,7 @@ async function tour() {
   await hold(400);
 
   // ---------- ⑫ 曲线族 ----------
-  await banner(13, '曲线 · 弹簧 / 涡状线', '螺旋线 + 阿基米德螺线成体');
+  await banner(14, '曲线 · 弹簧 / 涡状线', '螺旋线 + 阿基米德螺线成体');
   const sSpring = await act(`(() => {
     __D.reset();
     __D.spring({ meanDiameter: 30, wireDiameter: 4, pitch: 10, turns: 6 });
@@ -987,7 +1045,7 @@ async function tour() {
   await isoView(1100);
 
   // ---------- ⑫ 参考几何体 ----------
-  await banner(14, '参考几何体 · 基准面', '基于标准基准面偏移创建');
+  await banner(15, '参考几何体 · 基准面', '基于标准基准面偏移创建');
   const sRef = await act(`(() => {
     __D.reset(); __D.box(40,40,20,[0,0,0]);
     __D.refPlane('offset', { origin: [0,0,40], u: [1,0,0], v: [0,1,0], normal: [0,0,1], ref: '上视偏移' }, 40);
@@ -997,7 +1055,7 @@ async function tour() {
   await isoView(1100);
 
   // ---------- ⑬ 装配体 ----------
-  await banner(15, '装配体 · 插入组件 / 配合 / 干涉检查 / 爆炸视图', '');
+  await banner(16, '装配体 · 插入组件 / 配合 / 干涉检查 / 爆炸视图', '');
   await act(`__D.reset(); __D.box(40,40,20,[0,0,0]); 1`, 300);
   await act(`__D.rebuild()`, 1100);
   const sAsm = await act(`(async () => {
@@ -1025,7 +1083,7 @@ async function tour() {
   await isoView(1100);
 
   // ---------- ⑭ 工程图 ----------
-  await banner(16, '工程图 · 三视图 / 自动标注 / 孔位标注 / 明细表 / 导出', 'HLR 隐藏线消隐');
+  await banner(17, '工程图 · 三视图 / 自动标注 / 孔位标注 / 明细表 / 导出', 'HLR 隐藏线消隐');
   await act(`__D.app.setMode('model'); 1`, 400);
   const sDraw = await act(`(() => {
     __D.app.setMode('drawing');
@@ -1051,7 +1109,7 @@ async function tour() {
   await act(`__D.app.setMode('model'); 1`, 500);
 
   // ---------- ⑮ 评估 ----------
-  await banner(17, '评估 · 质量属性 / 测量距离 / 模型统计 / 几何检查', '体积与表面积由 OCCT 精确积分');
+  await banner(18, '评估 · 质量属性 / 测量距离 / 模型统计 / 几何检查', '体积与表面积由 OCCT 精确积分');
   await act(`__D.reset(); __D.box(40,30,20,[0,0,0]); 1`, 400);
   await act(`__D.rebuild()`, 1100);
   await act(`__D.app.showMassProperties(); 1`, 2000);
@@ -1070,7 +1128,7 @@ async function tour() {
   await isoView(1000);
 
   // ---------- ⑯ 视图 ----------
-  await banner(18, '视图 · 显示样式 / 方向 / 基准面 / 网格', '');
+  await banner(19, '视图 · 显示样式 / 方向 / 基准面 / 网格', '');
   await act(`__D.reset(); __D.box(50,36,24,[0,0,0]); 1`, 400);
   await act(`__D.rebuild()`, 1100);
   for (const st of ['shadedEdges', 'shaded', 'wireframe', 'hidden', 'transparent']) {
@@ -1086,7 +1144,7 @@ async function tour() {
   await hold(300);
 
   // ---------- ⑰ 文件导出 ----------
-  await banner(19, '文件 · STEP / STL / OBJ 导出', '真实写出文件到磁盘');
+  await banner(20, '文件 · STEP / STL / OBJ 导出', '真实写出文件到磁盘');
   await act(`__D.app.exportStep(); 1`, 2500);
   await act(`__D.app.exportStl(); 1`, 1800);
   await act(`__D.app.exportObj(); 1`, 1800);
@@ -1098,7 +1156,7 @@ async function tour() {
   check('工程图 PNG 已导出', files.some((f) => /\.png$/i.test(f)), files.filter((f) => /\.png$/i.test(f)).join(', '));
 
   // ---------- ⑱ 撤销 / 重做 / 重建 ----------
-  await banner(20, '文件编辑 · 撤销 / 重做 / 重建', '');
+  await banner(21, '文件编辑 · 撤销 / 重做 / 重建', '');
   await act(`__D.app.undo(); 1`, 900);
   await act(`__D.app.undo(); 1`, 900);
   await act(`__D.app.redo(); 1`, 900);
@@ -1106,14 +1164,14 @@ async function tour() {
   await isoView(1000);
 
   // ---------- ⑲ 收尾：环绕 ----------
-  await banner(21, '收尾 · 模型环绕查看', 'OrbitControls 轨道旋转');
+  await banner(22, '收尾 · 模型环绕查看', 'OrbitControls 轨道旋转');
   await act(`__D.app.setView('iso'); __D.app.zoomFit(); 1`, 900);
   await orbit(220, -40, 30, 1600);
   await orbit(-140, 40, 24, 1200);
   await hold(400);
 
   // ---------- ⑳ 汇总 ----------
-  await banner(22, '演示结束 · 全部功能已自动测试通过', `${pass} 项断言`);
+  await banner(23, '演示结束 · 全部功能已自动测试通过', `${pass} 项断言`);
   await hold(1200);
 }
 
