@@ -268,8 +268,10 @@ npm run test:browser   # 用 Edge/Chrome 的 CDP 驱动真实浏览器
 
 ```bash
 npm run dev            # 另开一个终端先起开发服务器（或让脚本自动拉起）
-npm run demo:video     # 自动巡演 + 录制，输出 dist/solid2-all-features.mp4
+npm run demo:video     # 自动巡演 + 录制，输出 videos/solid2-all-features.mp4
 ```
+
+> 录像默认落在 `videos/`（已 gitignore），**不放 `dist/`** —— `npm run build` 会清空 `dist/`，放那儿会被误删。
 
 脚本 `tools/all-features-demo.mjs` 零依赖（Node 内置 `WebSocket` 直连 CDP）。
 
@@ -295,8 +297,8 @@ node tools/all-features-demo.mjs --probe           # 只跑各脚本的专属场
 
 新脚本只需在 `tools/tour/scripts.mjs` 里加一个对象、写自己关心的字段（其余回落到「经典」值）即可。
 
-已录好的成品：`dist/solid2-tour-<id>.mp4`（四个脚本各一份，各约 3.5 分钟 / 9 MB），
-`dist/solid2-all-features.mp4` 是最近一次运行（默认轮换）的输出。
+已录好的成品：`videos/solid2-tour-<id>.mp4`（四个脚本各一份，各约 3.5 分钟 / 9 MB），
+`videos/solid2-all-features.mp4` 是最近一次运行（默认轮换）的输出。
 
 **21 个固定步骤**覆盖：界面总览 → AI 建模助手（自然语言建模 + 编辑）→
 草图实体族（真实鼠标点击绘制矩形/圆/椭圆/槽口/圆弧/点/多边形 + 镜像）→

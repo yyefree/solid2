@@ -5,6 +5,9 @@ node_modules/
 dist/
 .vite/
 
+# 巡演录像（独立目录：dist/ 会被 vite build 清空，视频放那儿会被误删）
+videos/
+
 # 临时 / 工具目录
 .shots/
 .workbuddy-ai/

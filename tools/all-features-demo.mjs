@@ -18,7 +18,7 @@
  *   node tools/all-features-demo.mjs --probe         # 只跑各脚本的「专属场景」并断言（不录视频）
  *   node tools/all-features-demo.mjs --no-encode     # 跑完整巡演 + 断言，但不编码 MP4（验证用）
  *   node tools/all-features-demo.mjs --url http://127.0.0.1:5173/
- *   node tools/all-features-demo.mjs --out dist/solid2-all-features.mp4
+ *   node tools/all-features-demo.mjs --out videos/solid2-all-features.mp4
  *   node tools/all-features-demo.mjs --no-serve      # 复用已启动的 dev server
  *
  * 环境变量：
@@ -43,7 +43,7 @@ const argOf = (name, dflt) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
 };
 const URL_ = argOf('--url', 'http://127.0.0.1:5173/');
-const OUT = path.resolve(ROOT, argOf('--out', 'dist/solid2-all-features.mp4'));
+const OUT = path.resolve(ROOT, argOf('--out', 'videos/solid2-all-features.mp4'));
 const NO_SERVE = argv.includes('--no-serve');
 const PROBE = argv.includes('--probe');
 const NO_ENCODE = argv.includes('--no-encode');
