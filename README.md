@@ -164,6 +164,9 @@
   **孔位自动标注（中心定位 + 直径）**、**明细表（BOM，装配态按同零件自动合并数量）**。
 - **构建优化**：Brotli 预压缩把 63MB WASM 的传输体积降到约 9MB（`npm run build` 自动执行）；
   提供「内核精简构建」流水线（扫描所用 OCCT 符号 → 最小头文件清单，供自定义构建，见 `tools/kernel-build/`）。
+- **桌面版（Windows 免安装 exe）**：`npm run desktop:build` 一条命令装配出 `Solid2.exe`（约 200 MB，内含 WASM 内核），
+  双击即用、不装 Node、不装浏览器、不联网。全程零外部下载 —— 手工装配 Electron 运行时、
+  纯 Python 生成图标、纯标准库改写 PE 资源段写入 exe 图标。详见下文「桌面版」。
 
 ## 目录结构
 
@@ -206,18 +209,25 @@ src/
 tools/      测试与一次性脚本
   kernel-build/    内核精简构建：符号扫描 → 最小头文件清单（见其 README）
   tour/scripts.mjs 全功能巡演脚本库（每个脚本一套参数 + 专属场景，运行器默认轮换）
+  desktop-verify.mjs 桌面版端到端验证：启动 exe → CDP → 内核就绪 → AI 建模 → 体积对拍
   precompress.mjs  构建产物 brotli/gzip 预压缩
   verify-bundle.mjs 校验"主线程不引用 OCCT"的架构不变量
+desktop/    桌面版（Electron）
+  main.cjs            主进程 + 只监听 127.0.0.1 随机端口的静态服务器
+  build-desktop.mjs   手工装配 → release/Solid2-win32-x64/Solid2.exe + zip
+  make-icon.py        纯 Python 光栅化 → icon.png / icon.ico（6 个尺寸，零依赖）
+  patch-exe-icon.py   纯标准库改写 PE 资源段，把 ICO 写进 exe（替代 rcedit）
 ```
 
 ## 开发
 
 ```bash
-npm install            # 若内网代理有问题：npm install --userconfig=.npmrc.noproxy
+npm install            # 已用项目级 .npmrc 直连 npmmirror 并关掉失效代理；如需自定义：npm install --userconfig=.npmrc.noproxy
 npm run dev            # 开发服务器 http://127.0.0.1:5173
 npm run build          # 生产构建 + 预压缩 + 隔离校验
 npm run preview        # 预览构建产物
 npm run kernel:scan    # 扫描所用 OCCT 符号 → 精简构建头文件清单
+npm run desktop:build  # 打包 Windows 免安装 exe（见下文「桌面版」）
 npm run demo:video     # 自动巡演全部功能，录制为 MP4（需本机 Edge/Chrome）
 npm run demo:list      # 列出全部巡演脚本
 npm run demo:probe     # 只跑各脚本的「专属场景」并断言（不录视频，约 35s）
@@ -240,6 +250,7 @@ npm run test:edit      # 实体编辑：缩放 / 分割 / 移动复制 / 删除�
 npm run test:shape     # 草图 → 实体：矩形/孔/圆弧 + 椭圆/槽口/草图点 + 闭合 B 样条 / 抛物线 / 双曲线（需 OCCT）
 npm run test:ai-shape  # AI 建模助手几何：自然语言 → 特征 → 真几何，体积与解析解对拍（需 OCCT）
 npm run test:kernel    # 几何内核封装（需 OCCT）
+npm run desktop:verify # 桌面版端到端：启动 exe → CDP → 内核就绪 → AI 建模 → 体积对拍（18 项）
 ```
 
 测试经 `tools/run-ts.mjs` 用 Vite SSR 把 TS 入口打成 ESM 后交 Node 运行；
@@ -350,6 +361,49 @@ node tools/all-features-demo.mjs --probe           # 只跑各脚本的专属场
 > 写专属场景时的几何约定：`__D.box/prim` 的 `origin` 是**角点**（不是中心），圆柱/圆锥/圆环底面在
 > `origin` 沿 +Z 生长，只有球是中心落位；`__D.cirPattern(...)` **必须**传 `seedFeatureId`（见下文已知限制）。
 
+## 桌面版（Windows 免安装 exe）
+
+把整个 Solid2 打包成一个**双击即用的绿色版 exe**，不装 Node、不装浏览器、不需要联网：
+
+```bash
+npm run desktop:build    # 装配 → release/Solid2-win32-x64/Solid2.exe + Solid2-win32-x64.zip
+npm run desktop:verify   # 真的启动 exe，走 CDP 端到端验证（18 项断言）
+npm run desktop          # 开发态直接跑 Electron 壳（复用 dist/）
+```
+
+产物：
+
+| 路径 | 说明 |
+|------|------|
+| `release/Solid2-win32-x64/` | 绿色目录，整个文件夹可拷到 U 盘 / 别的电脑 |
+| `release/Solid2-win32-x64/Solid2.exe` | 主程序，约 200 MB（内含 62 MB WASM 内核） |
+| `release/Solid2-win32-x64.zip` | 分发用压缩包，约 133 MB |
+| `release/使用说明.txt` | 给最终用户看的说明 |
+
+**为什么要自己装配，而不用 electron-builder？**
+electron-builder 的 NSIS / winCodeSign 组件要从 GitHub Releases 下载，本机网络拿不到。
+`desktop/build-desktop.mjs` 改走**等价的手工装配**（electron-packager 也是这么干的）：
+拿现成的 Electron 运行时 → 删掉 `default_app.asar` → 精简语言包（只留中英文，省 50 个 `.pak`）→
+把 `resources/app/{main.cjs, icon.png, package.json, dist/}` 塞进去 → `electron.exe` 改名 —— 全程零外部下载。
+
+**为什么主进程要自带一个静态服务器？**
+Solid2 是「ES module + Web Worker + 62 MB WASM」的纯前端应用，用 `file://` 直接打开会踩三个坑：
+① ES module 的 `import` 被 CORS 拦；② Worker 无法从 `file://` 加载；③ `fetch()` 读 wasm 被判跨源。
+所以 `desktop/main.cjs` 在**只监听 `127.0.0.1` 随机端口**的静态服务器上服务 `dist/`，
+窗口 `loadURL` 到它 —— 等价于 `npm run preview`，但用户看不到任何服务器进程。
+安全基线：`contextIsolation: true / nodeIntegration: false / sandbox: true`，外部链接一律交给系统浏览器。
+
+**exe 图标怎么来的？** 同样是零外部依赖：`desktop/make-icon.py` 用纯 Python 光栅化
+（4× 超采样 + 盒式降采样，等轴测线框立方体）产出 256×256 PNG 与 6 尺寸 ICO；
+`desktop/patch-exe-icon.py` 用标准库 `struct` **直接改写 PE 资源段** —— 解析出原有资源树
+（版本信息 / 应用清单…）完整保留，只替换 `RT_ICON(3)` + `RT_GROUP_ICON(14)`，
+重建后放进一个**新追加的 `.rsrc2` 节**并改数据目录指向它，最后重算 PE 校验和。
+（先写临时文件、校验通过才原子替换，失败不会留下坏 exe。）
+
+> 本机验证环境有两个坑，只在 `tools/desktop-verify.mjs` 里规避，**不影响应用本体**：
+> shell 里设了 `ELECTRON_RUN_AS_NODE=1`（Electron 会退化成纯 Node，直接退出），
+> 以及 GPU 进程起不来（加 `--disable-gpu` 走软件光栅）。真实桌面上用户双击即可。
+
 ## 已知限制
 
 - Headless 浏览器加载 65MB WASM 的内存占用偏高，某些容器/CI 环境可能 OOM；
@@ -391,6 +445,10 @@ node tools/all-features-demo.mjs --probe           # 只跑各脚本的专属场
 - **抛物线 / 双曲线是开放曲线实体，不参与草图闭环搜索**：它们不像直线 / 圆弧那样带 `SkPoint` 端点
   （端点位置由参数范围 `t0`/`t1` 派生），因此无法与其它实体连接成环。用途是**扫描路径**与参考几何；
   要做出实体，请把曲线端点用直线手工连接（或在几何层用 `advancedCurveEdge` + 弦自建线框）。
+- **桌面版 exe 未做代码签名**：Electron 运行时自带的签名会因改写 PE 资源段而失效，Windows SmartScreen
+  首次运行可能提示「未知发布者」——点「更多信息 → 仍要运行」即可。要消除提示需购买代码签名证书。
+- **桌面版打包产物不入库**：`release/` 已 gitignore（解压后 345 MB）。`npm run desktop:build` 可随时重建，
+  前提是 `node_modules/electron/dist` 存在（首次需 `npm install`）。
   **闭合 B 样条**（末点落回起点附近自动闭合）则自成一环，可以直接拉伸成体。
 - **B 样条闭合处的切向**：闭合曲线用「末尾补回起点」实现（首尾点严格重合），
   在起点处的切向由相邻两段决定，**不是**周期 B 样条那样天然 p 阶连续；

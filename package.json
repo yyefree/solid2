@@ -27,6 +27,9 @@
     "test:shape": "node tools/run-ts.mjs tools/sketch-shape-test.ts",
     "test:kernel": "node tools/run-ts.mjs tools/kernel-test.ts",
     "test:browser": "node tools/browser-smoke.mjs",
+    "desktop": "electron desktop/main.cjs",
+    "desktop:build": "node desktop/build-desktop.mjs",
+    "desktop:verify": "node tools/desktop-verify.mjs",
     "demo:video": "node tools/all-features-demo.mjs",
     "demo:list": "node tools/all-features-demo.mjs --list",
     "demo:probe": "node tools/all-features-demo.mjs --probe"
@@ -38,6 +41,7 @@
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
+    "electron": "^38.8.6",
     "typescript": "^5.9.2",
     "vite": "^7.1.5"
   }
