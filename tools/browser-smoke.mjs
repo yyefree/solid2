@@ -237,7 +237,8 @@ const sw = await evaluate(`(() => {
   const coord = !!document.querySelector('.sb-coord');
   const unit = (document.querySelector('.sb-unit')?.textContent ?? '').trim();
   const tabs = [...document.querySelectorAll('.rtab')].map(t => t.textContent.trim());
-  return { menuItems, search, headsUpBtns, headsUpCmds, viewcube, triad, conf, statusRight, coord, unit, tabs };
+  const modeBadge = (document.querySelector('.sb-mode')?.textContent ?? '').trim();
+  return { menuItems, search, headsUpBtns, headsUpCmds, viewcube, triad, conf, statusRight, coord, unit, tabs, modeBadge };
 })()`);
 const wantMenus = ['文件', '编辑', '视图', '插入', '工具', '窗口', '帮助'];
 check('菜单栏含 SolidWorks 七菜单', wantMenus.every((w) => sw.menuItems.some((m) => m.startsWith(w))), sw.menuItems.join(' '));
@@ -260,9 +261,94 @@ check('参考三重轴（Triad）已渲染', sw.triad);
 check('确认角（✓/✗）已挂载', sw.conf);
 check('状态栏右侧区（坐标/单位/重建）已渲染', sw.statusRight && sw.coord);
 check('状态栏单位显示单位制（默认 MMGS）', sw.unit === 'MMGS', sw.unit);
+check('状态栏含模式上下文徽标（零件/正在编辑：草图N）', !!sw.modeBadge, sw.modeBadge);
 // 特征树：原点展开为 X/Y/Z 三轴（SolidWorks 零件树结构）
 const treeLabels = await evaluate(`[...document.querySelectorAll('.tree .tnode .label')].map(n => n.textContent.trim())`);
 check('特征树原点下含 X/Y/Z 轴三节点', ['原点', 'X 轴', 'Y 轴', 'Z 轴'].every((t) => treeLabels.includes(t)), treeLabels.slice(-6).join(' / '));
+
+// Ribbon 右键页签菜单（SW：右键页签勾选显示/隐藏 + 折叠）与自定义键盘
+const ribbonCtx = await evaluate(`(async () => {
+  const { ribbonController } = await import('/src/ui/ribbon.ts');
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const before = document.querySelectorAll('.rtab').length;
+  const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.trim() === '曲线');
+  if (!tab) return { noTab: true, before };
+  tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+  await sleep(80);
+  const pop = document.querySelector('.dropdown');
+  out.menuOpened = !!pop;
+  out.menuItems = pop ? [...pop.querySelectorAll('.dd-item')].map(i => (i.querySelector('.dd-label')?.textContent ?? '').trim()).filter(Boolean) : [];
+  const curveItem = pop ? [...pop.querySelectorAll('.dd-item')].find(i => (i.querySelector('.dd-label')?.textContent ?? '').trim() === '曲线') : null;
+  out.hasCurveCheck = !!curveItem;
+  if (curveItem) curveItem.click();
+  await sleep(80);
+  out.afterHide = document.querySelectorAll('.rtab').length;
+  out.hiddenList = ribbonController().hiddenTabs();
+  // 右键「折叠 CommandManager」（双击页签同样可折叠）
+  const feat = [...document.querySelectorAll('.rtab')].find(t => t.textContent.trim() === '特征');
+  feat.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+  await sleep(80);
+  const collapseItem = [...document.querySelectorAll('.dropdown .dd-item')].find(i => i.textContent.includes('折叠'));
+  if (collapseItem) collapseItem.click();
+  await sleep(80);
+  out.collapsed = ribbonController().collapsed();
+  out.panelHidden = document.querySelector('.ribbon').style.display === 'none';
+  // 还原（不影响后续断言）
+  ribbonController().setTabVisible('curves', true);
+  ribbonController().toggleCollapse();
+  await sleep(60);
+  out.restored = document.querySelectorAll('.rtab').length === before && !ribbonController().collapsed();
+  document.querySelector('.dropdown')?.remove();
+  return out;
+})()`);
+check('Ribbon 页签右键菜单可打开且含全部页签勾选项', ribbonCtx.menuOpened && ribbonCtx.menuItems.length >= 9, (ribbonCtx.menuItems ?? []).join(' / '));
+check('右键菜单可隐藏页签（9 → 8，记入 hiddenTabs）', ribbonCtx.afterHide === 8 && ribbonCtx.hiddenList.includes('curves'), `afterHide=${ribbonCtx.afterHide} hidden=${ribbonCtx.hiddenList}`);
+check('右键菜单可折叠 CommandManager（面板收起）', ribbonCtx.collapsed === true && ribbonCtx.panelHidden === true, `collapsed=${ribbonCtx.collapsed}`);
+check('页签显隐/折叠可还原（不污染后续断言）', ribbonCtx.restored === true, `restored=${ribbonCtx.restored}`);
+
+const kbCustom = await evaluate(`(async () => {
+  const { openKeyboardCustomize } = await import('/src/ui/keyboard-customize.ts');
+  const hotkeys = await import('/src/app/hotkeys.ts');
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  localStorage.removeItem('solid2.hotkeys.v1');
+  openKeyboardCustomize(null);
+  await sleep(120);
+  const rows = document.querySelectorAll('.kb-row');
+  out.rows = rows.length;
+  out.mask = document.querySelectorAll('.modal-mask').length;
+  // 捕获新键位：点「新建」行的快捷键单元格，再按 Ctrl+Alt+M
+  const row = [...document.querySelectorAll('.kb-row')].find(r => r.dataset.kb === 'file.new');
+  const keyBtn = row ? row.querySelector('.kb-key') : null;
+  const before = keyBtn ? keyBtn.textContent : '';
+  if (keyBtn) keyBtn.click();
+  await sleep(50);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, altKey: true, bubbles: true, cancelable: true }));
+  await sleep(80);
+  out.before = before;
+  out.after = keyBtn ? keyBtn.textContent : '';
+  out.stored = JSON.parse(localStorage.getItem('solid2.hotkeys.v1') ?? '{}')['file.new'] ?? '';
+  out.sc = hotkeys.sc('file.new');
+  out.listRows = hotkeys.hotkeyList().length;
+  // 恢复默认
+  const resetBtn = row ? row.querySelector('.kb-reset') : null;
+  if (resetBtn) resetBtn.click();
+  await sleep(50);
+  out.afterReset = keyBtn ? keyBtn.textContent : '';
+  out.storedAfterReset = JSON.parse(localStorage.getItem('solid2.hotkeys.v1') ?? '{}')['file.new'] ?? null;
+  out.scAfterReset = hotkeys.sc('file.new');
+  // 关闭
+  const closeBtn = [...document.querySelectorAll('.modal-foot .btn')].find(b => b.textContent.trim() === '关闭');
+  if (closeBtn) closeBtn.click();
+  await sleep(80);
+  out.closed = document.querySelectorAll('.modal-mask').length === 0;
+  return out;
+})()`);
+check('自定义键盘对话框可打开（行数 > 40、有遮罩）', kbCustom.rows > 40 && kbCustom.mask === 1, `rows=${kbCustom.rows}`);
+check('捕获新键位 Ctrl+Alt+M → 写入覆盖且菜单文本即时生效', kbCustom.after === 'Ctrl+Alt+M' && kbCustom.stored === 'Ctrl+Alt+M' && kbCustom.sc === 'Ctrl+Alt+M', `before=${kbCustom.before} after=${kbCustom.after} sc=${kbCustom.sc}`);
+check('恢复默认 → 回到 Ctrl+N 且覆盖移除', kbCustom.afterReset === 'Ctrl+N' && kbCustom.storedAfterReset === null && kbCustom.scAfterReset === 'Ctrl+N', `afterReset=${kbCustom.afterReset} sc=${kbCustom.scAfterReset}`);
+check('自定义键盘对话框可关闭', kbCustom.closed === true);
 // 右键菜单：「更多命令…」飞出（SolidWorks 菜单底部）
 const ctxLabels = await evaluate(`(() => {
   const cv = document.querySelector('.viewport canvas');
@@ -714,6 +800,42 @@ const surfSew = await evaluate(`(async () => {
 check('「缝合曲面」按钮可点开 PropertyManager（无遮罩）', surfSew.btnFound && surfSew.maskCount === 0 && surfSew.title === '缝合曲面', surfSew.title);
 check('缝合前 2 个曲面实体 → 缝合后 1 个（0 实体）', surfSew.before === 2 && surfSew.after === 1 && surfSew.solids === 0, `before=${surfSew.before} after=${surfSew.after} solids=${surfSew.solids}`);
 check('缝合曲面无错误', !surfSew.errs, surfSew.errs);
+
+// Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
+const enterRepeat = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const { newId } = T;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.trim() === '特征');
+  if (tab) tab.click();
+  await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '长方体');
+  if (!btn) return { btnFound: false };
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const firstOpen = !!document.querySelector('.pm');
+  const cancel = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '取消');
+  if (cancel) cancel.click();
+  for (let i = 0; i < 20 && document.querySelector('.pm'); i++) await sleep(50);
+  const closed = !document.querySelector('.pm');
+  // 按 Enter → 应重新打开同一命令的 PropertyManager
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const reopened = !!document.querySelector('.pm');
+  const title = document.querySelector('.pm-head .pm-title')?.textContent ?? '';
+  const cancel2 = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '取消');
+  if (cancel2) cancel2.click();
+  await sleep(120);
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return { btnFound: true, firstOpen, closed, reopened, title };
+})()`);
+check('Enter 重复上一命令：取消后再按 Enter 重开同一 PropertyManager',
+  enterRepeat.btnFound && enterRepeat.firstOpen && enterRepeat.closed && enterRepeat.reopened,
+  `firstOpen=${enterRepeat.firstOpen} closed=${enterRepeat.closed} reopened=${enterRepeat.reopened} title=${enterRepeat.title}`);
 
 // 拉伸终止条件（SW 式：起始条件 + 方向1 五选项 + 方向2）
 const extrudeCtl = await evaluate(`(async () => {

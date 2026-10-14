@@ -17,6 +17,8 @@ import { openShortcutBar } from '../ui/shortcutbar';
 import { openViewOrientation, setRotateMode } from '../ui/headsup';
 import { toggleMagnifier } from '../ui/magnifier';
 import { featureDialogs } from '../ui/dialogs';
+import { ribbonController } from '../ui/ribbon';
+import { hotkeyOverrides, keysMatchEvent, eventToKeys, isValidKeys, type OverrideStore } from './hotkey-keys';
 
 export type HotkeyScope = 'global' | 'sketch' | 'model' | 'assembly' | 'drawing';
 
@@ -39,6 +41,73 @@ export interface HotkeyDef {
 
 const ROT = 15;
 
+export { hotkeyOverrides };
+export type { OverrideStore };
+export { eventToKeys, isValidKeys } from './hotkey-keys';
+
+/** 某命令的「当前生效键位」= 自定义覆盖 ?? 默认键位 */
+export function effectiveKeys(h: HotkeyDef): string {
+  return hotkeyOverrides.get(h.id) ?? h.keys;
+}
+
+/** 覆盖变化监听（菜单栏/快捷键一览 重绘用） */
+const changeListeners = new Set<() => void>();
+export function onHotkeysChanged(fn: () => void): () => void {
+  changeListeners.add(fn);
+  return () => changeListeners.delete(fn);
+}
+function emitChanged(): void {
+  for (const fn of changeListeners) fn();
+}
+
+/** 自定义键盘：给某命令设新键位；非法/空键位视为移除覆盖 */
+export function setHotkeyOverride(id: string, keys: string): void {
+  const h = byId.get(id);
+  if (!h) throw new Error(`未找到命令：${id}`);
+  if (!keys) {
+    hotkeyOverrides.set(id, '');
+    emitChanged();
+    return;
+  }
+  if (!isValidKeys(keys)) throw new Error(`无效键位：${keys}`);
+  const conflict = findConflict(id, keys);
+  if (conflict) throw new Error(`「${keys}」已分配给「${conflict.label}」`);
+  hotkeyOverrides.set(id, keys);
+  emitChanged();
+}
+
+/** 恢复某命令默认键位 */
+export function resetHotkey(id: string): void {
+  hotkeyOverrides.set(id, '');
+  emitChanged();
+}
+
+/** 全部恢复默认 */
+export function resetAllHotkeys(): void {
+  hotkeyOverrides.reset();
+  emitChanged();
+}
+
+/** 找出占用同一键位的其它命令（自定义冲突检测） */
+export function findConflict(id: string, keys: string): HotkeyDef | null {
+  for (const h of HOTKEYS) {
+    if (h.id === id) continue;
+    if (effectiveKeys(h) === keys) return h;
+  }
+  return null;
+}
+
+/** 自定义键盘对话框用的数据 */
+export function hotkeyList(): { id: string; label: string; group: string; defaultKeys: string; keys: string }[] {
+  return HOTKEYS.map((h) => ({
+    id: h.id,
+    label: h.label,
+    group: h.group,
+    defaultKeys: h.keys,
+    keys: effectiveKeys(h),
+  }));
+}
+
 export const HOTKEYS: HotkeyDef[] = [
   // ============================================================
   // 文件
@@ -58,6 +127,24 @@ export const HOTKEYS: HotkeyDef[] = [
   { id: 'edit.copy', label: '复制', keys: 'Ctrl+C', group: '编辑', run: (a) => a.copySelection() },
   { id: 'edit.paste', label: '粘贴', keys: 'Ctrl+V', group: '编辑', run: (a) => a.pasteFromClipboard() },
   { id: 'edit.selectAll', label: '全选', keys: 'Ctrl+A', group: '编辑', run: (a) => a.selectAll() },
+  {
+    id: 'edit.repeat',
+    label: '重复上一命令',
+    keys: 'Enter',
+    group: '编辑',
+    scope: 'model',
+    // PropertyManager 打开时 Enter 归对话框自己（确认/聚焦转移），不抢
+    when: () => !document.querySelector('.pm') && !document.querySelector('.modal-mask'),
+    run: () => {
+      const c = ribbonController();
+      if (!c) return;
+      if (!c.hasLastCommand()) {
+        notify.info('还没有执行过命令，无法重复');
+        return;
+      }
+      c.rerunLast();
+    },
+  },
   { id: 'edit.delete', label: '删除', keys: 'Delete', group: '编辑', run: (a) => a.deleteSelection() },
   { id: 'edit.properties', label: '属性', keys: 'Alt+Enter', group: '编辑', run: (a) => a.showProperties() },
 
@@ -173,9 +260,10 @@ export const HOTKEYS: HotkeyDef[] = [
 
 const byId = new Map(HOTKEYS.map((h) => [h.id, h]));
 
-/** 菜单里显示快捷键文本（找不到就返回空串） */
+/** 菜单里显示快捷键文本（自定义覆盖优先；找不到就返回空串） */
 export function sc(id: string): string {
-  return byId.get(id)?.keys ?? '';
+  const h = byId.get(id);
+  return h ? effectiveKeys(h) : '';
 }
 
 /** 帮助 > 快捷键一览 用的分组数据 */
@@ -188,60 +276,22 @@ export function hotkeyGroups(): { group: string; items: { label: string; keys: s
       map.set(h.group, []);
       order.push(h.group);
     }
-    map.get(h.group)!.push({ label: h.label, keys: h.keys });
+    map.get(h.group)!.push({ label: h.label, keys: effectiveKeys(h) });
   }
   return order.map((g) => ({ group: g, items: map.get(g)! }));
 }
 
 // ============================================================
-// 匹配
+// 匹配（解析/归一化在 ./hotkey-keys 纯模块，Node 可单测）
 // ============================================================
-interface Parsed {
-  ctrl: boolean;
-  shift: boolean;
-  alt: boolean;
-  key: string;
-}
-
-function normalizeKey(k: string): string {
-  if (k === ' ') return 'SPACE';
-  if (k.length === 1) return k.toUpperCase();
-  return k.toUpperCase();
-}
-
-const parseCache = new Map<string, Parsed>();
-
-function parse(keys: string): Parsed {
-  const hit = parseCache.get(keys);
-  if (hit) return hit;
-  const parts = keys.split('+');
-  const p: Parsed = { ctrl: false, shift: false, alt: false, key: '' };
-  for (const raw of parts) {
-    const s = raw.trim();
-    const low = s.toLowerCase();
-    if (low === 'ctrl' || low === 'cmd' || low === 'meta') p.ctrl = true;
-    else if (low === 'shift') p.shift = true;
-    else if (low === 'alt') p.alt = true;
-    else p.key = normalizeKey(s);
-  }
-  parseCache.set(keys, p);
-  return p;
-}
-
 function matches(h: HotkeyDef, e: KeyboardEvent): boolean {
   if (h.match) return h.match(e);
-  const p = parse(h.keys);
-  if (!p.key) return false;
-  if (!!p.ctrl !== (e.ctrlKey || e.metaKey)) return false;
-  if (!!p.shift !== e.shiftKey) return false;
-  if (!!p.alt !== e.altKey) return false;
-  return normalizeKey(e.key) === p.key;
+  return keysMatchEvent(effectiveKeys(h), e);
 }
 
 /** 供 UI 查询：某个键位是否有定义（用于提示） */
 export function isBound(key: string): boolean {
-  const p = parse(key);
-  return HOTKEYS.some((h) => !h.match && matches(h, { key: p.key, ctrlKey: p.ctrl, shiftKey: p.shift, altKey: p.alt, metaKey: false } as KeyboardEvent));
+  return HOTKEYS.some((h) => !h.match && effectiveKeys(h) === key);
 }
 
 // ============================================================

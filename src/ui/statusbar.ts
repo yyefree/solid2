@@ -23,7 +23,9 @@ const FILTER_LABEL: Record<App['selectionFilter'], string> = {
 export function buildStatusbar(app: App, host: HTMLElement): void {
   const led = el('span', { class: 'led' });
   const text = el('span', { class: 'sb-msg', text: '' });
-  const left = el('div', { class: 'sb-left' }, led, text);
+  // 模式上下文徽标（SolidWorks 状态栏左侧的「正在编辑：草图1 / 零件 / 装配体」）
+  const modeBadge = el('span', { class: 'sb-mode', text: '零件' });
+  const left = el('div', { class: 'sb-left' }, led, modeBadge, text);
 
   // What's Wrong（有特征错误时出现，点击定位到第一个出错的特性）
   const wwrong = el('button', { class: 'sb-wwrong', type: 'button', title: '' });
@@ -99,6 +101,28 @@ export function buildStatusbar(app: App, host: HTMLElement): void {
   };
   render();
   app.on('status', render);
+
+  // 模式上下文（SW 状态栏左侧）：草图编辑中显示「正在编辑：草图N」
+  const renderMode = () => {
+    let label = '零件';
+    let tip = '零件模式';
+    if (app.mode === 'sketch') {
+      label = `正在编辑：${app.editingSketch?.name ?? '草图'}`;
+      tip = '草图编辑模式（Esc 退出）';
+    } else if (app.mode === 'assembly') {
+      label = '装配体';
+      tip = '装配体模式';
+    } else if (app.mode === 'drawing') {
+      label = '工程图';
+      tip = '工程图模式';
+    }
+    modeBadge.textContent = label;
+    modeBadge.title = tip;
+  };
+  renderMode();
+  app.on('mode', renderMode);
+  app.on('tree', renderMode);
+  app.on('props', renderMode);
 
   // What's Wrong：随特征错误刷新
   const renderWw = () => {

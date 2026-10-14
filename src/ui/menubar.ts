@@ -16,6 +16,7 @@ import { surfaceDialogs } from './surface-dialogs';
 import { openMeasure } from './measure';
 import { openPopup, type PopupItem } from './popup';
 import { sc, hotkeyGroups } from '../app/hotkeys';
+import { openKeyboardCustomize } from './keyboard-customize';
 import { notify, tableModal, modal } from './toast';
 import { openViewSettings } from './headsup';
 import { openAiModeling, openAiHelp } from './aipanel';
@@ -443,6 +444,13 @@ function toolsMenu(app: App): PopupItem[] {
     },
     { sep: true },
     {
+      label: '自定义',
+      icon: 'viewSettings',
+      submenu: [
+        { label: '键盘…', icon: 'help', run: () => openKeyboardCustomize(app) },
+      ],
+    },
+    {
       label: '草图工具',
       icon: 'sketch',
       submenu: [
@@ -523,7 +531,15 @@ function showHotkeyHelp(app: App): void {
   body.appendChild(
     el('div', { class: 'hint', text: '鼠标：中键拖动旋转 · Ctrl+中键拖动平移 · Shift+中键拖动缩放 · 滚轮缩放 · 右键拖动鼠标手势 · 右键单击上下文菜单 · 左键选择' })
   );
-  modal({ title: '快捷键一览', body, actions: [{ label: '关闭', primary: true }], width: 620 });
+  modal({
+    title: '快捷键一览',
+    body,
+    actions: [
+      { label: '自定义键盘…', onClick: () => { openKeyboardCustomize(app); return false; } },
+      { label: '关闭', primary: true },
+    ],
+    width: 620,
+  });
 }
 
 function showMouseHelp(): void {

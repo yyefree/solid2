@@ -387,6 +387,11 @@ textarea {
   flex-direction: column;
   gap: 1px;
 }
+/* 折叠态：页签栏保留、命令面板收起（SW 双击页签折叠） */
+.ribbon-collapsed .rtab {
+  border-bottom: 1px solid var(--border);
+  top: 0;
+}
 .rbtn {
   display: flex;
   align-items: center;
@@ -1719,6 +1724,22 @@ select.inp {
 .sb-msg {
   color: var(--text-dim);
 }
+/* 模式上下文徽标（SW 状态栏左侧「正在编辑：草图1」） */
+.sb-mode {
+  font-size: 10.5px;
+  color: var(--accent-dark);
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 6px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .sb-spacer {
   flex: 1;
   border-right: none;
@@ -2129,3 +2150,114 @@ select.inp {
   cursor: grabbing;
 }
 
+
+/* ---------- 自定义键盘（SW：工具 → 自定义 → 键盘） ---------- */
+.kb-custom {
+  gap: 8px;
+}
+.kb-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: 12px;
+}
+.kb-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.kb-head {
+  display: grid;
+  grid-template-columns: 1fr 130px 76px;
+  gap: 8px;
+  padding: 0 4px 4px;
+  font-size: 11px;
+  color: var(--text-mute);
+  border-bottom: 1px solid var(--border);
+}
+.kb-head span:nth-child(2),
+.kb-head span:nth-child(3) {
+  text-align: center;
+}
+.kb-list {
+  max-height: 380px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.kb-group {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  padding: 8px 4px 3px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+}
+.kb-row {
+  display: grid;
+  grid-template-columns: 1fr 130px 76px;
+  gap: 8px;
+  align-items: center;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.kb-row:hover {
+  background: var(--bg-hover);
+}
+.kb-label {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kb-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  cursor: pointer;
+  text-align: center;
+}
+.kb-key:hover {
+  border-color: var(--accent);
+}
+.kb-key.capturing {
+  border-color: var(--accent);
+  background: var(--bg-active);
+  color: var(--accent-dark);
+  animation: kb-blink 1s ease-in-out infinite;
+}
+@keyframes kb-blink {
+  50% {
+    opacity: 0.55;
+  }
+}
+.kb-reset {
+  font-size: 10.5px;
+  color: var(--text-mute);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.kb-reset:hover {
+  color: var(--accent-dark);
+  border-color: var(--border);
+  background: var(--bg-hover);
+}
+.kb-empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--text-mute);
+  font-size: 12px;
+}

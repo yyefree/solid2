@@ -14,6 +14,7 @@ import { featureDialogs } from './dialogs';
 import { surfaceDialogs } from './surface-dialogs';
 import { openMeasure } from './measure';
 import { openAiModeling, openAiHelp } from './aipanel';
+import { openPopup } from './popup';
 
 export type CmdId = string;
 
@@ -431,10 +432,38 @@ export function buildTabs(): RTab[] {
 // ============================================================
 export interface RibbonController {
   setTab(id: string): void;
-  /** 模糊查找命令，返回命令 id */
+  /** 当前是否折叠（SolidWorks：双击页签折叠 CommandManager） */
+  collapsed(): boolean;
+  /** 折叠 / 展开切换 */
+  toggleCollapse(): void;
+  /** 显示 / 隐藏某个页签（SW 右键页签菜单） */
+  setTabVisible(id: string, visible: boolean): void;
+  /** 隐藏的页签 id 列表 */
+  hiddenTabs(): string[];
   findCommand(query: string): CmdId | null;
-  /** 切到命令所在选项卡并执行 */
   runCommand(id: CmdId): void;
+  /** 上一次执行的命令（Enter 重复用） */
+  hasLastCommand(): boolean;
+  rerunLast(): void;
+}
+
+/** Ribbon 布局持久化（隐藏页签 + 折叠态），对齐 SW「记住界面状态」 */
+const RIBBON_STORE = 'solid2.ribbon.v1';
+interface RibbonPrefs { hidden: string[]; collapsed: boolean }
+function loadPrefs(): RibbonPrefs {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RIBBON_STORE) ?? '{}') as Partial<RibbonPrefs>;
+    return { hidden: Array.isArray(raw.hidden) ? raw.hidden : [], collapsed: !!raw.collapsed };
+  } catch {
+    return { hidden: [], collapsed: false };
+  }
+}
+function savePrefs(p: RibbonPrefs): void {
+  try {
+    localStorage.setItem(RIBBON_STORE, JSON.stringify(p));
+  } catch {
+    /* 忽略（隐私模式） */
+  }
 }
 
 let controller: RibbonController | null = null;
@@ -444,9 +473,17 @@ export function ribbonController(): RibbonController | null {
   return controller;
 }
 
+/** makeButton 执行成功后回调（记录上一命令）——模块级 setter，renderRibbon 里赋值 */
+let setLastCmd: (id: string) => void = () => {};
+
 export function renderRibbon(app: App, tabsHost: HTMLElement, panelHost: HTMLElement): RibbonController {
   const tabs = buildTabs();
+  const prefs = loadPrefs();
+  const hidden = new Set<string>(prefs.hidden.filter((id) => tabs.some((t) => t.id === id)));
+  let collapsed = prefs.collapsed;
   let activeTab = 'features';
+  /** 上一次执行的命令 id（SolidWorks：Enter 重复上一命令） */
+  let lastCmdId: string | null = null;
 
   const allCommands = new Map<CmdId, { btn: RButton; tabId: string }>();
   for (const t of tabs) {
@@ -457,21 +494,72 @@ export function renderRibbon(app: App, tabsHost: HTMLElement, panelHost: HTMLEle
     }
   }
 
+  const visibleTabs = () => tabs.filter((t) => !hidden.has(t.id));
+
+  const applyCollapsed = () => {
+    panelHost.style.display = collapsed ? 'none' : '';
+    tabsHost.classList.toggle('ribbon-collapsed', collapsed);
+  };
+
   const setTab = (id: string) => {
-    activeTab = tabs.some((t) => t.id === id) ? id : tabs[0].id;
+    activeTab = visibleTabs().some((t) => t.id === id) ? id : (visibleTabs()[0]?.id ?? tabs[0].id);
     clear(tabsHost);
-    for (const t of tabs) {
-      tabsHost.appendChild(
-        el('button', {
-          class: `rtab ${t.id === activeTab ? 'active' : ''}`,
-          type: 'button',
-          text: t.label,
-          dataset: { tab: t.id },
-          onClick: () => setTab(t.id),
-        })
-      );
+    for (const t of visibleTabs()) {
+      const btn = el('button', {
+        class: `rtab ${t.id === activeTab ? 'active' : ''}`,
+        type: 'button',
+        text: t.label,
+        dataset: { tab: t.id },
+        title: `${t.label}（右键选择要显示的页签，双击折叠 CommandManager）`,
+        onClick: () => setTab(t.id),
+      });
+      btn.addEventListener('dblclick', () => toggleCollapse());
+      btn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        openTabMenu(btn, t.id);
+      });
+      tabsHost.appendChild(btn);
     }
     renderPanel();
+  };
+
+  const toggleCollapse = () => {
+    collapsed = !collapsed;
+    applyCollapsed();
+    savePrefs({ hidden: [...hidden], collapsed });
+  };
+
+  /** SolidWorks 右键页签菜单：勾选显示/隐藏页签 + 折叠 Ribbon */
+  const openTabMenu = (anchor: HTMLElement, tabId: string) => {
+    const r = anchor.getBoundingClientRect();
+    openPopup(
+      [
+        ...tabs.map((t) => ({
+          label: t.label,
+          checked: !hidden.has(t.id),
+          tip: t.id === tabId ? '当前页签' : '',
+          run: () => setTabVisible(t.id, hidden.has(t.id)),
+        })),
+        { sep: true },
+        { label: collapsed ? '展开 CommandManager' : '折叠 CommandManager', icon: 'chevronRight', run: () => toggleCollapse() },
+      ],
+      r.left,
+      r.bottom + 2,
+      { minWidth: 150 }
+    );
+  };
+
+  const setTabVisible = (id: string, visible: boolean) => {
+    if (visible) hidden.delete(id);
+    else {
+      if (hidden.size + 1 >= tabs.length) {
+        notify.info('至少保留一个页签');
+        return;
+      }
+      hidden.add(id);
+    }
+    savePrefs({ hidden: [...hidden], collapsed });
+    setTab(activeTab);
   };
 
   const renderPanel = () => {
@@ -513,6 +601,7 @@ export function renderRibbon(app: App, tabsHost: HTMLElement, panelHost: HTMLEle
   };
 
   setTab(activeTab);
+  applyCollapsed();
   // 状态变化时重绘按钮的启用 / 激活态
   app.on('change', renderPanel);
   app.on('selection', renderPanel);
@@ -521,6 +610,10 @@ export function renderRibbon(app: App, tabsHost: HTMLElement, panelHost: HTMLEle
 
   controller = {
     setTab,
+    collapsed: () => collapsed,
+    toggleCollapse,
+    setTabVisible,
+    hiddenTabs: () => [...hidden],
     findCommand(query: string): CmdId | null {
       const q = query.trim().toLowerCase();
       if (!q) return null;
@@ -535,6 +628,8 @@ export function renderRibbon(app: App, tabsHost: HTMLElement, panelHost: HTMLEle
     runCommand(id: CmdId): void {
       const hit = allCommands.get(id);
       if (!hit) return;
+      // 命令所在页签被隐藏时先显示出来（SW 搜索/菜单执行同样会带出页签）
+      if (hidden.has(hit.tabId)) setTabVisible(hit.tabId, true);
       setTab(hit.tabId);
       // 等一帧让按钮挂到 DOM 上再点击（走同一条执行路径，含内核懒加载）
       requestAnimationFrame(() => {
@@ -542,6 +637,14 @@ export function renderRibbon(app: App, tabsHost: HTMLElement, panelHost: HTMLEle
         if (node) node.click();
       });
     },
+    hasLastCommand: () => !!lastCmdId,
+    rerunLast: () => {
+      if (lastCmdId) controller?.runCommand(lastCmdId);
+    },
+  };
+  // 记录「上一次执行的命令」（Enter 重复）
+  setLastCmd = (id: string) => {
+    lastCmdId = id;
   };
   return controller;
 }
@@ -565,6 +668,7 @@ function makeButton(app: App, item: RButton): HTMLElement {
             await app.requireKernel();
           }
           item.run(app);
+          setLastCmd(item.id); // Enter「重复上一命令」
         } catch (e) {
           notify.err(`${item.label} 失败：${(e as Error).message}`);
         }
