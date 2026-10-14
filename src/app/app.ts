@@ -804,6 +804,18 @@ export class App {
     return this.selection.edges.map((i) => m.mesh.edgeMetas[i]).filter(Boolean);
   }
 
+  /** 选中顶点的世界坐标（供「成形到顶点」等需要点的特征使用） */
+  selectedVertexPoints(): [number, number, number][] {
+    const m = this.currentModel();
+    if (!m) return [];
+    const pos = new Float32Array(m.mesh.positions);
+    const n = pos.length / 3;
+    return this.selection.vertices.map((vi) => {
+      const i = Math.min(Math.max(vi, 0), n - 1);
+      return [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]] as [number, number, number];
+    });
+  }
+
   // ============================================================
   // 指针交互
   // ============================================================

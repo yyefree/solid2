@@ -923,8 +923,31 @@ async function tour() {
   await hold(200);
 
   // ---------- ⑤ 拉伸 / 切除（主零件起点） ----------
-  await banner(7, '拉伸凸台 / 拉伸切除', `${S.base.w}×${S.base.h} 底板 + φ${S.base.holeR * 2} 中心孔`);
+  await banner(7, '拉伸凸台 / 切除 · SW 式终止条件', `${S.base.w}×${S.base.h} 底板 + 完全贯穿 / 两侧对称 / 成形到顶点·面`);
   await tab('特征');
+  // 拉伸终止条件（SW 式）：完全贯穿切除 + 两侧对称
+  await act(`(() => {
+    __D.reset();
+    __D.box(60, 40, 20, [0, 0, 0]);
+    const sid = __D.sketch('front', h => h.circle(h.pt(30, 20), 8));
+    __D.extrude(sid, 0, 'cut', { endCondition: 'throughAll' });
+    return 1;
+  })()`, 500);
+  const sThrough = await act(`__D.rebuild()`, 1600);
+  const throughExpect = 60 * 40 * 20 - Math.PI * 64 * 20;
+  check('拉伸终止条件「完全贯穿」：φ16 通孔自动穿透切除',
+    near(sThrough.volume, throughExpect, 2e-3), `体积 ${sThrough.volume.toFixed(1)} / 期望 ${throughExpect.toFixed(1)} mm³`);
+  await isoView();
+  const sMid = await act(`(() => {
+    __D.reset();
+    const sid = __D.sketch('front', h => h.rect(-20, -15, 20, 15));
+    __D.extrude(sid, 30, 'new', { endCondition: 'midPlane' });
+    return 1;
+  })()`, 400).then(() => act(`__D.rebuild()`, 1400));
+  check('拉伸终止条件「两侧对称」：40×30 板厚 30 → 36000 mm³',
+    near(sMid.volume, 40 * 30 * 30, 2e-3), `体积 ${sMid.volume.toFixed(1)} mm³`);
+  await isoView();
+  // 底板（后续工程特征步骤依赖此模型）
   await act(`__D.reset(); 1`, 200);
   await act(`(() => {
     __D.sketch('front', h => {

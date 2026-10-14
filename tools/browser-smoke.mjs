@@ -620,6 +620,51 @@ const surfSweep = await evaluate(`(async () => {
 check('「扫描曲面」按钮可点开 PropertyManager', surfSweep.btnFound && surfSweep.title === '扫描曲面', surfSweep.title);
 check('扫描曲面生成 1 个曲面实体（0 实体）', surfSweep.surfaces === 1 && surfSweep.solids === 0, `surfaces=${surfSweep.surfaces} solids=${surfSweep.solids}`);
 
+// 拉伸终止条件（SW 式：起始条件 + 方向1 五选项 + 方向2）
+const extrudeCtl = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const { newId } = T;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  const s = T.emptySketch();
+  const ids = [[-10,-10],[10,-10],[10,10],[-10,10]].map(function (p) { const id = newId('p'); s.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+  for (let i = 0; i < 4; i++) s.entities.push({ id: newId('e'), kind: 'line', a: ids[i], b: ids[(i + 1) % 4] });
+  app.addFeature({ id: newId('f'), type: 'sketch', name: '矩形草图', params: { plane: 'front', sketch: s } }, { rebuild: false });
+  await app.rebuild();
+  const tab = [...document.querySelectorAll('.rtab')].find(function (t) { return t.textContent.trim() === '特征'; });
+  if (tab) tab.click();
+  await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(function (b) { return b.textContent.trim() === '拉伸凸台'; });
+  if (!btn) { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); return { btnFound: false }; }
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const pm = document.querySelector('.pm');
+  const title = pm && pm.querySelector('.pm-head .pm-title') ? pm.querySelector('.pm-head .pm-title').textContent : '';
+  const selects = pm ? [...pm.querySelectorAll('select')] : [];
+  const endSel = selects[1];
+  const endOptions = endSel ? [...endSel.options].map(function (o) { return o.textContent; }) : [];
+  if (endSel) { endSel.value = 'midPlane'; endSel.dispatchEvent(new Event('change')); }
+  await sleep(60);
+  const okBtn = [...document.querySelectorAll('.pm-foot .btn')].find(function (b) { return b.textContent.trim() === '确定'; });
+  if (okBtn) okBtn.click();
+  await sleep(150);
+  await app.rebuild();
+  const vol = app.model ? app.model.stats.volume : 0;
+  const bb = app.model ? app.model.bbox : null;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return { btnFound: true, title: title, endOptions: endOptions, vol: vol, zMin: bb ? bb.min[2] : null, zMax: bb ? bb.max[2] : null };
+})()`);
+check('「拉伸凸台」打开 SW 式 PropertyManager（无遮罩）', extrudeCtl.btnFound && extrudeCtl.title === '拉伸凸台', extrudeCtl.title);
+check('终止条件含 5 项（给定深度/成形到顶点/成形到面/完全贯穿/两侧对称）',
+  ['给定深度', '成形到顶点', '成形到面', '完全贯穿', '两侧对称'].every(function (w) { return (extrudeCtl.endOptions || []).indexOf(w) >= 0; }),
+  (extrudeCtl.endOptions || []).join(' / '));
+check('两侧对称拉伸：体积 400×10=4000，z ∈ [-5,5]',
+  Math.abs((extrudeCtl.vol || 0) - 4000) < 1 && Math.abs((extrudeCtl.zMin ?? 99) + 5) < 0.01 && Math.abs((extrudeCtl.zMax ?? 99) - 5) < 0.01,
+  `vol=${extrudeCtl.vol} z=[${extrudeCtl.zMin}, ${extrudeCtl.zMax}]`);
+
 // 「草图」页签：确认本轮新增的椭圆/槽口/点/镜像实体按钮已接线
 const sketchTab = await evaluate(`(() => {
   const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.includes('草图'));

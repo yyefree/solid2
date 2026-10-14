@@ -48,6 +48,7 @@
     "test:units": "node tools/run-ts.mjs tools/units-test.ts",
     "test:section": "node tools/run-ts.mjs tools/sectionprops-test.ts",
     "test:surface": "node tools/run-ts.mjs tools/surface-test.ts",
+    "test:extrude": "node tools/run-ts.mjs tools/extrude-test.ts",
     "test:measure": "node tools/run-ts.mjs tools/measure-test.ts",
     "test:edit": "node tools/run-ts.mjs tools/edit-test.ts",
     "test:shape": "node tools/run-ts.mjs tools/sketch-shape-test.ts",

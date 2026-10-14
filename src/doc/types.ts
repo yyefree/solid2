@@ -54,18 +54,42 @@ export interface SketchFeature extends FeatureBase {
   };
 }
 
+/** 拉伸起始条件（SW「从」下拉） */
+export type ExtrudeStartCondition = 'sketchPlane' | 'offset';
+/** 拉伸终止条件（SW「方向 1」下拉） */
+export type ExtrudeEndCondition = 'blind' | 'upToVertex' | 'upToSurface' | 'throughAll' | 'midPlane';
+/** 拉伸方向 2 终止条件（简版） */
+export type ExtrudeEnd2Condition = 'none' | 'blind' | 'throughAll';
+
 export interface ExtrudeFeature extends FeatureBase {
   type: 'extrude';
   params: {
     sketchId: FeatureId;
     distance: number;
-    /** 对称拉伸 */
+    /** 对称拉伸（等价于 endCondition='midPlane'） */
     symmetric?: boolean;
     /** 反向 */
     reverse?: boolean;
     /** 拔模角（度），0 表示无 */
     draft?: number;
     operation: BooleanOp;
+    // ---- SW 式拉伸条件（第十三轮）----
+    /** 起始条件（SW「从」下拉）：草图基准面（默认）/ 等距 */
+    start?: ExtrudeStartCondition;
+    /** start='offset'：沿草图法向的偏移距离 */
+    startOffset?: number;
+    /** start='offset'：偏移反向 */
+    startReverse?: boolean;
+    /** 终止条件（方向 1，SW「方向 1」下拉），默认 'blind' 给定深度 */
+    endCondition?: ExtrudeEndCondition;
+    /** endCondition='upToVertex'：目标顶点（世界坐标） */
+    vertex?: [number, number, number];
+    /** endCondition='upToSurface'：目标面引用 */
+    targetFace?: FaceRef;
+    /** 方向 2 终止条件（SW「方向 2」下拉），默认 'none' 不向反向拉伸 */
+    end2?: ExtrudeEnd2Condition;
+    /** 方向 2 深度（end2='blind'） */
+    distance2?: number;
   };
 }
 

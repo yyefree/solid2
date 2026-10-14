@@ -27,11 +27,12 @@ import {
   type Vec3,
 } from '../sketch/curve';
 import { edgeInfos, faceInfos, featureEdgeInfos, type EdgeInfo, type FaceInfo } from './topo';
-import { CadDocument, planeOf, worldFromSketch, type EvalOut } from './model';
+import { CadDocument, planeFromFace, planeOf, worldFromSketch, type EvalOut } from './model';
 import type { MeshResult, FaceMeta, EdgeMeta } from '../core/kernel-types';
 import type {
   BooleanOp,
   EdgeRef,
+  ExtrudeFeature,
   FaceRef,
   Feature,
   FeatureId,
@@ -132,6 +133,71 @@ function facesOfSketch(skf: SketchFeature): any[] {
 function extrudeFaces(faces: any[], dir: [number, number, number], distance: number, symmetric: boolean): any {
   const parts = faces.map((f) => S.extrude(f, dir, distance, symmetric));
   return parts.length === 1 ? parts[0] : S.fuseAll(parts);
+}
+
+/** 形状包围盒的 8 个角点 */
+function bboxCorners(shape: any): Vec3[] {
+  const bb = S.shapeBBox(shape);
+  const out: Vec3[] = [];
+  for (const x of [bb.min[0], bb.max[0]]) {
+    for (const y of [bb.min[1], bb.max[1]]) {
+      for (const z of [bb.min[2], bb.max[2]]) out.push([x, y, z]);
+    }
+  }
+  return out;
+}
+
+const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const sub3 = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+
+/**
+ * 按 SW 终止条件算「沿 dir 的有效拉伸距离」（恒为正，mm）。
+ *
+ *  - `blind`      给定深度（默认）
+ *  - `midPlane`   两侧对称（总深度 = distance）
+ *  - `throughAll` 完全贯穿：按当前模型的包围盒在 dir 上的投影跨度自动定长（两侧对称，保证穿透）
+ *  - `upToVertex` 成形到顶点：顶点到草图平面沿 dir 的有符号距离
+ *  - `upToSurface` 成形到面：目标平面与「过草图平面沿 dir 的射线」的交点距离（解析求解）
+ *
+ * 返回 `symmetric=true` 时调用方应把轮廓向两侧各拉 distance/2。
+ */
+function extrudeEndDistance(
+  p: ExtrudeFeature['params'],
+  baseOrigin: Vec3,
+  dir: Vec3,
+  current: any
+): { distance: number; symmetric: boolean } {
+  const end = p.endCondition ?? 'blind';
+  if (end === 'midPlane') return { distance: Math.abs(p.distance), symmetric: true };
+
+  if (end === 'throughAll') {
+    const fallback = Math.max(Math.abs(p.distance) || 0, 100);
+    if (!current) return { distance: fallback, symmetric: true };
+    let maxAbs = 0;
+    for (const c of bboxCorners(current)) maxAbs = Math.max(maxAbs, Math.abs(dot3(sub3(c, baseOrigin), dir)));
+    return { distance: maxAbs > 1e-6 ? maxAbs * 2 + 20 : fallback, symmetric: true };
+  }
+
+  if (end === 'upToVertex') {
+    if (!p.vertex) throw new Error('成形到顶点：未指定目标顶点');
+    const d = dot3(sub3(p.vertex, baseOrigin), dir);
+    if (d <= 1e-6) throw new Error('成形到顶点：目标顶点不在拉伸方向上（试试「反向」）');
+    return { distance: d, symmetric: false };
+  }
+
+  if (end === 'upToSurface') {
+    if (!p.targetFace) throw new Error('成形到面：未指定目标面');
+    if (!p.targetFace.normal) throw new Error('成形到面：目标面缺少法向信息');
+    const pl = planeFromFace(p.targetFace.point, p.targetFace.normal);
+    const denom = dot3(pl.normal as Vec3, dir);
+    if (Math.abs(denom) < 1e-6) throw new Error('成形到面：目标面与拉伸方向平行，无法成形');
+    const d = dot3(sub3(pl.origin as Vec3, baseOrigin), pl.normal as Vec3) / denom;
+    if (d <= 1e-6) throw new Error('成形到面：目标面不在拉伸方向上（试试「反向」）');
+    return { distance: d, symmetric: false };
+  }
+
+  // blind（默认）
+  return { distance: Math.abs(p.distance), symmetric: !!p.symmetric };
 }
 
 /**
@@ -304,14 +370,36 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       const pl = planeOf(skf);
       const faces = facesOfSketch(skf);
       if (!faces.length) throw new Error('拉伸：草图没有封闭轮廓');
-      const sign = f.params.reverse ? -1 : 1;
-      const dir: [number, number, number] = [
-        pl.normal[0] * sign,
-        pl.normal[1] * sign,
-        pl.normal[2] * sign,
+      const p = f.params;
+      const sign = p.reverse ? -1 : 1;
+      const dir: Vec3 = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
+
+      // 起始条件：等距（把轮廓沿草图法向平移后再拉伸）
+      const off = p.start === 'offset' ? (p.startOffset ?? 0) * (p.startReverse ? -1 : 1) : 0;
+      const baseFaces = off
+        ? faces.map((fc) => S.translate(fc, pl.normal[0] * off, pl.normal[1] * off, pl.normal[2] * off))
+        : faces;
+      const baseOrigin: Vec3 = [
+        pl.origin[0] + pl.normal[0] * off,
+        pl.origin[1] + pl.normal[1] * off,
+        pl.origin[2] + pl.normal[2] * off,
       ];
-      const solid = extrudeFaces(faces, dir, f.params.distance, !!f.params.symmetric);
-      const op = f.params.operation;
+
+      // 方向 1
+      const e1 = extrudeEndDistance(p, baseOrigin, dir, current);
+      let solid = extrudeFaces(baseFaces, dir, e1.distance, e1.symmetric);
+
+      // 方向 2（两侧不对称：给定深度 / 完全贯穿）
+      const end2 = p.end2 ?? 'none';
+      if (end2 !== 'none') {
+        const dir2: Vec3 = [-dir[0], -dir[1], -dir[2]];
+        const d2 = end2 === 'throughAll'
+          ? extrudeEndDistance({ ...p, endCondition: 'throughAll' }, baseOrigin, dir2, current).distance
+          : Math.abs(p.distance2 ?? 0);
+        if (d2 > 1e-6) solid = S.fuse(solid, extrudeFaces(baseFaces, dir2, d2, false));
+      }
+
+      const op = p.operation;
       return {
         shape: applyBoolean(op, current, solid),
         added: op === 'add' || op === 'new' ? solid : undefined,

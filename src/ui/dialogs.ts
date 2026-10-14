@@ -9,7 +9,7 @@ import { notify, promptNumber, modal, tableModal, confirmDialog } from './toast'
 import { formatLength, formatArea, formatVolume } from '../core/units';
 import { el, numberField, selectField, checkField, clear, section } from './dom';
 import { newId } from '../sketch/types';
-import type { ExtrudeFeature, RevolveFeature, LoftFeature, SweepFeature, PrimitiveFeature, FilletFeature, ChamferFeature, ShellFeature, LinearPatternFeature, CircularPatternFeature, MirrorFeature, HoleFeature, ReferencePlaneFeature, HoleType, DraftFeature, RibFeature, SpringFeature, SpiralFeature, CoilHandedness, BooleanOp, ScaleFeature, SplitFeature, SplitKeep, MoveBodyFeature, DeleteBodyFeature, CombineFeature, CombineOp } from '../doc/types';
+import type { ExtrudeFeature, ExtrudeStartCondition, ExtrudeEndCondition, ExtrudeEnd2Condition, RevolveFeature, LoftFeature, SweepFeature, PrimitiveFeature, FilletFeature, ChamferFeature, ShellFeature, LinearPatternFeature, CircularPatternFeature, MirrorFeature, HoleFeature, ReferencePlaneFeature, HoleType, DraftFeature, RibFeature, SpringFeature, SpiralFeature, CoilHandedness, BooleanOp, ScaleFeature, SplitFeature, SplitKeep, MoveBodyFeature, DeleteBodyFeature, CombineFeature, CombineOp } from '../doc/types';
 import type { SketchPlane } from '../sketch/types';
 import { worldToPlane } from '../sketch/types';
 import { PLANES, makeEdgeRef, makeFaceRef, CadDocument, planeFromFace, offsetPlane, parallelPlane, perpendicularPlane, angledPlane, planeOf, worldFromSketch } from '../doc/model';
@@ -51,16 +51,108 @@ export const featureDialogs = {
   },
 
   // ---------------- 基于草图 ----------------
+  /** 拉伸凸台 / 切除（SW 式：起始条件 + 方向1终止条件 + 方向2） */
   extrude(app: App, operation: 'add' | 'cut'): void {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) { notify.err('没有可用草图'); return; }
     const sketchId = app.editingSketch?.id ?? sketches[sketches.length - 1].id;
-    promptNumber(operation === 'add' ? '拉伸凸台' : '拉伸切除', '距离 (mm)', 10, (dist) => {
-      const f: ExtrudeFeature = {
-        id: newId('f'), type: 'extrude', name: app.doc.nextName('extrude'),
-        params: { sketchId, distance: dist, operation, symmetric: false, reverse: false, draft: 0 },
-      };
-      app.addFeature(f);
+
+    const body = el('div', { class: 'col' });
+    // 起始条件（SW「从」下拉）
+    const startRow = selectField('起始条件', 'sketchPlane', [
+      { value: 'sketchPlane', label: '草图基准面' },
+      { value: 'offset', label: '等距' },
+    ], () => sync());
+    const offRow = numberField('偏移距离', 0, () => {}, { step: 1, unit: 'mm' });
+    const offRevRow = checkField('偏移反向', false, () => {});
+    // 方向 1（SW「方向 1」下拉）
+    const endRow = selectField('方向 1 终止条件', 'blind', [
+      { value: 'blind', label: '给定深度' },
+      { value: 'upToVertex', label: '成形到顶点' },
+      { value: 'upToSurface', label: '成形到面' },
+      { value: 'throughAll', label: '完全贯穿' },
+      { value: 'midPlane', label: '两侧对称' },
+    ], () => sync());
+    const distRow = numberField('深度', 10, () => {}, { min: 0.01, step: 1, unit: 'mm' });
+    const revRow = checkField('反向', false, () => {});
+    const draftRow = numberField('拔模角', 0, () => {}, { step: 1, unit: '°' });
+    // 方向 2（两侧不对称）
+    const end2Row = selectField('方向 2 终止条件', 'none', [
+      { value: 'none', label: '无' },
+      { value: 'blind', label: '给定深度' },
+      { value: 'throughAll', label: '完全贯穿' },
+    ], () => sync());
+    const dist2Row = numberField('方向 2 深度', 5, () => {}, { min: 0.01, step: 1, unit: 'mm' });
+    const hint = el('div', { class: 'hint' }, '');
+
+    function sync() {
+      const start = startRow.select.value;
+      const end = endRow.select.value;
+      const end2 = end2Row.select.value;
+      const isOffset = start === 'offset';
+      offRow.row.style.display = isOffset ? '' : 'none';
+      offRevRow.row.style.display = isOffset ? '' : 'none';
+      distRow.row.style.display = end === 'blind' || end === 'midPlane' ? '' : 'none';
+      revRow.row.style.display = end === 'throughAll' ? 'none' : '';
+      dist2Row.row.style.display = end2 === 'blind' ? '' : 'none';
+      if (end === 'upToVertex') hint.textContent = `成形到顶点：请先在图形区选中一个顶点（当前选中 ${app.selectedVertexPoints().length} 个）`;
+      else if (end === 'upToSurface') hint.textContent = `成形到面：请先在图形区选中一个面（当前选中 ${app.selectedFaceInfos().length} 个）`;
+      else if (end === 'throughAll') hint.textContent = '完全贯穿：自动按模型包围盒定长，穿透整个模型（常用于切除）。';
+      else hint.textContent = '深度为正值、沿草图法向；勾选「反向」沿反方向拉伸。方向 2 可向另一侧再拉一段（两侧不对称）。';
+    }
+    sync();
+    body.append(
+      startRow.row, offRow.row, offRevRow.row,
+      endRow.row, distRow.row, revRow.row, draftRow.row,
+      end2Row.row, dist2Row.row, hint
+    );
+
+    modal({
+      host: 'pm',
+      title: operation === 'add' ? '拉伸凸台' : '拉伸切除',
+      body,
+      actions: [
+        { label: '取消' },
+        {
+          label: '确定', primary: true, onClick: () => {
+            const end = endRow.select.value as ExtrudeEndCondition;
+            const start = startRow.select.value as ExtrudeStartCondition;
+            const params: ExtrudeFeature['params'] = {
+              sketchId,
+              distance: parseFloat(distRow.input.value) || 0,
+              operation,
+              symmetric: false,
+              reverse: revRow.input.checked,
+              draft: parseFloat(draftRow.input.value) || 0,
+              start,
+              endCondition: end,
+              end2: end2Row.select.value as ExtrudeEnd2Condition,
+              distance2: parseFloat(dist2Row.input.value) || 0,
+            };
+            if (start === 'offset') {
+              params.startOffset = parseFloat(offRow.input.value) || 0;
+              params.startReverse = offRevRow.input.checked;
+            }
+            if (end === 'upToVertex') {
+              const pts = app.selectedVertexPoints();
+              if (!pts.length) { notify.err('请先在图形区选中一个顶点'); return false; }
+              params.vertex = pts[0];
+            } else if (end === 'upToSurface') {
+              const fs = app.selectedFaceInfos();
+              if (!fs.length) { notify.err('请先在图形区选中一个面'); return false; }
+              params.targetFace = { point: [...fs[0].centroid], normal: [...fs[0].normal] };
+            } else if (end === 'blind' && !(params.distance > 0)) {
+              notify.err('深度必须为正数'); return false;
+            }
+            const f: ExtrudeFeature = {
+              id: newId('f'), type: 'extrude', name: app.doc.nextName('extrude'), params,
+            };
+            app.addFeature(f);
+            notify.ok(operation === 'add' ? '已添加拉伸凸台' : '已添加拉伸切除');
+            return true;
+          },
+        },
+      ],
     });
   },
 
