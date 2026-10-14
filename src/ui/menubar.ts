@@ -12,6 +12,7 @@ import { el } from './dom';
 import { icon } from './icons';
 import type { App } from '../app/app';
 import { featureDialogs } from './dialogs';
+import { surfaceDialogs } from './surface-dialogs';
 import { openMeasure } from './measure';
 import { openPopup, type PopupItem } from './popup';
 import { sc, hotkeyGroups } from '../app/hotkeys';
@@ -332,6 +333,15 @@ function insertMenu(app: App): PopupItem[] {
         { label: '球…', icon: 'sphere', run: () => D.primitive(app, 'sphere') },
         { label: '圆锥…', icon: 'dome', run: () => D.primitive(app, 'cone') },
         { label: '圆环…', icon: 'torus', run: () => D.primitive(app, 'torus') },
+      ],
+    },
+    {
+      label: '曲面',
+      icon: 'surface',
+      submenu: [
+        { label: '拉伸曲面…', icon: 'surface', run: () => surfaceDialogs.extrude(app) },
+        { label: '旋转曲面…', icon: 'surface', run: () => surfaceDialogs.revolve(app) },
+        { label: '平面区域…', icon: 'surface', run: () => surfaceDialogs.planar(app) },
       ],
     },
     {

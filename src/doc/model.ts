@@ -196,6 +196,9 @@ export class CadDocument {
       moveBody: '移动/复制实体',
       deleteBody: '删除实体',
       combine: '组合',
+      surfaceExtrude: '拉伸曲面',
+      surfaceRevolve: '旋转曲面',
+      surfacePlanar: '平面区域',
     };
     return `${labels[type] ?? type}${n}`;
   }

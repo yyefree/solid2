@@ -103,6 +103,8 @@ export const ICONS: Record<string, string> = {
   deleteFace: S(`<path d="M3 11V5l5-2.5L13 5v6l-5 2.5z"/><path d="M6 6.5 10 10M10 6.5 6 10"/>`),
   moveBody: S(`<path d="M2.5 10.2V5.6L6 3.8l3.5 1.8v4.6L6 12z"/><path d="M11 8h3.2"/><path d="M12.6 6.4 14.2 8l-1.6 1.6"/>`),
   deleteBody: S(`<path d="M2.5 10.2V5.6L6 3.8l3.5 1.8v4.6L6 12z"/><path d="M11 6.6 14 9.6M14 6.6 11 9.6"/>`),
+  /** 曲面（曲面特征页签）：一张弯折的曲面片 */
+  surface: S(`<path d="M2 11.5c2.4-3 5-4 7.2-3.2s3.4 2.2 4.8 1.2"/><path d="M2 11.5V6.8c2.4-3 5-4 7.2-3.2s3.4 2.2 4.8 1.2v4.7"/><path d="M2 6.8c2.4-3 5-4 7.2-3.2s3.4 2.2 4.8 1.2" stroke-dasharray="1.4 1.2" opacity=".5"/>`),
 
   // ============ 草图 ============
   sketch: S(`<path d="M2.5 13.5h11"/><path d="M2.5 2.5v11"/><path d="M4.5 10.5 8 5l3.5 5.5z"/><path d="M2.5 2.5h2M13.5 13.5v-2"/>`),

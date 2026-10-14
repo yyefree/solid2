@@ -11,6 +11,7 @@ import { icon } from './icons';
 import type { App } from '../app/app';
 import { notify } from './toast';
 import { featureDialogs } from './dialogs';
+import { surfaceDialogs } from './surface-dialogs';
 import { openMeasure } from './measure';
 import { openAiModeling, openAiHelp } from './aipanel';
 
@@ -196,6 +197,24 @@ export function buildTabs(): RTab[] {
           items: [
             { id: 'sk.exit', label: '退出草图', icon: 'exitSketch', big: true, tip: '退出草图并重建模型（Esc）', run: (a) => a.exitSketch(false), enabled: (a) => a.mode === 'sketch' },
             { id: 'sk.cancel', label: '放弃', icon: 'x', tip: '放弃本次草图编辑', run: (a) => a.exitSketch(true), enabled: (a) => a.mode === 'sketch' },
+          ],
+        },
+      ],
+    },
+
+    // ============================================================
+    // 曲面
+    // ============================================================
+    {
+      id: 'surfaces',
+      label: '曲面',
+      groups: [
+        {
+          title: '曲面',
+          items: [
+            { id: 'su.extrude', label: '拉伸曲面', icon: 'surface', big: true, tip: '草图轮廓沿法向拉伸成曲面（不封顶）', run: (a) => surfaceDialogs.extrude(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length > 0 },
+            { id: 'su.revolve', label: '旋转曲面', icon: 'surface', big: true, tip: '草图轮廓绕轴旋转成曲面', run: (a) => surfaceDialogs.revolve(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length > 0 },
+            { id: 'su.planar', label: '平面区域', icon: 'surface', big: true, tip: '把闭合草图轮廓填成平面曲面', run: (a) => surfaceDialogs.planar(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length > 0 },
           ],
         },
       ],

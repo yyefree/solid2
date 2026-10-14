@@ -38,6 +38,16 @@ export function buildFeatureTree(app: App, host: HTMLElement): void {
       root.children.appendChild(bodies.node);
     }
 
+    // 曲面实体（有曲面特征时；SolidWorks 同名文件夹）
+    const surfaces = app.modelSummary().surfaces;
+    if (surfaces > 0) {
+      const surfBodies = folder('曲面实体', 'surface', [], false);
+      for (let i = 0; i < surfaces; i++) {
+        surfBodies.children.appendChild(leaf('曲面实体' + (i + 1), 'surface'));
+      }
+      root.children.appendChild(surfBodies.node);
+    }
+
     // 基准面（前/上/右）
     const planes = folder('基准面', 'plane', [], false);
     for (const [name, ic] of [

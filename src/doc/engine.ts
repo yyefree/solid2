@@ -264,6 +264,20 @@ function springSolid(spec: SpringSpec): any {
   return S.compoundOf(parts);
 }
 
+/**
+ * 取一个草图特征的轮廓 wire（供曲面特征扫掠）。
+ * 闭合草图 → 取首个区域的**外环** wire；开放草图（线/弧串）→ 采样成开放折线 wire。
+ */
+function profileWireOf(skf: SketchFeature): any {
+  const pl = planeOf(skf);
+  solveSketch(skf.params.sketch);
+  const regions = sketchToRegions(skf.params.sketch, pl);
+  if (regions.length && regions[0].outer) return regions[0].outer;
+  const pts = sampleSketchPath(skf.params.sketch, pl, 64);
+  if (pts.length >= 2) return S.wireFromPoints(pts, false);
+  throw new Error('曲面：草图没有可用轮廓');
+}
+
 export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut {
   switch (f.type) {
     case 'sketch':
@@ -605,6 +619,41 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       return { shape: S.fuse(current, solid), added: solid };
     }
 
+    // ---- 曲面特征：生成曲面实体（壳），**不参与实体布尔**，累积到 ctx.surfaces ----
+    case 'surfaceExtrude': {
+      const skf = ctx.doc.getFeature(f.params.sketchId);
+      if (!skf || skf.type !== 'sketch') throw new Error('拉伸曲面：找不到引用的草图');
+      const pl = planeOf(skf);
+      const wire = profileWireOf(skf);
+      const sign = f.params.reverse ? -1 : 1;
+      const dir: [number, number, number] = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
+      ctx.surfaces.push(S.surfaceExtrude(wire, dir, f.params.distance, !!f.params.symmetric));
+      return { shape: current };
+    }
+
+    case 'surfaceRevolve': {
+      const skf = ctx.doc.getFeature(f.params.sketchId);
+      if (!skf || skf.type !== 'sketch') throw new Error('旋转曲面：找不到引用的草图');
+      const pl = planeOf(skf);
+      const wire = profileWireOf(skf);
+      const origin = worldFromSketch(pl, f.params.axisA[0], f.params.axisA[1]);
+      const p2 = worldFromSketch(pl, f.params.axisB[0], f.params.axisB[1]);
+      const axis: [number, number, number] = [p2[0] - origin[0], p2[1] - origin[1], p2[2] - origin[2]];
+      const sign = f.params.reverse ? -1 : 1;
+      const ang = ((f.params.angleDeg * Math.PI) / 180) * sign;
+      ctx.surfaces.push(S.surfaceRevolve(wire, origin, axis, ang));
+      return { shape: current };
+    }
+
+    case 'surfacePlanar': {
+      const skf = ctx.doc.getFeature(f.params.sketchId);
+      if (!skf || skf.type !== 'sketch') throw new Error('平面区域：找不到引用的草图');
+      const faces = facesOfSketch(skf);
+      if (!faces.length) throw new Error('平面区域：草图没有闭合轮廓');
+      ctx.surfaces.push(faces[0]);
+      return { shape: current };
+    }
+
     default:
       throw new Error(`未知特征类型：${(f as Feature).type}`);
   }
@@ -613,22 +662,29 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
 interface EvalCtx {
   doc: CadDocument;
   byId: Map<FeatureId, Feature>;
+  /** 累积的曲面实体（壳），不参与实体布尔；求值末尾与实体合成为一个可网格化形状 */
+  surfaces: any[];
 }
 
 export interface RebuildOutcome {
   shape: any;
   errors: { id: string; message: string }[];
   ms: number;
+  /** 曲面实体（壳）数量 */
+  surfaces: number;
 }
 
 /**
  * 重放整棵特征树，返回最终 TopoDS（仅在 Worker 内有效）与出错特征列表。
+ *
+ * 曲面特征产生的壳累积在 `ctx.surfaces`，末尾与实体合成一个复合形状（供三角化渲染）；
+ * 因此返回的 `shape` 可能同时含实体与曲面体，`surfaces` 给出曲面体数量。
  */
 export function rebuildFeatures(features: Feature[], upto?: FeatureId): RebuildOutcome {
   const t0 = performance.now();
   const doc = new CadDocument();
   doc.features = features as Feature[];
-  const ctx: EvalCtx = { doc, byId: new Map(features.map((f) => [f.id, f])) };
+  const ctx: EvalCtx = { doc, byId: new Map(features.map((f) => [f.id, f])), surfaces: [] };
   let current: any = null;
   const errors: { id: string; message: string }[] = [];
   const stopAt = upto === undefined ? features.length : doc.indexOf(upto) + 1;
@@ -649,7 +705,13 @@ export function rebuildFeatures(features: Feature[], upto?: FeatureId): RebuildO
       doc.evalCache.set(f.id, { shape: current });
     }
   }
-  return { shape: current, errors, ms: performance.now() - t0 };
+
+  // 实体 + 曲面体合成一个形状供网格化/渲染；体积/实体数仍只由实体部分贡献。
+  const parts: any[] = [];
+  if (current) parts.push(current);
+  parts.push(...ctx.surfaces);
+  const shape = parts.length === 0 ? null : parts.length === 1 ? parts[0] : S.compoundOf(parts);
+  return { shape, errors, ms: performance.now() - t0, surfaces: ctx.surfaces.length };
 }
 
 export type { PlaneRef };

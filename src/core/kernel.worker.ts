@@ -80,7 +80,7 @@ function gatherBuffers(obj: any, out: ArrayBuffer[]): void {
 // ============================================================
 async function opRebuild(features: any[]): Promise<ModelResult> {
   await ensureReady();
-  const { shape, errors, ms } = rebuildFeatures(features);
+  const { shape, errors, ms, surfaces } = rebuildFeatures(features);
   if (!shape || shape.IsNull()) {
     // 没有实体（比如只有草图）：返回空网格 + 错误
     const empty: MeshResult = {
@@ -92,15 +92,15 @@ async function opRebuild(features: any[]): Promise<ModelResult> {
       faceMetas: [],
       edgeMetas: [],
     };
-    return { mesh: empty, stats: { volume: 0, area: 0, faces: 0, edges: 0, solids: 0 }, bbox: { min: [-50, -50, -50], max: [50, 50, 50] }, errors, rebuildMs: ms };
+    return { mesh: empty, stats: { volume: 0, area: 0, faces: 0, edges: 0, solids: 0, surfaces: 0 }, bbox: { min: [-50, -50, -50], max: [50, 50, 50] }, errors, rebuildMs: ms };
   }
   const mesh = buildMeshResult(shape, 0.12, 0.28);
-  const mp = S.massProperties(shape);
+  // 体积只由实体贡献（曲面壳不产生体积）；面积取全体（含曲面）。
   const tc = S.topologyCount(shape);
   const bb = S.boundingBox(viewsOfMesh(mesh));
   return {
     mesh,
-    stats: { volume: mp.volume, area: mp.surfaceArea, faces: tc.faces, edges: tc.edges, solids: tc.solids },
+    stats: { volume: S.solidVolume(shape), area: S.surfaceArea(shape), faces: tc.faces, edges: tc.edges, solids: tc.solids, surfaces },
     bbox: { min: bb.min, max: bb.max },
     errors,
     rebuildMs: ms,
@@ -109,15 +109,14 @@ async function opRebuild(features: any[]): Promise<ModelResult> {
 
 async function opTessellate(features: any[], linear: number, angular: number): Promise<ModelResult> {
   await ensureReady();
-  const { shape, errors } = rebuildFeatures(features);
+  const { shape, errors, surfaces } = rebuildFeatures(features);
   if (!shape || shape.IsNull()) throw new Error('没有可网格化的实体');
   const mesh = buildMeshResult(shape, linear, angular);
-  const mp = S.massProperties(shape);
   const tc = S.topologyCount(shape);
   const bb = S.boundingBox(viewsOfMesh(mesh));
   return {
     mesh,
-    stats: { volume: mp.volume, area: mp.surfaceArea, faces: tc.faces, edges: tc.edges, solids: tc.solids },
+    stats: { volume: S.solidVolume(shape), area: S.surfaceArea(shape), faces: tc.faces, edges: tc.edges, solids: tc.solids, surfaces },
     bbox: { min: bb.min, max: bb.max },
     errors,
     rebuildMs: 0,
@@ -136,18 +135,20 @@ async function opImportStep(bytes: ArrayBuffer): Promise<ImportResult> {
   await ensureReady();
   const shape = importSTEP(bytes);
   const mesh = buildMeshResult(shape, 0.12, 0.28);
-  const mp = S.massProperties(shape);
   const bb = S.boundingBox(viewsOfMesh(mesh));
   const tc = S.topologyCount(shape);
-  return { mesh, bbox: { min: bb.min, max: bb.max }, stats: { volume: mp.volume, area: mp.surfaceArea, faces: tc.faces, edges: tc.edges, solids: tc.solids } };
+  return { mesh, bbox: { min: bb.min, max: bb.max }, stats: { volume: S.solidVolume(shape), area: S.surfaceArea(shape), faces: tc.faces, edges: tc.edges, solids: tc.solids, surfaces: S.surfacesOf(shape).length } };
 }
 
 async function opMassProps(features: any[]): Promise<MassResult> {
   await ensureReady();
   const { shape } = rebuildFeatures(features);
   if (!shape || shape.IsNull()) throw new Error('没有实体');
-  const mp = S.massProperties(shape);
-  return { volume: mp.volume, area: mp.surfaceArea, centroid: mp.centroid };
+  // 体积/质心只由实体贡献（曲面壳不产生体积）；面积取全体。
+  const bodies = S.bodiesOf(shape);
+  if (!bodies.length) throw new Error('没有实体（仅含曲面）');
+  const mp = S.massProperties(bodies.length === 1 ? bodies[0] : S.compoundOf(bodies));
+  return { volume: mp.volume, area: S.surfaceArea(shape), centroid: mp.centroid };
 }
 
 async function opMeasure(features: any[], kind: string, a: number, b: number): Promise<MeasureResult> {

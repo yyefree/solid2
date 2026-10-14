@@ -85,6 +85,8 @@ export interface ModelStats {
   faces: number;
   edges: number;
   solids: number;
+  /** 曲面实体（壳）数量（可选；旧数据可能缺失） */
+  surfaces?: number;
 }
 
 export interface BBox {

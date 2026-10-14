@@ -242,8 +242,8 @@ const sw = await evaluate(`(() => {
 const wantMenus = ['文件', '编辑', '视图', '插入', '工具', '窗口', '帮助'];
 check('菜单栏含 SolidWorks 七菜单', wantMenus.every((w) => sw.menuItems.some((m) => m.startsWith(w))), sw.menuItems.join(' '));
 check('菜单栏含命令搜索框', sw.search);
-const wantTabs = ['特征', '草图', '评估', '装配体', '工程图', '曲线', '视图', 'AI'];
-check('Ribbon 含 8 个 CommandManager 页签', wantTabs.every((w) => sw.tabs.includes(w)), sw.tabs.join(' '));
+const wantTabs = ['特征', '草图', '曲面', '评估', '装配体', '工程图', '曲线', '视图', 'AI'];
+check('Ribbon 含 9 个 CommandManager 页签', wantTabs.every((w) => sw.tabs.includes(w)), sw.tabs.join(' '));
 check('Heads-up 视图工具栏已渲染（14 按钮）', sw.headsUpBtns === 14, '按钮数 ' + sw.headsUpBtns);
 check(
   'Heads-up 含 旋转视图 / 编辑外观 / 光源 三个新入口',
@@ -473,6 +473,49 @@ check('「截面属性」在 PropertyManager 打开（无遮罩）', secDlg.open
 check('截面属性实时算出 面积 > 0（默认穿过质心）', secDlg.area > 0, `${secDlg.area}`);
 check('截面属性对话框可关闭', secDlg.closed);
 
+// 曲面（SW「曲面」页签）：拉伸曲面 → 曲面实体（壳），设计树出现「曲面实体」文件夹
+const surf = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const { newId } = T;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  const s = T.emptySketch();
+  const ids = [[0,0],[40,0],[40,25],[0,25]].map(function (p) { const id = newId('p'); s.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+  for (let i = 0; i < 4; i++) s.entities.push({ id: newId('e'), kind: 'line', a: ids[i], b: ids[(i + 1) % 4] });
+  const sid = newId('f');
+  app.addFeature({ id: sid, type: 'sketch', name: '矩形草图', params: { plane: 'front', sketch: s } }, { rebuild: false });
+  await app.rebuild();
+  const tab = [...document.querySelectorAll('.rtab')].find(function (t) { return t.textContent.trim() === '曲面'; });
+  if (tab) tab.click();
+  await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(function (b) { return b.textContent.trim() === '拉伸曲面'; });
+  if (!btn) { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); return { tabFound: !!tab, btnFound: false }; }
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const pm = document.querySelector('.pm');
+  const titleEl = pm ? pm.querySelector('.pm-head .pm-title') : null;
+  const title = titleEl ? titleEl.textContent : '';
+  const maskCount = document.querySelectorAll('.modal-mask').length;
+  const okBtn = [...document.querySelectorAll('.pm-foot .btn')].find(function (b) { return b.textContent.trim() === '确定'; });
+  if (okBtn) okBtn.click();
+  await sleep(150);
+  await app.rebuild();
+  const st = app.model ? app.model.stats : {};
+  const surfaces = st.surfaces || 0;
+  const solids = st.solids || 0;
+  const treeText = document.querySelector('.tree') ? document.querySelector('.tree').textContent : '';
+  const treeHasSurfFolder = treeText.indexOf('曲面实体') >= 0;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return { tabFound: !!tab, btnFound: true, title: title, maskCount: maskCount, surfaces: surfaces, solids: solids, treeHasSurfFolder: treeHasSurfFolder };
+})()`);
+check('「曲面」页签存在', surf.tabFound);
+check('「拉伸曲面」按钮可点开 PropertyManager（无遮罩）', surf.btnFound && surf.maskCount === 0 && surf.title === '拉伸曲面', surf.title);
+check('拉伸曲面生成 1 个曲面实体（0 实体）', surf.surfaces === 1 && surf.solids === 0, `surfaces=${surf.surfaces} solids=${surf.solids}`);
+check('设计树出现「曲面实体」文件夹', surf.treeHasSurfFolder);
+
 // 「曲线」页签也点一下，确认弹簧/涡状线在（上轮交付）
 const curve = await evaluate(`(() => {
   const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.includes('曲线'));
@@ -480,6 +523,14 @@ const curve = await evaluate(`(() => {
   return [...document.querySelectorAll('.rbtn')].map(b => b.textContent.trim());
 })()`);
 check('「曲线」页签含弹簧/涡状线', curve.includes('弹簧') || curve.includes('涡状线'), curve.join(' / '));
+
+// 「曲面」页签：确认拉伸曲面/旋转曲面/平面区域按钮已接线
+const surfTab = await evaluate(`(() => {
+  const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.includes('曲面'));
+  if (t) t.click();
+  return [...document.querySelectorAll('.rbtn')].map(b => b.textContent.trim());
+})()`);
+check('「曲面」页签含拉伸曲面/旋转曲面/平面区域', ['拉伸曲面', '旋转曲面', '平面区域'].every(w => surfTab.includes(w)), surfTab.join(' / '));
 
 // 「草图」页签：确认本轮新增的椭圆/槽口/点/镜像实体按钮已接线
 const sketchTab = await evaluate(`(() => {

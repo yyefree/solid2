@@ -35,7 +35,7 @@ function guardOc<T>(what: string, fn: () => T): T {
 // ============================================================
 // 拓扑遍历
 // ============================================================
-export function explode(shape: Shape, kind: 'FACE' | 'EDGE' | 'WIRE' | 'VERTEX' | 'SOLID'): Shape[] {
+export function explode(shape: Shape, kind: 'FACE' | 'EDGE' | 'WIRE' | 'VERTEX' | 'SOLID' | 'SHELL'): Shape[] {
   const o = oc();
   const out: Shape[] = [];
   if (!shape || shape.IsNull()) return out;
@@ -46,6 +46,7 @@ export function explode(shape: Shape, kind: 'FACE' | 'EDGE' | 'WIRE' | 'VERTEX' 
     WIRE: (s) => o.TopoDS.Wire_1(s),
     VERTEX: (s) => o.TopoDS.Vertex_1(s),
     SOLID: (s) => o.TopoDS.Solid_1(s),
+    SHELL: (s) => o.TopoDS.Shell_1(s),
   };
   while (ex.More()) {
     out.push(conv[kind](ex.Current()));
@@ -198,6 +199,58 @@ export function revolve(profile: Face | Wire, origin: [number, number, number], 
   const face = shapeKind(profile) === 'FACE' ? profile : faceFromWire(profile);
   const ax1 = gp.Ax1(gp.Pnt(...origin), gp.Dir(...axis));
   return new o.BRepPrimAPI_MakeRevol_1(face, ax1, angleRad, true).Shape();
+}
+
+// ============================================================
+// 曲面特征（SolidWorks「曲面」页签）：轮廓扫成**壳**而非实体
+// ============================================================
+/**
+ * 展开一个形状里的所有壳（曲面体）。
+ * 与 `bodiesOf`（实体）对应，供「曲面实体」计数与归属使用。
+ */
+export function surfacesOf(shape: Shape): Shape[] {
+  if (!shape || shape.IsNull()) return [];
+  return explode(shape, 'SHELL');
+}
+
+/**
+ * 拉伸曲面：把线框（或面）沿 dir 拉伸成壳。
+ *
+ * 与 `extrude` 的区别：**不把 wire 转成 face**、也不封顶——直接对 wire 做
+ * `BRepPrimAPI_MakePrism`，得到开放曲面（壳）。开放折线 → 单侧曲面；
+ * 闭合 wire → 四周侧壁（无上下盖）。
+ */
+export function surfaceExtrude(profile: Wire | Face, dir: [number, number, number], distance: number, symmetric = false): Shape {
+  const o = oc();
+  const off = symmetric ? -distance / 2 : 0;
+  const vec = gp.Vec(dir[0] * distance, dir[1] * distance, dir[2] * distance);
+  const prism = new o.BRepPrimAPI_MakePrism_1(profile, vec, true, true).Shape();
+  if (symmetric) return translate(prism, dir[0] * off, dir[1] * off, dir[2] * off);
+  return prism;
+}
+
+/**
+ * 旋转曲面：把线框（或面）绕轴旋转成壳（不封顶、不成实体）。
+ */
+export function surfaceRevolve(profile: Wire | Face, origin: [number, number, number], axis: [number, number, number], angleRad: number): Shape {
+  const o = oc();
+  const ax1 = gp.Ax1(gp.Pnt(...origin), gp.Dir(...axis));
+  return new o.BRepPrimAPI_MakeRevol_1(profile, ax1, angleRad, true).Shape();
+}
+
+/** 表面积（实体 / 曲面壳都适用，GProp SurfaceProperties） */
+export function surfaceArea(shape: Shape): number {
+  const o = oc();
+  const props = new o.GProp_GProps_1();
+  o.BRepGProp.SurfaceProperties_1(shape, props, false, false);
+  return props.Mass();
+}
+
+/** 仅实体贡献的体积（曲面壳不计入体积；无实体时返回 0） */
+export function solidVolume(shape: Shape): number {
+  const bodies = bodiesOf(shape);
+  if (!bodies.length) return 0;
+  return massProperties(bodies.length === 1 ? bodies[0] : compoundOf(bodies)).volume;
 }
 
 export function loft(profiles: (Face | Wire)[], isSolid = true, ruled = false): Shape {

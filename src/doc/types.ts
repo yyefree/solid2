@@ -370,6 +370,43 @@ export interface CombineFeature extends FeatureBase {
   };
 }
 
+// ============================================================
+// 曲面特征（SolidWorks「曲面」页签）—— 生成**曲面实体**（壳），不参与实体布尔
+// ============================================================
+/** 拉伸曲面：草图轮廓沿法向拉伸成曲面 */
+export interface SurfaceExtrudeFeature extends FeatureBase {
+  type: 'surfaceExtrude';
+  params: {
+    sketchId: FeatureId;
+    distance: number;
+    /** 对称（两侧各半） */
+    symmetric?: boolean;
+    /** 反向 */
+    reverse?: boolean;
+  };
+}
+
+/** 旋转曲面：草图轮廓绕轴旋转成曲面 */
+export interface SurfaceRevolveFeature extends FeatureBase {
+  type: 'surfaceRevolve';
+  params: {
+    sketchId: FeatureId;
+    /** 旋转轴（草图局部坐标下的两点） */
+    axisA: [number, number];
+    axisB: [number, number];
+    angleDeg: number;
+    reverse?: boolean;
+  };
+}
+
+/** 平面区域：把闭合草图轮廓填成一个平面曲面 */
+export interface SurfacePlanarFeature extends FeatureBase {
+  type: 'surfacePlanar';
+  params: {
+    sketchId: FeatureId;
+  };
+}
+
 export type Feature =
   | SketchFeature
   | ExtrudeFeature
@@ -393,7 +430,10 @@ export type Feature =
   | SplitFeature
   | MoveBodyFeature
   | DeleteBodyFeature
-  | CombineFeature;
+  | CombineFeature
+  | SurfaceExtrudeFeature
+  | SurfaceRevolveFeature
+  | SurfacePlanarFeature;
 
 export const FEATURE_LABEL: Record<string, string> = {
   sketch: '草图',
@@ -419,6 +459,9 @@ export const FEATURE_LABEL: Record<string, string> = {
   moveBody: '移动/复制实体',
   deleteBody: '删除实体',
   combine: '组合',
+  surfaceExtrude: '拉伸曲面',
+  surfaceRevolve: '旋转曲面',
+  surfacePlanar: '平面区域',
 };
 
 export const FEATURE_ICON: Record<string, string> = {
@@ -445,6 +488,9 @@ export const FEATURE_ICON: Record<string, string> = {
   moveBody: 'moveBody',
   deleteBody: 'deleteBody',
   combine: 'combine',
+  surfaceExtrude: 'surface',
+  surfaceRevolve: 'surface',
+  surfacePlanar: 'surface',
 };
 
 export function isSketch(f: Feature): f is SketchFeature {

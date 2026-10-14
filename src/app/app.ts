@@ -410,9 +410,11 @@ export class App {
   }
 
   /** 简短的模型统计（供状态栏/信息浮层使用） */
-  modelSummary(): { faces: number; edges: number; solids: number } {
+  modelSummary(): { faces: number; edges: number; solids: number; surfaces: number } {
     const s = this.currentModel()?.stats;
-    return s ? { faces: s.faces, edges: s.edges, solids: s.solids } : { faces: 0, edges: 0, solids: 0 };
+    return s
+      ? { faces: s.faces, edges: s.edges, solids: s.solids, surfaces: s.surfaces ?? 0 }
+      : { faces: 0, edges: 0, solids: 0, surfaces: 0 };
   }
 
   // ============================================================
