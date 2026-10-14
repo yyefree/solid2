@@ -127,6 +127,8 @@ export interface RevolveFeature extends FeatureBase {
     angleDeg: number;
     reverse?: boolean;
     operation: BooleanOp;
+    /** 薄壁特征（第十五轮）：轮廓偏置成带状/环带后再旋转 */
+    thin?: ThinSpec;
   };
 }
 
@@ -146,6 +148,8 @@ export interface SweepFeature extends FeatureBase {
     profileSketchId: FeatureId;
     pathSketchId: FeatureId;
     operation: BooleanOp;
+    /** 薄壁特征（第十五轮）：轮廓偏置成带状/环带后沿路径扫掠 */
+    thin?: ThinSpec;
   };
 }
 

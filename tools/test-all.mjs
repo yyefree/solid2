@@ -30,6 +30,7 @@ const SUITES = [
   { name: '截面属性', file: 'tools/sectionprops-test.ts' },
   { name: '曲面特征', file: 'tools/surface-test.ts' },
   { name: '拉伸终止条件/薄壁特征', file: 'tools/extrude-test.ts' },
+  { name: '薄壁特征（旋转/扫描）', file: 'tools/thin-test.ts' },
 ];
 
 let failed = 0;

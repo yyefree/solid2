@@ -45,6 +45,7 @@ import type {
   ThinSpec,
 } from './types';
 import type { SketchPlane } from '../sketch/types';
+import { worldToPlane } from '../sketch/types';
 
 // ============================================================
 // 几何命名的引用解析（用近似几何在最新拓扑里找对应元素）
@@ -256,16 +257,8 @@ function signedArea(pts: Vec3[], nrm: Vec3): number {
   return s / 2;
 }
 
-/**
- * 薄壁特征：把草图轮廓偏置成带状面。
- *
- *  - **闭环轮廓**（有封闭区域）→ 外环 + 反向内环，`faceWithHoles` 挖孔成环带；
- *  - **开环轮廓**（无封闭区域）→ 双侧偏置首尾相接拼成一条闭合带面。
- *
- * 厚度映射：`tOut` = 轮廓外侧（逆时针时朝外）厚度，`tIn` = 内侧厚度。
- * 与 SW 一致：开环/闭环、单侧/两侧/对称三种模式共用同一套偏置逻辑。
- */
-function thinProfileFaces(skf: SketchFeature, pl: SketchPlane, thin: ThinSpec): any[] {
+/** 薄壁厚度映射：`tOut` = 轮廓外侧（逆时针时朝外）厚度，`tIn` = 内侧厚度 */
+function thinOffsets(thin: ThinSpec): { tOut: number; tIn: number } {
   const t = Math.abs(thin.thickness) || 0;
   const t2 = Math.abs(thin.thickness2 ?? thin.thickness) || 0;
   let tOut: number;
@@ -282,11 +275,27 @@ function thinProfileFaces(skf: SketchFeature, pl: SketchPlane, thin: ThinSpec): 
     tIn = thin.reverse ? t : 0;
   }
   if (tOut <= 1e-9 && tIn <= 1e-9) throw new Error('薄壁：厚度必须大于 0');
+  return { tOut, tIn };
+}
 
+/**
+ * 薄壁特征：把草图轮廓偏置成带状（**世界坐标环**，供拉伸/旋转/扫描共用）。
+ *
+ *  - **闭环轮廓**（有封闭区域）→ `{ outer, inner }` 两条环（内环未反向，调用方按需处理）；
+ *  - **开环轮廓**（无封闭区域）→ 双侧偏置首尾相接拼成**一条**闭合带，`inner` 为 null。
+ *
+ * 与 SW 一致：开环/闭环、单侧/两侧/对称三种模式共用同一套偏置逻辑。
+ */
+function thinLoops3D(
+  skf: SketchFeature,
+  pl: SketchPlane,
+  thin: ThinSpec
+): { outer: Vec3[]; inner: Vec3[] | null }[] {
+  const { tOut, tIn } = thinOffsets(thin);
   solveSketch(skf.params.sketch);
   const nrm = pl.normal as Vec3;
   const regions = sketchToRegions(skf.params.sketch, pl);
-  const faces: any[] = [];
+  const loops: { outer: Vec3[]; inner: Vec3[] | null }[] = [];
   if (regions.length) {
     for (const r of regions) {
       // ⚠️ 区域多边形在实体接缝处会有重复点（相邻实体共享端点），
@@ -295,20 +304,36 @@ function thinProfileFaces(skf: SketchFeature, pl: SketchPlane, thin: ThinSpec): 
       if (poly.length < 3) continue;
       // 统一成逆时针，保证 tOut 朝外
       const ccw = signedArea(poly, nrm) < 0 ? [...poly].reverse() : poly;
-      const outer = S.wireFromPoints(offsetPathMiter(ccw, nrm, tOut, true), true);
-      const inner = S.wireFromPoints(offsetPathMiter(ccw, nrm, -tIn, true).reverse(), true);
-      faces.push(S.faceWithHoles(outer, [inner]));
+      // 闭环轮廓恒有内环（tIn=0 时内环即原轮廓，仍需挖孔）
+      loops.push({
+        outer: offsetPathMiter(ccw, nrm, tOut, true),
+        inner: offsetPathMiter(ccw, nrm, -tIn, true),
+      });
     }
   } else {
     const pts = cleanLoop(sampleSketchPath(skf.params.sketch, pl, 64));
     if (pts.length < 2) throw new Error('薄壁：草图没有可用轮廓');
-    const band = [
-      ...offsetPathMiter(pts, nrm, tOut, false),
-      ...offsetPathMiter(pts, nrm, -tIn, false).reverse(),
-    ];
-    faces.push(S.faceFromPoints(band));
+    loops.push({
+      outer: [
+        ...offsetPathMiter(pts, nrm, tOut, false),
+        ...offsetPathMiter(pts, nrm, -tIn, false).reverse(),
+      ],
+      inner: null,
+    });
   }
-  return faces;
+  return loops;
+}
+
+/**
+ * 薄壁特征：把草图轮廓偏置成带状**面**（供拉伸/旋转使用）。
+ * 闭环 → 外环 + 反向内环 `faceWithHoles` 挖孔成环带；开环 → 单条闭合带面。
+ */
+function thinProfileFaces(skf: SketchFeature, pl: SketchPlane, thin: ThinSpec): any[] {
+  return thinLoops3D(skf, pl, thin).map((l) => {
+    const outer = S.wireFromPoints(l.outer, true);
+    if (!l.inner) return S.faceFromWire(outer);
+    return S.faceWithHoles(outer, [S.wireFromPoints([...l.inner].reverse(), true)]);
+  });
 }
 
 /**
@@ -524,8 +549,10 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       const skf = ctx.doc.getFeature(f.params.sketchId);
       if (!skf || skf.type !== 'sketch') throw new Error('旋转：找不到引用的草图');
       const pl = planeOf(skf);
-      const faces = facesOfSketch(skf);
-      if (!faces.length) throw new Error('旋转：草图没有封闭轮廓');
+      // 薄壁特征：把轮廓偏置成带状/环带面后再旋转（支持开环/闭环）
+      const thin = f.params.thin;
+      const faces = thin ? thinProfileFaces(skf, pl, thin) : facesOfSketch(skf);
+      if (!faces.length) throw new Error(thin ? '旋转：薄壁草图没有可用轮廓' : '旋转：草图没有封闭轮廓');
       const a = skf.params.sketch;
       const axisA = f.params.axisA;
       const axisB = f.params.axisB;
@@ -568,14 +595,33 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       }
       const plP = planeOf(prof);
       solveSketch(prof.params.sketch);
-      const pRegions = sketchToRegions(prof.params.sketch, plP);
-      if (!pRegions.length) throw new Error('扫描：轮廓草图没有封闭区域');
       const plPath = planeOf(path);
       solveSketch(path.params.sketch);
       // 路径支持开放折线（线/弧串）与闭环
       const pathPts = sampleSketchPath(path.params.sketch, plPath, 48);
       if (pathPts.length < 2) throw new Error('扫描：路径草图没有可用曲线');
-      const solid = sweepProfileAlongPath(pathPts, pRegions[0].polygon, plP.normal);
+      let solid: any;
+      const thin = f.params.thin;
+      if (thin) {
+        // 薄壁：轮廓偏置成带/环带后沿路径扫掠。
+        // 环带（闭环轮廓）用「外管 − 内管」布尔得到中空管；带状（开环轮廓）直接扫一条带。
+        const loops = thinLoops3D(prof, plP, thin);
+        if (!loops.length) throw new Error('扫描：薄壁轮廓草图没有可用轮廓');
+        const to2 = (p: Vec3): Vec2 => {
+          const q = worldToPlane(plP, p);
+          return [q[0], q[1]];
+        };
+        const parts = loops.map((l) => {
+          const outerSolid = sweepProfileAlongPath(pathPts, l.outer.map(to2), plP.normal);
+          if (!l.inner) return outerSolid;
+          return S.cutAll(outerSolid, [sweepProfileAlongPath(pathPts, l.inner.map(to2), plP.normal)]);
+        });
+        solid = parts.length === 1 ? parts[0] : S.fuseAll(parts);
+      } else {
+        const pRegions = sketchToRegions(prof.params.sketch, plP);
+        if (!pRegions.length) throw new Error('扫描：轮廓草图没有封闭区域');
+        solid = sweepProfileAlongPath(pathPts, pRegions[0].polygon, plP.normal);
+      }
       const op = f.params.operation;
       return { shape: applyBoolean(op, current, solid), added: solid, tool: op === 'cut' ? solid : undefined };
     }

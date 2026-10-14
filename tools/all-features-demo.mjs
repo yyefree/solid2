@@ -453,10 +453,10 @@ async function installHelpers() {
           params: { sketchId, distance, operation: op ?? 'add', symmetric: false, reverse: false, draft: 0, ...(extra ?? {}) } }, { rebuild: false });
         return id;
       },
-      revolve(sketchId, axisA, axisB, angleDeg, op) {
+      revolve(sketchId, axisA, axisB, angleDeg, op, extra) {
         const id = newId('f');
         app.addFeature({ id, type: 'revolve', name: '旋转',
-          params: { sketchId, axisA, axisB, angleDeg, operation: op ?? 'add' } }, { rebuild: false });
+          params: { sketchId, axisA, axisB, angleDeg, operation: op ?? 'add', ...(extra ?? {}) } }, { rebuild: false });
         return id;
       },
       loft(sketchIds, op, ruled) {
@@ -465,10 +465,10 @@ async function installHelpers() {
           params: { sketchIds, ruled: !!ruled, operation: op ?? 'new' } }, { rebuild: false });
         return id;
       },
-      sweep(profileSketchId, pathSketchId, op) {
+      sweep(profileSketchId, pathSketchId, op, extra) {
         const id = newId('f');
         app.addFeature({ id, type: 'sweep', name: '扫描',
-          params: { profileSketchId, pathSketchId, operation: op ?? 'new' } }, { rebuild: false });
+          params: { profileSketchId, pathSketchId, operation: op ?? 'new', ...(extra ?? {}) } }, { rebuild: false });
         return id;
       },
       fillet(edges, r1, r2) {
@@ -1098,7 +1098,7 @@ ${primLines}
   await hold(300);
 
   // ---------- ⑧ 旋转 / 放样 / 扫描 ----------
-  await banner(10, '基于草图 · 旋转 / 放样 / 扫描', '旋转轴 + 多截面放样 + 轮廓沿路径扫掠');
+  await banner(10, '基于草图 · 旋转 / 放样 / 扫描 · 薄壁', '旋转轴 + 多截面放样 + 轮廓沿路径扫掠 + 薄壁（开环成筒 / 闭环成管）');
   const revRi = S.base.holeR, revRo = S.base.holeR * 2, revH = S.base.t * 2;
   const sRev = await act(`(() => {
     __D.reset();
@@ -1111,6 +1111,19 @@ ${primLines}
   })()`, 1800);
   check('旋转：矩形绕 Y 轴 360° → 圆环柱体积 = π(R²−r²)h',
     near(sRev.volume, Math.PI * (revRo ** 2 - revRi ** 2) * revH, 2e-3), `${sRev.volume.toFixed(1)} mm³`);
+  await isoView(1000);
+
+  // 旋转薄壁：开环线段绕轴 360° → 圆筒（普通旋转对开环轮廓无解，薄壁才成立）
+  const sRevThin = await act(`(() => {
+    __D.reset();
+    const id = __D.sketch('front', h => { const a = h.pt(${revRi},0), b = h.pt(${revRi},${revH}); h.line(a,b); });
+    __D.revolve(id, [0,0], [0,1], 360, 'new', { thin: { type: 'midPlane', thickness: 2 } });
+    return __D.rebuild();
+  })()`, 1600);
+  const expRevThin = Math.PI * ((revRi + 1) ** 2 - (revRi - 1) ** 2) * revH;
+  check(`旋转薄壁：开环线段 → 圆筒 r∈[${revRi - 1},${revRi + 1}] 高 ${revH}`,
+    sRevThin.solids === 1 && near(sRevThin.volume, expRevThin, 2e-3),
+    `${sRevThin.volume.toFixed(1)} / 期望 ${expRevThin.toFixed(1)} mm³`);
   await isoView(1000);
 
   const loftR1 = S.base.holeR * 2, loftR2 = +(S.base.holeR * 0.7).toFixed(2), loftH = S.base.t * 4;
@@ -1139,6 +1152,20 @@ ${primLines}
   })()`, 1800);
   check(`扫描：φ${swR * 2} 圆截面沿 ${swL}mm 路径扫掠 → 体积 ≈ πr²L`,
     near(sSw.volume, Math.PI * swR ** 2 * swL, 0.03), `${sSw.volume.toFixed(1)} / 期望 ${(Math.PI * swR ** 2 * swL).toFixed(1)}`);
+  await isoView(1000);
+
+  // 扫描薄壁：闭环圆轮廓 → 中空管（外管 − 内管布尔）
+  const sSwThin = await act(`(() => {
+    __D.reset();
+    const prof = __D.sketch('front', h => { const c = h.pt(0,0); h.circle(c, ${swR}); });
+    const path = __D.sketch('top', h => { const a = h.pt(0,0), b = h.pt(${swL},0); h.line(a,b); });
+    __D.sweep(prof, path, 'new', { thin: { type: 'midPlane', thickness: 2 } });
+    return __D.rebuild();
+  })()`, 1800);
+  const expSwThin = Math.PI * ((swR + 1) ** 2 - (swR - 1) ** 2) * swL;
+  check(`扫描薄壁：φ${swR * 2} 圆轮廓 → 中空管（≈ π((r+1)²−(r−1)²)L）`,
+    sSwThin.solids === 1 && near(sSwThin.volume, expSwThin, 0.03),
+    `${sSwThin.volume.toFixed(1)} / 期望 ${expSwThin.toFixed(1)} mm³`);
   await isoView(1000);
 
   // ---------- ⑨ 阵列 ----------

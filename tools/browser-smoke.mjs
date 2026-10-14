@@ -719,6 +719,99 @@ check('勾选薄壁后「厚度」字段可见', thinCtl.thickVisible === true);
 check('薄壁两侧对称厚 2：环带体积 (22²−18²)×10=1600',
   Math.abs((thinCtl.vol || 0) - 1600) < 1, `vol=${thinCtl.vol}`);
 
+// 旋转/扫描薄壁（第十五轮）：PM 分组接线 + 开环轮廓经薄壁后可旋转成圆筒
+const thinRS = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const { newId } = T;
+  const out = {};
+  const clearAll = async () => { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); };
+  const findBtn = (label) => [...document.querySelectorAll('.rbtn')].find(function (b) { return b.textContent.trim() === label; });
+  const setThin = async (pm, type, thick) => {
+    const chk = [...pm.querySelectorAll('label.chk')].find(function (l) { return l.textContent.trim() === '薄壁特征'; });
+    if (!chk) return false;
+    const inp = chk.querySelector('input');
+    inp.checked = true; inp.dispatchEvent(new Event('change'));
+    await sleep(60);
+    const sel = [...pm.querySelectorAll('select')].find(function (s) {
+      return [...s.options].some(function (o) { return o.textContent.trim() === '两侧对称'; });
+    });
+    if (sel) { sel.value = type; sel.dispatchEvent(new Event('change')); }
+    await sleep(60);
+    const row = [...pm.querySelectorAll('.field')].find(function (r) { const l = r.querySelector('label'); return l && l.textContent.trim() === '厚度'; });
+    const ti = row ? row.querySelector('input') : null;
+    if (ti) { ti.value = String(thick); ti.dispatchEvent(new Event('change')); }
+    await sleep(60);
+    return true;
+  };
+  const confirm = async () => {
+    const ok = [...document.querySelectorAll('.pm-foot .btn')].find(function (b) { return b.textContent.trim() === '确定'; });
+    if (ok) ok.click();
+    await sleep(160);
+    await app.rebuild();
+  };
+
+  await clearAll();
+  // 开放线段 x∈[0,20] 且 y=10（绕草图 X 轴旋转 → 半径恒为 10 的圆柱面）
+  const s1 = T.emptySketch();
+  const a1 = newId('p'), a2 = newId('p');
+  s1.points[a1] = { id: a1, x: 0, y: 10 };
+  s1.points[a2] = { id: a2, x: 20, y: 10 };
+  s1.entities.push({ id: newId('e'), kind: 'line', a: a1, b: a2 });
+  app.addFeature({ id: newId('f'), type: 'sketch', name: '线段草图', params: { plane: 'front', sketch: s1 } }, { rebuild: false });
+  await app.rebuild();
+  const tab = [...document.querySelectorAll('.rtab')].find(function (t) { return t.textContent.trim() === '特征'; });
+  if (tab) tab.click();
+  await sleep(60);
+  const rb = findBtn('旋转');
+  if (!rb) { await clearAll(); return { revBtn: false }; }
+  rb.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  let pm = document.querySelector('.pm');
+  out.revTitle = pm && pm.querySelector('.pm-head .pm-title') ? pm.querySelector('.pm-head .pm-title').textContent : '';
+  out.revHasThin = await setThin(pm, 'midPlane', 2);
+  await confirm();
+  out.revVol = app.model ? app.model.stats.volume : 0;
+
+  // 扫描：圆轮廓 + 直线路径
+  await clearAll();
+  const s2 = T.emptySketch();
+  const c2 = newId('p');
+  s2.points[c2] = { id: c2, x: 0, y: 0 };
+  s2.entities.push({ id: newId('e'), kind: 'circle', c: c2, r: 10 });
+  const s3 = T.emptySketch();
+  const b1 = newId('p'), b2 = newId('p');
+  s3.points[b1] = { id: b1, x: 0, y: 0 };
+  s3.points[b2] = { id: b2, x: 60, y: 0 };
+  s3.entities.push({ id: newId('e'), kind: 'line', a: b1, b: b2 });
+  app.addFeature({ id: newId('f'), type: 'sketch', name: '圆轮廓', params: { plane: 'front', sketch: s2 } }, { rebuild: false });
+  app.addFeature({ id: newId('f'), type: 'sketch', name: '路径', params: { plane: 'front', sketch: s3 } }, { rebuild: false });
+  await app.rebuild();
+  const sb = findBtn('扫描');
+  if (!sb) { await clearAll(); return { revBtn: true, sweepBtn: false, revTitle: out.revTitle, revHasThin: out.revHasThin, revVol: out.revVol }; }
+  sb.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  pm = document.querySelector('.pm');
+  out.sweepTitle = pm && pm.querySelector('.pm-head .pm-title') ? pm.querySelector('.pm-head .pm-title').textContent : '';
+  out.sweepHasThin = await setThin(pm, 'midPlane', 2);
+  await confirm();
+  out.sweepVol = app.model ? app.model.stats.volume : 0;
+  out.sweepSolids = app.model ? app.model.stats.solids : 0;
+
+  await clearAll();
+  return { revBtn: true, sweepBtn: true, revTitle: out.revTitle, revHasThin: out.revHasThin, revVol: out.revVol, sweepTitle: out.sweepTitle, sweepHasThin: out.sweepHasThin, sweepVol: out.sweepVol, sweepSolids: out.sweepSolids };
+})()`);
+check('「旋转」打开 PropertyManager 且含「薄壁特征」分组',
+  thinRS.revTitle === '旋转' && thinRS.revHasThin === true, `title=${thinRS.revTitle} thin=${thinRS.revHasThin}`);
+check('旋转薄壁：开环线段绕轴 360° → 圆筒 π(11²−9²)×20',
+  Math.abs((thinRS.revVol || 0) - Math.PI * (121 - 81) * 20) < 2, `vol=${thinRS.revVol}`);
+check('「扫描」打开 PropertyManager 且含「薄壁特征」分组',
+  thinRS.sweepTitle === '扫描' && thinRS.sweepHasThin === true, `title=${thinRS.sweepTitle} thin=${thinRS.sweepHasThin}`);
+check('扫描薄壁：闭环圆 → 中空管（体积 < 实心圆柱）且为单实体',
+  thinRS.sweepVol > 7000 && thinRS.sweepVol < 8100 && thinRS.sweepSolids === 1,
+  `vol=${thinRS.sweepVol} solids=${thinRS.sweepSolids}`);
+
 // 「草图」页签：确认本轮新增的椭圆/槽口/点/镜像实体按钮已接线
 const sketchTab = await evaluate(`(() => {
   const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.includes('草图'));

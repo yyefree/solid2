@@ -9,7 +9,7 @@ import { notify, promptNumber, modal, tableModal, confirmDialog } from './toast'
 import { formatLength, formatArea, formatVolume } from '../core/units';
 import { el, numberField, selectField, checkField, clear, section } from './dom';
 import { newId } from '../sketch/types';
-import type { ExtrudeFeature, ExtrudeStartCondition, ExtrudeEndCondition, ExtrudeEnd2Condition, ThinType, RevolveFeature, LoftFeature, SweepFeature, PrimitiveFeature, FilletFeature, ChamferFeature, ShellFeature, LinearPatternFeature, CircularPatternFeature, MirrorFeature, HoleFeature, ReferencePlaneFeature, HoleType, DraftFeature, RibFeature, SpringFeature, SpiralFeature, CoilHandedness, BooleanOp, ScaleFeature, SplitFeature, SplitKeep, MoveBodyFeature, DeleteBodyFeature, CombineFeature, CombineOp } from '../doc/types';
+import type { ExtrudeFeature, ExtrudeStartCondition, ExtrudeEndCondition, ExtrudeEnd2Condition, ThinType, ThinSpec, RevolveFeature, LoftFeature, SweepFeature, PrimitiveFeature, FilletFeature, ChamferFeature, ShellFeature, LinearPatternFeature, CircularPatternFeature, MirrorFeature, HoleFeature, ReferencePlaneFeature, HoleType, DraftFeature, RibFeature, SpringFeature, SpiralFeature, CoilHandedness, BooleanOp, ScaleFeature, SplitFeature, SplitKeep, MoveBodyFeature, DeleteBodyFeature, CombineFeature, CombineOp } from '../doc/types';
 import type { SketchPlane } from '../sketch/types';
 import { worldToPlane } from '../sketch/types';
 import { PLANES, makeEdgeRef, makeFaceRef, CadDocument, planeFromFace, offsetPlane, parallelPlane, perpendicularPlane, angledPlane, planeOf, worldFromSketch } from '../doc/model';
@@ -18,6 +18,49 @@ import type { ViewKind, DimAnnotation, GdtSymbol } from '../app/drawing';
 import { GDT_LABEL } from '../app/drawing';
 import type { MateRef } from '../app/assembly';
 import { mateRefLabel } from '../app/assembly';
+
+/**
+ * 「薄壁特征」分组（拉伸 / 旋转 / 扫描共用，SW 的薄壁特征 PropertyManager 分组）。
+ *
+ * 勾选后把草图轮廓偏置成带状再成形：开环轮廓 → 一条带，闭环轮廓 → 环带。
+ * 返回 `node`（可折叠分组）+ `read()`（未勾选返回 undefined，厚度 ≤ 0 抛错）。
+ */
+function thinGroup() {
+  const enable = checkField('薄壁特征', false, () => sync());
+  const typeRow = selectField('薄壁类型', 'oneSide', [
+    { value: 'oneSide', label: '单向' },
+    { value: 'midPlane', label: '两侧对称' },
+    { value: 'twoSides', label: '两侧不对称' },
+  ], () => sync());
+  const t1Row = numberField('厚度', 1, () => {}, { min: 0.01, step: 0.5, unit: 'mm' });
+  const t2Row = numberField('方向 2 厚度', 1, () => {}, { min: 0.01, step: 0.5, unit: 'mm' });
+  const revRow = checkField('薄壁反向', false, () => {});
+  const body = el('div', { class: 'col' }, enable.row, typeRow.row, t1Row.row, t2Row.row, revRow.row);
+  function sync() {
+    const on = enable.input.checked;
+    const type = typeRow.select.value;
+    typeRow.row.style.display = on ? '' : 'none';
+    t1Row.row.style.display = on ? '' : 'none';
+    t2Row.row.style.display = on && type === 'twoSides' ? '' : 'none';
+    revRow.row.style.display = on && type === 'oneSide' ? '' : 'none';
+  }
+  sync();
+  return {
+    node: section('薄壁特征', body),
+    on: () => enable.input.checked,
+    read(): ThinSpec | undefined {
+      if (!enable.input.checked) return undefined;
+      const th = parseFloat(t1Row.input.value) || 0;
+      if (!(th > 0)) throw new Error('薄壁厚度必须为正数');
+      return {
+        type: typeRow.select.value as ThinType,
+        thickness: th,
+        thickness2: parseFloat(t2Row.input.value) || th,
+        reverse: revRow.input.checked,
+      };
+    },
+  };
+}
 
 export const featureDialogs = {
   // ---------------- 草图 ----------------
@@ -84,15 +127,7 @@ export const featureDialogs = {
     ], () => sync());
     const dist2Row = numberField('方向 2 深度', 5, () => {}, { min: 0.01, step: 1, unit: 'mm' });
     // 薄壁特征（SW「薄壁特征」分组）：把轮廓偏置成带状再成形
-    const thinEnable = checkField('薄壁特征', false, () => sync());
-    const thinTypeRow = selectField('薄壁类型', 'oneSide', [
-      { value: 'oneSide', label: '单向' },
-      { value: 'midPlane', label: '两侧对称' },
-      { value: 'twoSides', label: '两侧不对称' },
-    ], () => sync());
-    const thinThickRow = numberField('厚度', 1, () => {}, { min: 0.01, step: 0.5, unit: 'mm' });
-    const thinThick2Row = numberField('方向 2 厚度', 1, () => {}, { min: 0.01, step: 0.5, unit: 'mm' });
-    const thinRevRow = checkField('薄壁反向', false, () => {});
+    const thin = thinGroup();
     const hint = el('div', { class: 'hint' }, '');
 
     function sync() {
@@ -100,31 +135,23 @@ export const featureDialogs = {
       const end = endRow.select.value;
       const end2 = end2Row.select.value;
       const isOffset = start === 'offset';
-      const thinOn = thinEnable.input.checked;
-      const thinType = thinTypeRow.select.value;
       offRow.row.style.display = isOffset ? '' : 'none';
       offRevRow.row.style.display = isOffset ? '' : 'none';
       distRow.row.style.display = end === 'blind' || end === 'midPlane' ? '' : 'none';
       revRow.row.style.display = end === 'throughAll' ? 'none' : '';
       dist2Row.row.style.display = end2 === 'blind' ? '' : 'none';
-      thinTypeRow.row.style.display = thinOn ? '' : 'none';
-      thinThickRow.row.style.display = thinOn ? '' : 'none';
-      thinThick2Row.row.style.display = thinOn && thinType === 'twoSides' ? '' : 'none';
-      thinRevRow.row.style.display = thinOn && thinType === 'oneSide' ? '' : 'none';
       if (end === 'upToVertex') hint.textContent = `成形到顶点：请先在图形区选中一个顶点（当前选中 ${app.selectedVertexPoints().length} 个）`;
       else if (end === 'upToSurface') hint.textContent = `成形到面：请先在图形区选中一个面（当前选中 ${app.selectedFaceInfos().length} 个）`;
       else if (end === 'throughAll') hint.textContent = '完全贯穿：自动按模型包围盒定长，穿透整个模型（常用于切除）。';
-      else if (thinOn) hint.textContent = '薄壁特征：把草图轮廓偏置成带状再成形——开环轮廓偏置成一条带，闭环轮廓偏置成环带（壁厚沿轮廓法向）。';
+      else if (thin.on()) hint.textContent = '薄壁特征：把草图轮廓偏置成带状再成形——开环轮廓偏置成一条带，闭环轮廓偏置成环带（壁厚沿轮廓法向）。';
       else hint.textContent = '深度为正值、沿草图法向；勾选「反向」沿反方向拉伸。方向 2 可向另一侧再拉一段（两侧不对称）。';
     }
     sync();
-    const thinGroup = section('薄壁特征', el('div', { class: 'col' },
-      thinEnable.row, thinTypeRow.row, thinThickRow.row, thinThick2Row.row, thinRevRow.row));
     body.append(
       startRow.row, offRow.row, offRevRow.row,
       endRow.row, distRow.row, revRow.row, draftRow.row,
       end2Row.row, dist2Row.row,
-      thinGroup,
+      thin.node,
       hint
     );
 
@@ -154,16 +181,12 @@ export const featureDialogs = {
               params.startOffset = parseFloat(offRow.input.value) || 0;
               params.startReverse = offRevRow.input.checked;
             }
-            if (thinEnable.input.checked) {
-              const thinType = thinTypeRow.select.value as ThinType;
-              const th = parseFloat(thinThickRow.input.value) || 0;
-              if (!(th > 0)) { notify.err('薄壁厚度必须为正数'); return false; }
-              params.thin = {
-                type: thinType,
-                thickness: th,
-                thickness2: parseFloat(thinThick2Row.input.value) || th,
-                reverse: thinRevRow.input.checked,
-              };
+            if (thin.on()) {
+              try {
+                params.thin = thin.read();
+              } catch (e) {
+                notify.err((e as Error).message); return false;
+              }
             }
             if (end === 'upToVertex') {
               const pts = app.selectedVertexPoints();
@@ -192,12 +215,30 @@ export const featureDialogs = {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) { notify.err('没有可用草图'); return; }
     const sketchId = app.editingSketch?.id ?? sketches[sketches.length - 1].id;
-    promptNumber('旋转', '角度 (°)', 360, (ang) => {
-      const f: RevolveFeature = {
-        id: newId('f'), type: 'revolve', name: app.doc.nextName('revolve'),
-        params: { sketchId, axisA: [0, 0], axisB: [10, 0], angleDeg: ang, operation: 'add' },
-      };
-      app.addFeature(f);
+    const body = el('div', { class: 'col' });
+    const angRow = numberField('角度', 360, () => {}, { min: 1, max: 360, step: 15, unit: '°' });
+    const thin = thinGroup();
+    body.append(angRow.row, thin.node);
+    modal({
+      host: 'pm',
+      title: '旋转',
+      body,
+      actions: [
+        { label: '取消' },
+        {
+          label: '确定', primary: true, onClick: () => {
+            const ang = parseFloat(angRow.input.value) || 0;
+            if (!(ang > 0)) { notify.err('角度必须为正数'); return false; }
+            const params: RevolveFeature['params'] = {
+              sketchId, axisA: [0, 0], axisB: [10, 0], angleDeg: ang, operation: 'add',
+            };
+            try { params.thin = thin.read(); } catch (e) { notify.err((e as Error).message); return false; }
+            app.addFeature({ id: newId('f'), type: 'revolve', name: app.doc.nextName('revolve'), params });
+            notify.ok('已添加旋转');
+            return true;
+          },
+        },
+      ],
     });
   },
 
@@ -211,14 +252,40 @@ export const featureDialogs = {
     app.addFeature(f);
   },
 
+  /** 扫描（SW 式：选轮廓草图 + 路径草图 + 可选薄壁特征） */
   sweep(app: App): void {
     const sketches = app.doc.sketchFeatures();
     if (sketches.length < 2) { notify.err('至少需要两个草图（轮廓 + 路径）'); return; }
-    const f: SweepFeature = {
-      id: newId('f'), type: 'sweep', name: app.doc.nextName('sweep'),
-      params: { profileSketchId: sketches[sketches.length - 2].id, pathSketchId: sketches[sketches.length - 1].id, operation: 'add' },
-    };
-    app.addFeature(f);
+    const opts = sketches.map((s, i) => ({ value: s.id, label: `${i + 1}. ${s.name}` }));
+    const body = el('div', { class: 'col' });
+    const profRow = selectField('轮廓草图', sketches[sketches.length - 2].id, opts, () => {});
+    const pathRow = selectField('路径草图', sketches[sketches.length - 1].id, opts, () => {});
+    const thin = thinGroup();
+    body.append(profRow.row, pathRow.row, thin.node);
+    modal({
+      host: 'pm',
+      title: '扫描',
+      body,
+      actions: [
+        { label: '取消' },
+        {
+          label: '确定', primary: true, onClick: () => {
+            if (profRow.select.value === pathRow.select.value) {
+              notify.err('轮廓与路径不能是同一个草图'); return false;
+            }
+            const params: SweepFeature['params'] = {
+              profileSketchId: profRow.select.value,
+              pathSketchId: pathRow.select.value,
+              operation: 'add',
+            };
+            try { params.thin = thin.read(); } catch (e) { notify.err((e as Error).message); return false; }
+            app.addFeature({ id: newId('f'), type: 'sweep', name: app.doc.nextName('sweep'), params });
+            notify.ok('已添加扫描');
+            return true;
+          },
+        },
+      ],
+    });
   },
 
   // ---------------- 曲线族 ----------------
