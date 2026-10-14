@@ -1915,6 +1915,14 @@ select.inp {
   font-weight: 600;
   border-top: 2px solid var(--accent);
 }
+.dtab.add {
+  padding: 0 7px;
+  color: var(--text-mute);
+  font-weight: 700;
+}
+.dtab.add:hover {
+  color: var(--accent-dark);
+}
 
 /* ---------- 特征树（文件夹 / 折叠） ---------- */
 .tree-children {

@@ -452,6 +452,36 @@ export class Viewport {
     };
   }
 
+  /** 相机快照（纯数据，可跨文档保存；多文档切换用） */
+  cameraSnapshot(): { position: [number, number, number]; target: [number, number, number]; up: [number, number, number]; zoom: number } {
+    const s = this.snapshotView();
+    return {
+      position: [s.position.x, s.position.y, s.position.z],
+      target: [s.target.x, s.target.y, s.target.z],
+      up: [s.up.x, s.up.y, s.up.z],
+      zoom: s.zoom,
+    };
+  }
+
+  /** 恢复相机快照（null = 不动） */
+  restoreCamera(s: { position: [number, number, number]; target: [number, number, number]; up: [number, number, number]; zoom: number } | null): void {
+    if (!s) return;
+    const p = new THREE.Vector3(...s.position);
+    const t = new THREE.Vector3(...s.target);
+    const u = new THREE.Vector3(...s.up);
+    this.camPersp.position.copy(p);
+    this.camOrtho.position.copy(p);
+    this.controls.target.copy(t);
+    this.camPersp.up.copy(u);
+    this.camOrtho.up.copy(u);
+    this.camPersp.zoom = s.zoom;
+    this.camOrtho.zoom = s.zoom;
+    this.camPersp.updateProjectionMatrix();
+    this.camOrtho.updateProjectionMatrix();
+    this.controls.update();
+    this.invalidate();
+  }
+
   get hasPrevView(): boolean {
     return this.viewStack.length > 1;
   }

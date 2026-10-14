@@ -40,7 +40,7 @@ export function buildMenubar(app: App, host: HTMLElement): void {
     const r = brand.getBoundingClientRect();
     openPopup(
       [
-        { label: '新建', icon: 'new', sc: sc('file.new'), run: () => app.newProject() },
+        { label: '新建', icon: 'new', sc: sc('file.new'), run: () => app.newDocument('model') },
         { label: '打开…', icon: 'open', sc: sc('file.open'), run: () => app.openProject() },
         { label: '保存', icon: 'save', sc: sc('file.save'), run: () => app.saveProject() },
         { sep: true },

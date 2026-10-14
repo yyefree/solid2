@@ -26,6 +26,7 @@ import { installContextMenu } from './ui/contextmenu';
 import { installMouseGestures } from './ui/shortcutbar';
 import { installHotkeys } from './app/hotkeys';
 import { el, clear } from './ui/dom';
+import { openPopup } from './ui/popup';
 import { icon } from './ui/icons';
 import './styles/theme.css';
 
@@ -148,35 +149,85 @@ async function boot() {
     // 全局热键表（SolidWorks 一致）
     installHotkeys(app);
 
-    // ---------- 文档标签栏（SolidWorks 图形区底部：零件 / 装配体 / 工程图） ----------
+    // ---------- 文档标签栏（SolidWorks 图形区底部：多文档标签 + 「+」新建 + 右键菜单） ----------
     const docTabsEl = el('div', { class: 'doc-tabs' });
     viewportWrap.appendChild(docTabsEl);
-    const DOC_TABS = [
-      { id: 'model', label: '零件', ic: 'part' },
-      { id: 'assembly', label: '装配体', ic: 'assembly' },
-      { id: 'drawing', label: '工程图', ic: 'drawing' },
-    ];
+    const DOC_KIND_ICON = { model: 'part', assembly: 'assembly', drawing: 'drawing' } as const;
     const renderDocTabs = () => {
       clear(docTabsEl);
-      for (const t of DOC_TABS) {
-        const active = app.mode === t.id;
-        docTabsEl.appendChild(
-          el(
-            'button',
-            {
-              class: `dtab ${active ? 'active' : ''}`,
-              type: 'button',
-              title: `切换到${t.label}`,
-              dataset: { dtab: t.id },
-              onClick: () => app.setMode(t.id as never),
-            },
-            el('span', { class: 'ic', html: icon(t.ic, 14) }),
-            el('span', { class: 'lbl', text: t.label })
-          )
+      for (const d of app.documents) {
+        const tab = el(
+          'button',
+          {
+            class: `dtab ${app.activeDocId === d.id ? 'active' : ''}`,
+            type: 'button',
+            title: d.name,
+            dataset: { doc: d.id },
+            onClick: () => app.activateDocument(d.id),
+          },
+          el('span', { class: 'ic', html: icon(DOC_KIND_ICON[d.kind], 14) }),
+          el('span', { class: 'lbl', text: d.name })
         );
+        tab.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const r = tab.getBoundingClientRect();
+          openPopup(
+            [
+              { label: '激活此文档', icon: 'check', disabled: app.activeDocId === d.id, run: () => app.activateDocument(d.id) },
+              { sep: true },
+              {
+                label: '关闭',
+                icon: 'x',
+                disabled: app.documents.length <= 1,
+                run: () => app.closeDocument(d.id),
+              },
+              {
+                label: '关闭其他',
+                icon: 'x',
+                disabled: app.documents.length <= 1,
+                run: () => {
+                  for (const other of [...app.documents]) {
+                    if (other.id !== d.id) app.closeDocument(other.id);
+                  }
+                },
+              },
+            ],
+            r.left,
+            Math.max(4, r.top - 110),
+            { minWidth: 140 }
+          );
+        });
+        docTabsEl.appendChild(tab);
       }
+      // 「+」新建文档（SW 标签栏右端）
+      docTabsEl.appendChild(
+        el(
+          'button',
+          {
+            class: 'dtab add',
+            type: 'button',
+            title: '新建文档 (Ctrl+N)',
+            onClick: (e) => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              openPopup(
+                [
+                  { label: '零件', icon: 'part', run: () => app.newDocument('model') },
+                  { label: '装配体', icon: 'assembly', run: () => app.newDocument('assembly') },
+                  { label: '工程图', icon: 'drawing', run: () => app.newDocument('drawing') },
+                ],
+                r.left,
+                Math.max(4, r.top - 116),
+                { minWidth: 140 }
+              );
+            },
+          },
+          el('span', { class: 'ic', html: icon('plus', 14) })
+        )
+      );
     };
     renderDocTabs();
+    app.on('docs', renderDocTabs);
     app.on('mode', renderDocTabs);
 
     // ---------- 视口信息浮层 ----------

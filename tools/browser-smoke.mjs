@@ -1098,6 +1098,44 @@ check('过滤器=实体：selectFace/selectEdge 被门控拒绝', bodyFilter.fac
 check('过滤器=实体：selectBody 选中整个实体', bodyFilter.bodyPicked, JSON.stringify(bodyFilter));
 check('过滤器=顶点：面/边选择同样被门控', bodyFilter.vertexModeRejects, JSON.stringify(bodyFilter));
 
+// ---- G7. 多文档：标签栏 / 新建 / 切换 / 关闭（第六轮交付） ----
+const multiDoc = await evaluate(`(async () => {
+  const app = window.__solid2.app;
+  const ai = await import('/src/ai/index.ts');
+  const tabs = () => document.querySelectorAll('.doc-tabs .dtab:not(.add)').length;
+  const hasAdd = !!document.querySelector('.doc-tabs .dtab.add');
+  const b1 = await ai.interpret('20x20x20 的长方体');
+  app.loadFeatures(b1.compiled.features, { replace: true, fit: false });
+  await app.rebuild();
+  const v1 = app.model?.stats.volume ?? 0;
+  const tabsBefore = tabs();
+  app.newDocument('model');
+  await new Promise((r) => setTimeout(r, 400));
+  const tabsAfter = tabs();
+  const b2 = await ai.interpret('30x30x30 的长方体');
+  app.loadFeatures(b2.compiled.features, { replace: true, fit: false });
+  await app.rebuild();
+  const v2 = app.model?.stats.volume ?? 0;
+  app.activateDocument(app.documents[0].id);
+  await new Promise((r) => setTimeout(r, 400));
+  const v1back = app.model?.stats.volume ?? 0;
+  const featBack = app.doc.features.length;
+  const undoBack = app.activeDoc().undo.length;
+  app.activateDocument(app.documents[1].id);
+  await new Promise((r) => setTimeout(r, 300));
+  app.closeDocument(app.documents[1].id);
+  const tabsClosed = tabs();
+  const vAfterClose = app.model?.stats.volume ?? 0;
+  app.activateDocument(app.documents[0].id);
+  await new Promise((r) => setTimeout(r, 400));
+  return { tabsBefore, hasAdd, tabsAfter, v1, v2, v1back, featBack, undoBack, tabsClosed, vAfterClose };
+})()`);
+check('文档标签栏初始 1 个标签 + 「+」新建按钮', multiDoc.tabsBefore === 1 && multiDoc.hasAdd, JSON.stringify(multiDoc));
+check('新建文档 → 标签栏 2 个', multiDoc.tabsAfter === 2, `tabs=${multiDoc.tabsAfter}`);
+check('文档间切换几何互不串（20³ ↔ 30³）', near(multiDoc.v1, 8000, 1) && near(multiDoc.v2, 27000, 1) && near(multiDoc.v1back, 8000, 1), JSON.stringify(multiDoc));
+check('切回文档1 特征与 undo 栈完好恢复', multiDoc.featBack === 1 && multiDoc.undoBack >= 1, JSON.stringify(multiDoc));
+check('关闭文档2 → 剩 1 个标签且当前文档为零件1', multiDoc.tabsClosed === 1 && near(multiDoc.vAfterClose, 27000, 1), JSON.stringify(multiDoc));
+
 for (const s of ai.steps) {
   console.log(`    ${s.text.slice(0, 28).padEnd(30)} 体积=${s.volume.toFixed(2).padStart(10)}  ${s.features} 特征 / ${s.faces} 面`);
 }

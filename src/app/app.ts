@@ -35,6 +35,27 @@ import { Drawing, generateStandardViews, type ViewKind } from './drawing';
 
 export type AppMode = 'model' | 'sketch' | 'assembly' | 'drawing';
 
+/** 多文档条目（SolidWorks 图形区底部文档标签栏）。
+ *  条目持有 CadDocument 实例与自己的 undo/redo 栈——切换文档只是换引用，
+ *  不序列化、不重建，切回时几何/参数/计数器全部原样恢复。 */
+export interface DocumentEntry {
+  id: string;
+  /** 文档名，如「零件1」/「装配体2」 */
+  name: string;
+  /** 文档类型（= 非草图模式的 mode） */
+  kind: 'model' | 'assembly' | 'drawing';
+  doc: CadDocument;
+  model: ModelResult | null;
+  /** STEP 导入模型（同文档内有效） */
+  imported: ModelResult | null;
+  assembly: Assembly | null;
+  drawing: Drawing | null;
+  undo: string[];
+  redo: string[];
+  /** 视口相机快照（切回时恢复不丢视角） */
+  view: { position: [number, number, number]; target: [number, number, number]; up: [number, number, number]; zoom: number } | null;
+}
+
 export interface Selection {
   /** 面索引（对应 model.faceMetas） */
   faces: number[];
@@ -60,7 +81,9 @@ export type AppEvent =
   /** 命令激活状态变化 —— 供确认角刷新 */
   | 'command'
   /** 设计树中选中了某个特征（供属性管理器接管显示并切换左面板选项卡） */
-  | 'feature';
+  | 'feature'
+  /** 文档列表变化（新建 / 关闭 / 切换文档）—— 供文档标签栏刷新 */
+  | 'docs';
 
 export interface StatusInfo {
   text: string;
@@ -114,11 +137,18 @@ export class App {
   /** 拾取参考的 3D 标记（球 + 轴向线段），加在视口根节点 */
   private assemblyPickGroup: THREE.Group | null = null;
 
-  // ---- 撤销 ----
+  // ---- 撤销（按当前文档隔离）----
   private undoStack: string[] = [];
   private redoStack: string[] = [];
   private maxUndo = 60;
   private suppressUndo = false;
+
+  // ---- 多文档（SolidWorks 文档标签栏）----
+  /** 已打开的文档（第一个是初始零件） */
+  documents: DocumentEntry[] = [];
+  /** 当前文档 id */
+  activeDocId = '';
+  private docSeq = 0;
 
   status: StatusInfo = { text: '就绪', kind: 'ok' };
 
@@ -161,6 +191,120 @@ export class App {
     this.viewport.start();
     this.bindPointer();
     // 键盘热键由 ../app/hotkeys 统一注册（SolidWorks 键位表）
+
+    // 初始文档（零件1）
+    const first: DocumentEntry = {
+      id: this.nextDocId(),
+      name: '零件1',
+      kind: 'model',
+      doc: this.doc,
+      model: null,
+      imported: null,
+      assembly: null,
+      drawing: null,
+      undo: this.undoStack,
+      redo: this.redoStack,
+      view: null,
+    };
+    this.documents.push(first);
+    this.activeDocId = first.id;
+  }
+
+  private nextDocId(): string {
+    return `doc${++this.docSeq}`;
+  }
+
+  private kindName(kind: DocumentEntry['kind']): string {
+    return kind === 'assembly' ? '装配体' : kind === 'drawing' ? '工程图' : '零件';
+  }
+
+  /** 当前文档条目 */
+  activeDoc(): DocumentEntry {
+    return this.documents.find((d) => d.id === this.activeDocId) ?? this.documents[0];
+  }
+
+  /**
+   * 新建文档（SolidWorks Ctrl+N / 标签栏「+」）：
+   * 保存当前条目状态，压入新条目并切换过去。
+   */
+  newDocument(kind: DocumentEntry['kind'] = 'model'): void {
+    this.syncActiveEntry();
+    if (this.mode === 'sketch') this.exitSketch(false);
+    const entry: DocumentEntry = {
+      id: this.nextDocId(),
+      name: `${this.kindName(kind)}${this.documents.length + 1}`,
+      kind,
+      doc: new CadDocument(),
+      model: null,
+      imported: null,
+      assembly: null,
+      drawing: null,
+      undo: [],
+      redo: [],
+      view: null,
+    };
+    this.documents.push(entry);
+    this.activateEntry(entry);
+    notify.ok(`已新建「${entry.name}」`);
+  }
+
+  /** 切换到指定文档 */
+  activateDocument(id: string): void {
+    const entry = this.documents.find((d) => d.id === id);
+    if (!entry || entry.id === this.activeDocId) return;
+    this.syncActiveEntry();
+    if (this.mode === 'sketch') this.exitSketch(false);
+    this.activateEntry(entry);
+  }
+
+  /** 关闭文档（右键标签）；最后一个文档不允许关闭 */
+  closeDocument(id: string): void {
+    if (this.documents.length <= 1) {
+      notify.info('至少保留一个文档');
+      return;
+    }
+    const idx = this.documents.findIndex((d) => d.id === id);
+    if (idx < 0) return;
+    const closing = this.documents[idx];
+    if (closing.id === this.activeDocId) {
+      const next = this.documents[idx + 1] ?? this.documents[idx - 1];
+      this.documents.splice(idx, 1);
+      this.activateEntry(next);
+    } else {
+      this.documents.splice(idx, 1);
+      this.emit('docs');
+    }
+  }
+
+  /** 把当前 doc/model/undo 栈写回当前条目（切换前调用） */
+  private syncActiveEntry(): void {
+    const e = this.activeDoc();
+    e.doc = this.doc;
+    e.model = this.model;
+    e.imported = this.importedModel;
+    e.assembly = this.assembly;
+    e.drawing = this.drawing;
+    e.undo = this.undoStack;
+    e.redo = this.redoStack;
+    e.view = this.viewport.cameraSnapshot();
+  }
+
+  /** 激活条目：换引用 + 刷新一切依赖文档的 UI */
+  private activateEntry(entry: DocumentEntry): void {
+    this.doc = entry.doc;
+    this.model = entry.model;
+    this.importedModel = entry.imported;
+    this.assembly = entry.assembly;
+    this.drawing = entry.drawing;
+    this.undoStack = entry.undo;
+    this.redoStack = entry.redo;
+    this.activeDocId = entry.id;
+    this.selectedFeatureId = null;
+    this.clearSelection();
+    if (this.mode !== entry.kind) this.setMode(entry.kind);
+    this.viewport.restoreCamera(entry.view);
+    this.rebuildModel();
+    this.emit('docs', 'change', 'tree', 'props', 'selection');
   }
 
   /** 当前用于显示的可序列化模型（参数化优先，其次导入） */
@@ -266,6 +410,7 @@ export class App {
     this.redoStack.push(JSON.stringify(this.doc.toJSON()));
     this.suppressUndo = true;
     this.doc = CadDocument.fromJSON(JSON.parse(prev));
+    this.activeDoc().doc = this.doc;
     this.rebuild();
     this.suppressUndo = false;
     notify.info('已撤销');
@@ -280,6 +425,7 @@ export class App {
     this.undoStack.push(JSON.stringify(this.doc.toJSON()));
     this.suppressUndo = true;
     this.doc = CadDocument.fromJSON(JSON.parse(next));
+    this.activeDoc().doc = this.doc;
     this.rebuild();
     this.suppressUndo = false;
     notify.info('已重做');
@@ -408,6 +554,7 @@ export class App {
       const model = await kernel.rebuild(this.resolvedFeatures());
       this.model = model;
       this.importedModel = null; // 参数化模型优先于导入体
+      this.activeDoc().model = model; // 多文档：重建结果跟随当前条目，切回无需再算
       this.doc.rebuildCount++;
       // 把内核侧的错误回写到特征（供 UI 标红）
       const errMap = new Map(model.errors.map((e) => [e.id, e.message]));
@@ -1380,7 +1527,10 @@ export class App {
       const data = JSON.parse(text);
       this.pushUndo();
       this.doc = CadDocument.fromJSON(data);
+      this.assembly = null;
+      this.drawing = null;
       this.rebuild({ fit: true });
+      this.syncActiveEntry();
       notify.ok(`已打开：${file.name}`);
     } catch (e) {
       notify.err(`打开失败：${(e as Error).message}`);
@@ -1395,6 +1545,7 @@ export class App {
       const r = await kernel.importStep(buf);
       this.importedModel = { mesh: r.mesh, bbox: r.bbox, stats: r.stats, errors: [], rebuildMs: 0 };
       this.model = null;
+      this.syncActiveEntry();
       const sv = new ShapeView(r.mesh, { style: this.displayStyle, bodyColor: this.appearanceHex });
       if (this.shapeView) {
         this.shapeView.group.removeFromParent();
@@ -1609,6 +1760,7 @@ export class App {
     this.editingSketch = null;
     this.activeSketchFeature = null;
     this.rebuild({ fit: true });
+    this.syncActiveEntry();
     this.emit('tree', 'props', 'params', 'mode');
     notify.ok('已新建零件');
   }
@@ -1697,6 +1849,7 @@ export class App {
     if (opts.replace !== false) this.doc = new CadDocument();
     for (const f of features) this.doc.add(f);
     this.rebuild({ fit: opts.fit ?? true });
+    this.syncActiveEntry();
     this.emit('tree', 'props');
   }
 

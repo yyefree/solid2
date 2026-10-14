@@ -43,7 +43,7 @@ export const HOTKEYS: HotkeyDef[] = [
   // ============================================================
   // 文件
   // ============================================================
-  { id: 'file.new', label: '新建', keys: 'Ctrl+N', group: '文件', run: (a) => a.newProject() },
+  { id: 'file.new', label: '新建', keys: 'Ctrl+N', group: '文件', run: (a) => a.newDocument('model') },
   { id: 'file.open', label: '打开', keys: 'Ctrl+O', group: '文件', run: (a) => a.openProject() },
   { id: 'file.save', label: '保存', keys: 'Ctrl+S', group: '文件', run: (a) => a.saveProject() },
   { id: 'file.print', label: '打印', keys: 'Ctrl+P', group: '文件', run: (a) => a.printView() },
