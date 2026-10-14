@@ -9,7 +9,7 @@ import { notify, promptNumber, modal, tableModal, confirmDialog } from './toast'
 import { formatLength, formatArea, formatVolume } from '../core/units';
 import { el, numberField, selectField, checkField, clear, section } from './dom';
 import { newId } from '../sketch/types';
-import type { ExtrudeFeature, ExtrudeStartCondition, ExtrudeEndCondition, ExtrudeEnd2Condition, RevolveFeature, LoftFeature, SweepFeature, PrimitiveFeature, FilletFeature, ChamferFeature, ShellFeature, LinearPatternFeature, CircularPatternFeature, MirrorFeature, HoleFeature, ReferencePlaneFeature, HoleType, DraftFeature, RibFeature, SpringFeature, SpiralFeature, CoilHandedness, BooleanOp, ScaleFeature, SplitFeature, SplitKeep, MoveBodyFeature, DeleteBodyFeature, CombineFeature, CombineOp } from '../doc/types';
+import type { ExtrudeFeature, ExtrudeStartCondition, ExtrudeEndCondition, ExtrudeEnd2Condition, ThinType, RevolveFeature, LoftFeature, SweepFeature, PrimitiveFeature, FilletFeature, ChamferFeature, ShellFeature, LinearPatternFeature, CircularPatternFeature, MirrorFeature, HoleFeature, ReferencePlaneFeature, HoleType, DraftFeature, RibFeature, SpringFeature, SpiralFeature, CoilHandedness, BooleanOp, ScaleFeature, SplitFeature, SplitKeep, MoveBodyFeature, DeleteBodyFeature, CombineFeature, CombineOp } from '../doc/types';
 import type { SketchPlane } from '../sketch/types';
 import { worldToPlane } from '../sketch/types';
 import { PLANES, makeEdgeRef, makeFaceRef, CadDocument, planeFromFace, offsetPlane, parallelPlane, perpendicularPlane, angledPlane, planeOf, worldFromSketch } from '../doc/model';
@@ -83,6 +83,16 @@ export const featureDialogs = {
       { value: 'throughAll', label: '完全贯穿' },
     ], () => sync());
     const dist2Row = numberField('方向 2 深度', 5, () => {}, { min: 0.01, step: 1, unit: 'mm' });
+    // 薄壁特征（SW「薄壁特征」分组）：把轮廓偏置成带状再成形
+    const thinEnable = checkField('薄壁特征', false, () => sync());
+    const thinTypeRow = selectField('薄壁类型', 'oneSide', [
+      { value: 'oneSide', label: '单向' },
+      { value: 'midPlane', label: '两侧对称' },
+      { value: 'twoSides', label: '两侧不对称' },
+    ], () => sync());
+    const thinThickRow = numberField('厚度', 1, () => {}, { min: 0.01, step: 0.5, unit: 'mm' });
+    const thinThick2Row = numberField('方向 2 厚度', 1, () => {}, { min: 0.01, step: 0.5, unit: 'mm' });
+    const thinRevRow = checkField('薄壁反向', false, () => {});
     const hint = el('div', { class: 'hint' }, '');
 
     function sync() {
@@ -90,21 +100,32 @@ export const featureDialogs = {
       const end = endRow.select.value;
       const end2 = end2Row.select.value;
       const isOffset = start === 'offset';
+      const thinOn = thinEnable.input.checked;
+      const thinType = thinTypeRow.select.value;
       offRow.row.style.display = isOffset ? '' : 'none';
       offRevRow.row.style.display = isOffset ? '' : 'none';
       distRow.row.style.display = end === 'blind' || end === 'midPlane' ? '' : 'none';
       revRow.row.style.display = end === 'throughAll' ? 'none' : '';
       dist2Row.row.style.display = end2 === 'blind' ? '' : 'none';
+      thinTypeRow.row.style.display = thinOn ? '' : 'none';
+      thinThickRow.row.style.display = thinOn ? '' : 'none';
+      thinThick2Row.row.style.display = thinOn && thinType === 'twoSides' ? '' : 'none';
+      thinRevRow.row.style.display = thinOn && thinType === 'oneSide' ? '' : 'none';
       if (end === 'upToVertex') hint.textContent = `成形到顶点：请先在图形区选中一个顶点（当前选中 ${app.selectedVertexPoints().length} 个）`;
       else if (end === 'upToSurface') hint.textContent = `成形到面：请先在图形区选中一个面（当前选中 ${app.selectedFaceInfos().length} 个）`;
       else if (end === 'throughAll') hint.textContent = '完全贯穿：自动按模型包围盒定长，穿透整个模型（常用于切除）。';
+      else if (thinOn) hint.textContent = '薄壁特征：把草图轮廓偏置成带状再成形——开环轮廓偏置成一条带，闭环轮廓偏置成环带（壁厚沿轮廓法向）。';
       else hint.textContent = '深度为正值、沿草图法向；勾选「反向」沿反方向拉伸。方向 2 可向另一侧再拉一段（两侧不对称）。';
     }
     sync();
+    const thinGroup = section('薄壁特征', el('div', { class: 'col' },
+      thinEnable.row, thinTypeRow.row, thinThickRow.row, thinThick2Row.row, thinRevRow.row));
     body.append(
       startRow.row, offRow.row, offRevRow.row,
       endRow.row, distRow.row, revRow.row, draftRow.row,
-      end2Row.row, dist2Row.row, hint
+      end2Row.row, dist2Row.row,
+      thinGroup,
+      hint
     );
 
     modal({
@@ -132,6 +153,17 @@ export const featureDialogs = {
             if (start === 'offset') {
               params.startOffset = parseFloat(offRow.input.value) || 0;
               params.startReverse = offRevRow.input.checked;
+            }
+            if (thinEnable.input.checked) {
+              const thinType = thinTypeRow.select.value as ThinType;
+              const th = parseFloat(thinThickRow.input.value) || 0;
+              if (!(th > 0)) { notify.err('薄壁厚度必须为正数'); return false; }
+              params.thin = {
+                type: thinType,
+                thickness: th,
+                thickness2: parseFloat(thinThick2Row.input.value) || th,
+                reverse: thinRevRow.input.checked,
+              };
             }
             if (end === 'upToVertex') {
               const pts = app.selectedVertexPoints();

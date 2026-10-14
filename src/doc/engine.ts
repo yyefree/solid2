@@ -17,7 +17,10 @@ import { solveSketch } from '../sketch/solver';
 import {
   cleanLoop,
   cleanLoop2,
+  cross3,
   helixPoints,
+  len3,
+  norm3,
   placeSections,
   polylineTangents,
   sampleSketchPath,
@@ -39,7 +42,9 @@ import type {
   MirrorFeature,
   PlaneRef,
   SketchFeature,
+  ThinSpec,
 } from './types';
+import type { SketchPlane } from '../sketch/types';
 
 // ============================================================
 // 几何命名的引用解析（用近似几何在最新拓扑里找对应元素）
@@ -198,6 +203,112 @@ function extrudeEndDistance(
 
   // blind（默认）
   return { distance: Math.abs(p.distance), symmetric: !!p.symmetric };
+}
+
+/**
+ * 平面内「斜接（miter）偏置」：每个顶点沿角平分线偏移 t，并乘 1/cos θ 补偿折角。
+ * 光滑点自动退化为普通法向偏移。N = cross(tangent, planeNormal)：
+ * 当轮廓在平面上绕 nrm **逆时针**时，t>0 朝外（右侧即外侧）。
+ * 折角补偿系数封顶 4×（1/0.25），避免过尖的折角炸出尖刺。
+ */
+function offsetPathMiter(pts: Vec3[], nrm: Vec3, t: number, closed: boolean): Vec3[] {
+  const n = pts.length;
+  const out: Vec3[] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = closed ? pts[(i - 1 + n) % n] : pts[Math.max(0, i - 1)];
+    const next = closed ? pts[(i + 1) % n] : pts[Math.min(n - 1, i + 1)];
+    const d1raw = sub3(pts[i], prev);
+    const d2raw = sub3(next, pts[i]);
+    const d1 = len3(d1raw) > 1e-9 ? norm3(d1raw) : null;
+    const d2 = len3(d2raw) > 1e-9 ? norm3(d2raw) : null;
+    const ref = d1 ?? d2;
+    if (!ref) {
+      out.push([pts[i][0], pts[i][1], pts[i][2]]);
+      continue;
+    }
+    const N1 = norm3(cross3(d1 ?? ref, nrm));
+    const N2 = norm3(cross3(d2 ?? ref, nrm));
+    const sum: Vec3 = [N1[0] + N2[0], N1[1] + N2[1], N1[2] + N2[2]];
+    let N: Vec3;
+    let scale = 1;
+    if (len3(sum) < 1e-6) {
+      N = N1;
+    } else {
+      N = norm3(sum);
+      scale = 1 / Math.max(0.25, dot3(N, N1));
+    }
+    out.push([
+      pts[i][0] + N[0] * t * scale,
+      pts[i][1] + N[1] * t * scale,
+      pts[i][2] + N[2] * t * scale,
+    ]);
+  }
+  return out;
+}
+
+/** 多边形绕 nrm 的有符号面积（>0 = 逆时针） */
+function signedArea(pts: Vec3[], nrm: Vec3): number {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const c = cross3(pts[i], pts[(i + 1) % pts.length]);
+    s += dot3(c, nrm);
+  }
+  return s / 2;
+}
+
+/**
+ * 薄壁特征：把草图轮廓偏置成带状面。
+ *
+ *  - **闭环轮廓**（有封闭区域）→ 外环 + 反向内环，`faceWithHoles` 挖孔成环带；
+ *  - **开环轮廓**（无封闭区域）→ 双侧偏置首尾相接拼成一条闭合带面。
+ *
+ * 厚度映射：`tOut` = 轮廓外侧（逆时针时朝外）厚度，`tIn` = 内侧厚度。
+ * 与 SW 一致：开环/闭环、单侧/两侧/对称三种模式共用同一套偏置逻辑。
+ */
+function thinProfileFaces(skf: SketchFeature, pl: SketchPlane, thin: ThinSpec): any[] {
+  const t = Math.abs(thin.thickness) || 0;
+  const t2 = Math.abs(thin.thickness2 ?? thin.thickness) || 0;
+  let tOut: number;
+  let tIn: number;
+  if (thin.type === 'midPlane') {
+    tOut = t / 2;
+    tIn = t / 2;
+  } else if (thin.type === 'twoSides') {
+    tOut = t;
+    tIn = t2;
+  } else {
+    // oneSide
+    tOut = thin.reverse ? 0 : t;
+    tIn = thin.reverse ? t : 0;
+  }
+  if (tOut <= 1e-9 && tIn <= 1e-9) throw new Error('薄壁：厚度必须大于 0');
+
+  solveSketch(skf.params.sketch);
+  const nrm = pl.normal as Vec3;
+  const regions = sketchToRegions(skf.params.sketch, pl);
+  const faces: any[] = [];
+  if (regions.length) {
+    for (const r of regions) {
+      // ⚠️ 区域多边形在实体接缝处会有重复点（相邻实体共享端点），
+      //    必须先 cleanLoop 去重，否则 miter 折角会因「零长边」退化成切角。
+      const poly = cleanLoop(r.polygon.map(([x, y]) => worldFromSketch(pl, x, y) as Vec3));
+      if (poly.length < 3) continue;
+      // 统一成逆时针，保证 tOut 朝外
+      const ccw = signedArea(poly, nrm) < 0 ? [...poly].reverse() : poly;
+      const outer = S.wireFromPoints(offsetPathMiter(ccw, nrm, tOut, true), true);
+      const inner = S.wireFromPoints(offsetPathMiter(ccw, nrm, -tIn, true).reverse(), true);
+      faces.push(S.faceWithHoles(outer, [inner]));
+    }
+  } else {
+    const pts = cleanLoop(sampleSketchPath(skf.params.sketch, pl, 64));
+    if (pts.length < 2) throw new Error('薄壁：草图没有可用轮廓');
+    const band = [
+      ...offsetPathMiter(pts, nrm, tOut, false),
+      ...offsetPathMiter(pts, nrm, -tIn, false).reverse(),
+    ];
+    faces.push(S.faceFromPoints(band));
+  }
+  return faces;
 }
 
 /**
@@ -368,9 +479,11 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       const skf = ctx.doc.getFeature(f.params.sketchId);
       if (!skf || skf.type !== 'sketch') throw new Error('拉伸：找不到引用的草图');
       const pl = planeOf(skf);
-      const faces = facesOfSketch(skf);
-      if (!faces.length) throw new Error('拉伸：草图没有封闭轮廓');
       const p = f.params;
+      // 薄壁特征：把轮廓偏置成带状面（支持开环/闭环）；否则用常规封闭轮廓
+      const thin = p.thin;
+      const faces = thin ? thinProfileFaces(skf, pl, thin) : facesOfSketch(skf);
+      if (!faces.length) throw new Error(thin ? '薄壁：草图没有可用轮廓' : '拉伸：草图没有封闭轮廓');
       const sign = p.reverse ? -1 : 1;
       const dir: Vec3 = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
 

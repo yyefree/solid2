@@ -29,7 +29,7 @@ const SUITES = [
   { name: '单位制换算', file: 'tools/units-test.ts' },
   { name: '截面属性', file: 'tools/sectionprops-test.ts' },
   { name: '曲面特征', file: 'tools/surface-test.ts' },
-  { name: '拉伸终止条件', file: 'tools/extrude-test.ts' },
+  { name: '拉伸终止条件/薄壁特征', file: 'tools/extrude-test.ts' },
 ];
 
 let failed = 0;

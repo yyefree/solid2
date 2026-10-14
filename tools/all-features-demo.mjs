@@ -923,7 +923,7 @@ async function tour() {
   await hold(200);
 
   // ---------- ⑤ 拉伸 / 切除（主零件起点） ----------
-  await banner(7, '拉伸凸台 / 切除 · SW 式终止条件', `${S.base.w}×${S.base.h} 底板 + 完全贯穿 / 两侧对称 / 成形到顶点·面`);
+  await banner(7, '拉伸凸台 / 切除 · SW 式终止条件 / 薄壁特征', `${S.base.w}×${S.base.h} 底板 + 完全贯穿 / 两侧对称 / 薄壁环带·带状`);
   await tab('特征');
   // 拉伸终止条件（SW 式）：完全贯穿切除 + 两侧对称
   await act(`(() => {
@@ -946,6 +946,29 @@ async function tour() {
   })()`, 400).then(() => act(`__D.rebuild()`, 1400));
   check('拉伸终止条件「两侧对称」：40×30 板厚 30 → 36000 mm³',
     near(sMid.volume, 40 * 30 * 30, 2e-3), `体积 ${sMid.volume.toFixed(1)} mm³`);
+  await isoView();
+  // 薄壁特征（SW「薄壁特征」）：闭环轮廓 → 环带；开环轮廓 → 带状
+  const sThinRing = await act(`(() => {
+    __D.reset();
+    const sid = __D.sketch('front', h => h.rect(-20, -15, 20, 15));
+    __D.extrude(sid, 20, 'new', { thin: { type: 'midPlane', thickness: 2 } });
+    return 1;
+  })()`, 400).then(() => act(`__D.rebuild()`, 1400));
+  const ringExpect = (42 * 32 - 38 * 28) * 20;
+  check('薄壁「闭环 → 环带」：40×30 矩形两侧厚 2 → 5600 mm³',
+    near(sThinRing.volume, ringExpect, 2e-3), `体积 ${sThinRing.volume.toFixed(1)} / 期望 ${ringExpect.toFixed(1)} mm³`);
+  await isoView();
+  const sThinBand = await act(`(() => {
+    __D.reset();
+    const sid = __D.sketch('front', h => {
+      const p1 = h.pt(-20, -15), p2 = h.pt(20, -15), p3 = h.pt(20, 15);
+      h.line(p1, p2); h.line(p2, p3);
+    });
+    __D.extrude(sid, 20, 'new', { thin: { type: 'midPlane', thickness: 2 } });
+    return 1;
+  })()`, 400).then(() => act(`__D.rebuild()`, 1400));
+  check('薄壁「开环 → 带状」：L 形路径（长 70）两侧厚 2 → 2800 mm³',
+    near(sThinBand.volume, 2800, 2e-3), `体积 ${sThinBand.volume.toFixed(1)} mm³`);
   await isoView();
   // 底板（后续工程特征步骤依赖此模型）
   await act(`__D.reset(); 1`, 200);

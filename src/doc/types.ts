@@ -61,6 +61,28 @@ export type ExtrudeEndCondition = 'blind' | 'upToVertex' | 'upToSurface' | 'thro
 /** 拉伸方向 2 终止条件（简版） */
 export type ExtrudeEnd2Condition = 'none' | 'blind' | 'throughAll';
 
+/** 薄壁特征类型（SW「薄壁特征」下拉） */
+export type ThinType = 'oneSide' | 'midPlane' | 'twoSides';
+
+/**
+ * 薄壁特征（Thin Feature）参数。
+ *
+ * 语义：把草图轮廓「偏置成带状」再成形——开环轮廓偏置成一条带，闭环轮廓偏置成环带。
+ * 厚度方向沿草图平面内、轮廓的法向：
+ *  - `oneSide`  轮廓单侧加厚 `thickness`（`reverse` 换到另一侧）
+ *  - `midPlane` 轮廓两侧各加厚 `thickness/2`
+ *  - `twoSides` 两侧不对称：正向 `thickness` + 反向 `thickness2`
+ */
+export interface ThinSpec {
+  type: ThinType;
+  /** 方向 1 厚度（mm） */
+  thickness: number;
+  /** twoSides 时方向 2 厚度（mm） */
+  thickness2?: number;
+  /** oneSide 时换到轮廓另一侧 */
+  reverse?: boolean;
+}
+
 export interface ExtrudeFeature extends FeatureBase {
   type: 'extrude';
   params: {
@@ -90,6 +112,8 @@ export interface ExtrudeFeature extends FeatureBase {
     end2?: ExtrudeEnd2Condition;
     /** 方向 2 深度（end2='blind'） */
     distance2?: number;
+    /** 薄壁特征（第十四轮）：把轮廓偏置成带状再成形 */
+    thin?: ThinSpec;
   };
 }
 

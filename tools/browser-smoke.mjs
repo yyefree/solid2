@@ -665,6 +665,60 @@ check('两侧对称拉伸：体积 400×10=4000，z ∈ [-5,5]',
   Math.abs((extrudeCtl.vol || 0) - 4000) < 1 && Math.abs((extrudeCtl.zMin ?? 99) + 5) < 0.01 && Math.abs((extrudeCtl.zMax ?? 99) - 5) < 0.01,
   `vol=${extrudeCtl.vol} z=[${extrudeCtl.zMin}, ${extrudeCtl.zMax}]`);
 
+// 薄壁特征（SW「薄壁特征」分组）：20×20 矩形 → 两侧对称厚 2 → 环带 22²−18² = 160 ×10 = 1600
+const thinCtl = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const { newId } = T;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  const s = T.emptySketch();
+  const ids = [[-10,-10],[10,-10],[10,10],[-10,10]].map(function (p) { const id = newId('p'); s.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+  for (let i = 0; i < 4; i++) s.entities.push({ id: newId('e'), kind: 'line', a: ids[i], b: ids[(i + 1) % 4] });
+  app.addFeature({ id: newId('f'), type: 'sketch', name: '矩形草图', params: { plane: 'front', sketch: s } }, { rebuild: false });
+  await app.rebuild();
+  const tab = [...document.querySelectorAll('.rtab')].find(function (t) { return t.textContent.trim() === '特征'; });
+  if (tab) tab.click();
+  await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(function (b) { return b.textContent.trim() === '拉伸凸台'; });
+  if (!btn) { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); return { btnFound: false }; }
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const pm = document.querySelector('.pm');
+  if (!pm) return { btnFound: true, pmFound: false };
+  const chk = [...pm.querySelectorAll('label.chk')].find(function (l) { return l.textContent.trim() === '薄壁特征'; });
+  const chkInput = chk ? chk.querySelector('input') : null;
+  const selects = [...pm.querySelectorAll('select')];
+  const typeSel = selects[3];
+  const typeOptions = typeSel ? [...typeSel.options].map(function (o) { return o.textContent; }) : [];
+  if (chkInput) { chkInput.checked = true; chkInput.dispatchEvent(new Event('change')); }
+  await sleep(60);
+  if (typeSel) { typeSel.value = 'midPlane'; typeSel.dispatchEvent(new Event('change')); }
+  await sleep(60);
+  const rows = [...pm.querySelectorAll('.field')];
+  const thickRow = rows.find(function (r) { const l = r.querySelector('label'); return l && l.textContent.trim() === '厚度'; });
+  const thickInput = thickRow ? thickRow.querySelector('input') : null;
+  const thickVisible = thickRow ? thickRow.style.display !== 'none' : false;
+  if (thickInput) { thickInput.value = '2'; thickInput.dispatchEvent(new Event('change')); }
+  await sleep(60);
+  const okBtn = [...document.querySelectorAll('.pm-foot .btn')].find(function (b) { return b.textContent.trim() === '确定'; });
+  if (okBtn) okBtn.click();
+  await sleep(150);
+  await app.rebuild();
+  const vol = app.model ? app.model.stats.volume : 0;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return { btnFound: true, pmFound: true, hasChk: !!chkInput, typeOptions: typeOptions, thickVisible: thickVisible, vol: vol };
+})()`);
+check('拉伸 PropertyManager 含「薄壁特征」分组', thinCtl.pmFound && thinCtl.hasChk, `hasChk=${thinCtl.hasChk}`);
+check('薄壁类型含 单向/两侧对称/两侧不对称',
+  ['单向', '两侧对称', '两侧不对称'].every(function (w) { return (thinCtl.typeOptions || []).indexOf(w) >= 0; }),
+  (thinCtl.typeOptions || []).join(' / '));
+check('勾选薄壁后「厚度」字段可见', thinCtl.thickVisible === true);
+check('薄壁两侧对称厚 2：环带体积 (22²−18²)×10=1600',
+  Math.abs((thinCtl.vol || 0) - 1600) < 1, `vol=${thinCtl.vol}`);
+
 // 「草图」页签：确认本轮新增的椭圆/槽口/点/镜像实体按钮已接线
 const sketchTab = await evaluate(`(() => {
   const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.includes('草图'));
