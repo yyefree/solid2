@@ -8,6 +8,7 @@
  */
 import * as THREE from 'three';
 import type { MeshResult } from '../core/kernel-types';
+import { convertLength, trim, fix, UNIT_BY_ID, type UnitSystem } from '../core/units';
 
 export type ViewKind = 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'iso';
 
@@ -152,6 +153,8 @@ export class Drawing {
   gdts: GdtAnnotation[] = [];
   /** 明细表（BOM） */
   bom: BomRow[] = [];
+  /** 单位制（与 App 同步；尺寸数值与公差按此换算，内部几何恒为 mm） */
+  unitSystem: UnitSystem = 'MMGS';
   private seq = 0;
   private dimSeq = 0;
   private gdtSeq = 0;
@@ -424,7 +427,10 @@ export class Drawing {
     const off = dim.offset;
     const a2: [number, number] = [a[0] + nx * off, a[1] + ny * off];
     const b2: [number, number] = [b[0] + nx * off, b[1] + ny * off];
-    const val = (Math.hypot(dim.b[0] - dim.a[0], dim.b[1] - dim.a[1]) * v.scale).toFixed(2);
+    const sys = this.unitSystem;
+    const dig = UNIT_BY_ID[sys].digits.len;
+    const valMm = Math.hypot(dim.b[0] - dim.a[0], dim.b[1] - dim.a[1]) * v.scale;
+    const val = trim(convertLength(valMm, sys), dig);
 
     const s: string[] = [];
     const arrow = 1.6;
@@ -453,13 +459,13 @@ export class Drawing {
     if (tol) {
       // 对称 ±（上下偏差互为相反数）；否则上下堆叠
       if (Math.abs(tol.upper + tol.lower) < 1e-9 && Math.abs(tol.upper - tol.lower) >= 1e-9) {
-        const sym = tol.upper.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+        const sym = trim(convertLength(tol.upper, sys), dig).replace(/0+$/, '').replace(/\.$/, '');
         s.push(
           `<text x="${mx.toFixed(2)}" y="${my.toFixed(2)}" font-size="3.4" fill="#b53322" text-anchor="middle">${valTxt} ±${sym}</text>`
         );
       } else {
-        const up = (tol.upper >= 0 ? '+' : '') + tol.upper.toFixed(2);
-        const lo = (tol.lower >= 0 ? '+' : '') + tol.lower.toFixed(2);
+        const up = (tol.upper >= 0 ? '+' : '') + fix(convertLength(tol.upper, sys), 2);
+        const lo = (tol.lower >= 0 ? '+' : '') + fix(convertLength(tol.lower, sys), 2);
         s.push(
           `<text x="${mx.toFixed(2)}" y="${my.toFixed(2)}" font-size="3.4" fill="#b53322" text-anchor="middle">${valTxt}` +
             `<tspan dx="1.6" dy="-1.5" font-size="2.6">${up}</tspan>` +
@@ -629,7 +635,7 @@ export class Drawing {
     const glyphY = py + 0.4;
     s.push(this.gdtGlyph(g.symbol, px + 0.5, glyphY, cwSym - 1, fh - 0.8));
     x += cwSym;
-    const tolTxt = (g.diameter ? '⌀' : '') + g.tol.toFixed(2);
+    const tolTxt = (g.diameter ? '⌀' : '') + trim(convertLength(g.tol, this.unitSystem), UNIT_BY_ID[this.unitSystem].digits.len);
     s.push(`<text x="${(x + cwTol / 2).toFixed(2)}" y="${(py + fh * 0.72).toFixed(2)}" font-size="3.6" fill="#b53322" text-anchor="middle">${tolTxt}</text>`);
     if (cwDat > 0) {
       s.push(`<line x1="${(x + cwTol).toFixed(2)}" y1="${py.toFixed(2)}" x2="${(x + cwTol).toFixed(2)}" y2="${(py + fh).toFixed(2)}" stroke="#b53322" stroke-width="0.3"/>`);

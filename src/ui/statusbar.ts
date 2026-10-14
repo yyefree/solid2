@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import type { App } from '../app/app';
 import { openPopup, type PopupItem } from './popup';
 import { notify } from './toast';
+import { UNIT_SYSTEMS, fmtCoord, type UnitSystem } from '../core/units';
 
 const FILTER_LABEL: Record<App['selectionFilter'], string> = {
   all: '全部',
@@ -36,7 +37,23 @@ export function buildStatusbar(app: App, host: HTMLElement): void {
   });
 
   const coord = el('span', { class: 'sb-coord', title: '光标在模型空间中的坐标', text: 'X 0.000   Y 0.000   Z 0.000' });
-  const unit = el('span', { class: 'sb-unit', title: '单位', text: 'mm' });
+  const unit = el('button', { class: 'sb-unit', type: 'button', title: '单位制（MMGS 公制 / CGS 厘米 / IPS 英制）', text: app.unitSystem });
+  unit.addEventListener('click', () => {
+    const r = unit.getBoundingClientRect();
+    openPopup(
+      UNIT_SYSTEMS.map((u) => ({
+        label: u.label,
+        tip: u.label === 'MMGS' ? '公制（毫米）' : u.label === 'CGS' ? '厘米-克-秒' : '英制（英寸）',
+        checked: app.unitSystem === u.id,
+        run: () => {
+          app.setUnitSystem(u.id as UnitSystem);
+        },
+      })),
+      r.left,
+      Math.max(4, r.top - 120),
+      { minWidth: 110 }
+    );
+  });
 
   // 选择过滤器（SolidWorks 状态栏 Filter / 快捷键 F5）
   const filterLabel = el('span', { text: FILTER_LABEL[app.selectionFilter] });
@@ -103,7 +120,7 @@ export function buildStatusbar(app: App, host: HTMLElement): void {
   const plane = new THREE.Plane();
   const hit = new THREE.Vector3();
   const camDir = new THREE.Vector3();
-  const fmt = (v: number) => (v >= 0 ? ' ' : '') + v.toFixed(3);
+  const fmt = (v: number) => (v >= 0 ? ' ' : '') + fmtCoord(v, app.unitSystem);
 
   const onMove = (e: PointerEvent) => {
     const r = canvas.getBoundingClientRect();
@@ -119,4 +136,12 @@ export function buildStatusbar(app: App, host: HTMLElement): void {
     }
   };
   canvas.addEventListener('pointermove', onMove);
+
+  // 单位制切换：更新单位标签并刷新坐标读数
+  app.on('units', () => {
+    unit.textContent = app.unitSystem;
+    if (ray.ray.intersectPlane(plane, hit)) {
+      coord.textContent = `Cursor: X${fmt(hit.x)}   Y${fmt(hit.y)}   Z${fmt(hit.z)}`;
+    }
+  });
 }

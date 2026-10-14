@@ -26,6 +26,7 @@ const SUITES = [
   { name: '草图→实体', file: 'tools/sketch-shape-test.ts' },
   { name: 'AI 建模助手（几何）', file: 'tools/ai-shape-test.ts' },
   { name: '几何内核', file: 'tools/kernel-test.ts' },
+  { name: '单位制换算', file: 'tools/units-test.ts' },
 ];
 
 let failed = 0;

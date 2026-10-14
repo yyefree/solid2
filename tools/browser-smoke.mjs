@@ -259,7 +259,7 @@ check('视图立方（ViewCube）已渲染', sw.viewcube);
 check('参考三重轴（Triad）已渲染', sw.triad);
 check('确认角（✓/✗）已挂载', sw.conf);
 check('状态栏右侧区（坐标/单位/重建）已渲染', sw.statusRight && sw.coord);
-check('状态栏单位显示 mm', sw.unit === 'mm', sw.unit);
+check('状态栏单位显示单位制（默认 MMGS）', sw.unit === 'MMGS', sw.unit);
 // 特征树：原点展开为 X/Y/Z 三轴（SolidWorks 零件树结构）
 const treeLabels = await evaluate(`[...document.querySelectorAll('.tree .tnode .label')].map(n => n.textContent.trim())`);
 check('特征树原点下含 X/Y/Z 轴三节点', ['原点', 'X 轴', 'Y 轴', 'Z 轴'].every((t) => treeLabels.includes(t)), treeLabels.slice(-6).join(' / '));
@@ -408,6 +408,31 @@ check('选两个面 → 最小距离 + 夹角（实时重算）', measureDlg.fac
 check('选单条边 → 长度', measureDlg.edgeOk);
 check('测量历史自动累积', measureDlg.historyCount >= 1, `${measureDlg.historyCount} 条`);
 check('测量对话框可关闭', measureDlg.closed);
+
+// 单位制切换（SW 工具>选项>文档属性>单位）：状态栏下拉 + 全界面读出值换算
+const unitSwitch = await evaluate(`(async () => {
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const btn = document.querySelector('.sb-unit');
+  if (!btn) return { found: false };
+  const before = btn.textContent.trim();
+  btn.click();
+  await sleep(60);
+  const items = [...document.querySelectorAll('.dd-item .dd-label')].map(x => x.textContent.trim());
+  const ipsEl = [...document.querySelectorAll('.dd-item')].find(x => x.textContent.trim() === 'IPS');
+  ipsEl?.click();
+  await sleep(60);
+  const after = document.querySelector('.sb-unit')?.textContent.trim();
+  document.querySelector('.sb-unit')?.click();
+  await sleep(60);
+  const mmgs = [...document.querySelectorAll('.dd-item')].find(x => x.textContent.trim() === 'MMGS');
+  mmgs?.click();
+  await sleep(60);
+  return { found: true, before, items, after, restored: document.querySelector('.sb-unit')?.textContent.trim() };
+})()`);
+check('状态栏单位按钮存在（默认 MMGS）', unitSwitch.found && unitSwitch.before === 'MMGS', unitSwitch.before);
+check('单位下拉含 MMGS/CGS/IPS', ['MMGS', 'CGS', 'IPS'].every(x => unitSwitch.items.includes(x)), unitSwitch.items.join('/'));
+check('切换到 IPS 后状态栏显示 IPS', unitSwitch.after === 'IPS', unitSwitch.after);
+check('切回 MMGS 恢复默认', unitSwitch.restored === 'MMGS', unitSwitch.restored);
 
 // 「曲线」页签也点一下，确认弹簧/涡状线在（上轮交付）
 const curve = await evaluate(`(() => {

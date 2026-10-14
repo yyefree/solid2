@@ -6,6 +6,7 @@
  */
 import type { App } from '../app/app';
 import { notify, promptNumber, modal, tableModal, confirmDialog } from './toast';
+import { formatLength, formatArea, formatVolume } from '../core/units';
 import { el, numberField, selectField, checkField, clear, section } from './dom';
 import { newId } from '../sketch/types';
 import type { ExtrudeFeature, RevolveFeature, LoftFeature, SweepFeature, PrimitiveFeature, FilletFeature, ChamferFeature, ShellFeature, LinearPatternFeature, CircularPatternFeature, MirrorFeature, HoleFeature, ReferencePlaneFeature, HoleType, DraftFeature, RibFeature, SpringFeature, SpiralFeature, CoilHandedness, BooleanOp, ScaleFeature, SplitFeature, SplitKeep, MoveBodyFeature, DeleteBodyFeature, CombineFeature, CombineOp } from '../doc/types';
@@ -1069,7 +1070,7 @@ export const featureDialogs = {
     const a = app.ensureAssembly();
     a.checkInterference().then((res) => {
       if (!res.length) { notify.ok('无干涉'); return; }
-      tableModal('干涉检查', ['零件A', '零件B', '干涉体积 (mm³)'], res.map(r => [r.a, r.b, r.volume.toFixed(3)]));
+      tableModal('干涉检查', ['零件A', '零件B', `干涉体积 (${app.unitSystem === 'IPS' ? 'in³' : app.unitSystem === 'CGS' ? 'cm³' : 'mm³'})`], res.map(r => [r.a, r.b, formatVolume(r.volume, app.unitSystem)]));
     }).catch((e) => notify.err(`干涉检查失败：${(e as Error).message}`));
   },
 
@@ -1269,12 +1270,13 @@ export const featureDialogs = {
     const cur = app.currentModel();
     if (!cur) { notify.info('没有模型'); return; }
     const st = cur.stats;
+    const sys = app.unitSystem;
     tableModal('模型信息', ['项目', '数值'], [
       ['特征数', String(app.doc.features.length)],
       ['面数', String(st.faces)],
       ['边数', String(st.edges)],
-      ['体积', `${st.volume.toFixed(2)} mm³`],
-      ['表面积', `${st.area.toFixed(2)} mm²`],
+      ['体积', formatVolume(st.volume, sys)],
+      ['表面积', formatArea(st.area, sys)],
     ]);
   },
 

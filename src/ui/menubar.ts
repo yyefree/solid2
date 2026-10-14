@@ -18,6 +18,7 @@ import { sc, hotkeyGroups } from '../app/hotkeys';
 import { notify, tableModal, modal } from './toast';
 import { openViewSettings } from './headsup';
 import { openAiModeling, openAiHelp } from './aipanel';
+import { UNIT_SYSTEMS } from '../core/units';
 import { ribbonController } from './ribbon';
 
 const D = featureDialogs;
@@ -414,6 +415,17 @@ function toolsMenu(app: App): PopupItem[] {
     { label: '质量属性…', icon: 'massProps', disabled: !app.hasModel, run: () => void app.showMassProperties() },
     { label: '模型统计…', icon: 'info', run: () => D.modelInfo(app) },
     { label: '几何检查…', icon: 'check', run: () => D.geometryCheck(app) },
+    { sep: true },
+    {
+      label: '单位制',
+      icon: 'dimension',
+      submenu: UNIT_SYSTEMS.map((u) => ({
+        label: u.label,
+        tip: u.label === 'MMGS' ? '公制（毫米）' : u.label === 'CGS' ? '厘米-克-秒' : '英制（英寸）',
+        checked: app.unitSystem === u.id,
+        run: () => app.setUnitSystem(u.id),
+      })),
+    },
     { sep: true },
     {
       label: '草图工具',

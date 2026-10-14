@@ -17,6 +17,7 @@ import { kernel } from '../core/kernel';
 import type { App } from '../app/app';
 import type { EdgeMeta, FaceMeta, Vec3 } from '../core/kernel-types';
 import { angleBetweenDeg, pointEdgeDistance, pointFaceDistance, vecDist } from './measure-math';
+import { formatLength, formatArea, formatVolume, fmtCoord, UNIT_BY_ID } from '../core/units';
 
 // ============================================================
 // 测量计算
@@ -58,41 +59,44 @@ export async function measureSelection(app: App): Promise<MeasureRow[]> {
   // --- 两个顶点：距离 + 分量 ---
   if (verts.length === 2 && !faces.length && !edges.length) {
     const d = vecDist(verts[0], verts[1]);
-    rows.push({ label: '距离', value: `${num(d)} mm` });
-    rows.push({ label: 'ΔX', value: `${num(Math.abs(verts[1][0] - verts[0][0]))} mm` });
-    rows.push({ label: 'ΔY', value: `${num(Math.abs(verts[1][1] - verts[0][1]))} mm` });
-    rows.push({ label: 'ΔZ', value: `${num(Math.abs(verts[1][2] - verts[0][2]))} mm` });
+    const sys = app.unitSystem;
+    rows.push({ label: '距离', value: formatLength(d, sys) });
+    rows.push({ label: 'ΔX', value: formatLength(Math.abs(verts[1][0] - verts[0][0]), sys) });
+    rows.push({ label: 'ΔY', value: formatLength(Math.abs(verts[1][1] - verts[0][1]), sys) });
+    rows.push({ label: 'ΔZ', value: formatLength(Math.abs(verts[1][2] - verts[0][2]), sys) });
     return rows;
   }
   // --- 顶点 ↔ 面 / 顶点 ↔ 边 ---
   if (verts.length === 1 && faces.length === 1 && !edges.length) {
     const d = pointFaceDistance(verts[0], sel.faces[0], mesh);
-    rows.push({ label: '距离（顶点→面）', value: `${num(d)} mm` });
+    rows.push({ label: '距离（顶点→面）', value: formatLength(d, app.unitSystem) });
     return rows;
   }
   if (verts.length === 1 && edges.length === 1 && !faces.length) {
     const d = pointEdgeDistance(verts[0], sel.edges[0], mesh);
-    rows.push({ label: '距离（顶点→边）', value: `${num(d)} mm` });
+    rows.push({ label: '距离（顶点→边）', value: formatLength(d, app.unitSystem) });
     return rows;
   }
   // --- 单个面：面积 / 曲面半径 ---
   if (faces.length === 1 && !edges.length && !verts.length) {
-    rows.push({ label: '面积', value: `${num(faces[0].area, 6)} mm²` });
+    const sys = app.unitSystem;
+    rows.push({ label: '面积', value: formatArea(faces[0].area, sys) });
     const r = faces[0].radius;
     if (r && (faces[0].surfaceType === 'cylinder' || faces[0].surfaceType === 'sphere' || faces[0].surfaceType === 'torus')) {
-      rows.push({ label: '半径', value: `${num(r)} mm` });
-      rows.push({ label: '直径', value: `${num(r * 2)} mm` });
+      rows.push({ label: '半径', value: formatLength(r, sys) });
+      rows.push({ label: '直径', value: formatLength(r * 2, sys) });
     }
     return rows;
   }
   // --- 单个边：长度 / 圆的半径直径圆心 ---
   if (edges.length === 1 && !faces.length && !verts.length) {
-    rows.push({ label: '长度', value: `${num(edges[0].length, 6)} mm` });
+    const sys = app.unitSystem;
+    rows.push({ label: '长度', value: formatLength(edges[0].length, sys) });
     if (edges[0].curveType === 'circle' && edges[0].radius) {
-      rows.push({ label: '半径', value: `${num(edges[0].radius)} mm` });
-      rows.push({ label: '直径', value: `${num(edges[0].radius * 2)} mm` });
+      rows.push({ label: '半径', value: formatLength(edges[0].radius, sys) });
+      rows.push({ label: '直径', value: formatLength(edges[0].radius * 2, sys) });
       const c = edges[0].axis?.point;
-      if (c) rows.push({ label: '圆心', value: `(${num(c[0], 3)}, ${num(c[1], 3)}, ${num(c[2], 3)}) mm` });
+      if (c) rows.push({ label: '圆心', value: `(${fmtCoord(c[0], sys)}, ${fmtCoord(c[1], sys)}, ${fmtCoord(c[2], sys)}) ${UNIT_BY_ID[sys].lenUnit}` });
     }
     return rows;
   }
@@ -105,29 +109,31 @@ export async function measureSelection(app: App): Promise<MeasureRow[]> {
     }
     let area = 0;
     for (const b of sel.bodies) area += areas.get(b) ?? 0;
-    rows.push({ label: '表面积', value: `${num(area, 6)} mm²` });
+    const sys = app.unitSystem;
+    rows.push({ label: '表面积', value: formatArea(area, sys) });
     if (sel.bodies.length === 1 && model.stats.solids === 1) {
-      rows.push({ label: '体积', value: `${num(model.stats.volume, 6)} mm³` });
+      rows.push({ label: '体积', value: formatVolume(model.stats.volume, sys) });
     }
     return rows;
   }
   // --- 需要内核精确距离的组合 ---
   try {
+    const sys = app.unitSystem;
     if (faces.length === 2 && !edges.length && !verts.length) {
       const r = await kernel.measure(app.resolvedFeatures(), 'faceFace', sel.faces[0], sel.faces[1]);
-      rows.push({ label: '最小距离', value: `${num(r.distance)} mm` });
+      rows.push({ label: '最小距离', value: formatLength(r.distance, sys) });
       rows.push({ label: '夹角', value: `${num(angleBetweenDeg(faces[0].normal, faces[1].normal), 2)}°` });
       return rows;
     }
     if (edges.length === 2 && !faces.length && !verts.length) {
       const r = await kernel.measure(app.resolvedFeatures(), 'edgeEdge', sel.edges[0], sel.edges[1]);
-      rows.push({ label: '最小距离', value: `${num(r.distance)} mm` });
+      rows.push({ label: '最小距离', value: formatLength(r.distance, sys) });
       rows.push({ label: '夹角', value: `${num(angleBetweenDeg(edges[0].dir, edges[1].dir), 2)}°` });
       return rows;
     }
     if (faces.length === 1 && edges.length === 1 && !verts.length) {
       const r = await kernel.measure(app.resolvedFeatures(), 'faceEdge', sel.faces[0], sel.edges[0]);
-      rows.push({ label: '最小距离', value: `${num(r.distance)} mm` });
+      rows.push({ label: '最小距离', value: formatLength(r.distance, sys) });
       return rows;
     }
   } catch {
@@ -212,6 +218,7 @@ export function openMeasure(app: App): void {
 
   const offSel = app.on('selection', () => void refresh());
   const offChg = app.on('change', () => void refresh());
+  const offUnits = app.on('units', () => void refresh());
   renderHistory();
   modal({
     host: 'pm',
@@ -224,6 +231,7 @@ export function openMeasure(app: App): void {
     onClose: () => {
       offSel();
       offChg();
+      offUnits();
     },
   });
   void refresh();

@@ -28,6 +28,7 @@ import { Viewport, type ViewDir } from '../view/viewport';
 import { ShapeView, type DisplayStyle } from '../view/shapeview';
 import { COLORS, previewMaterial } from '../view/materials';
 import { notify, tableModal } from '../ui/toast';
+import { DEFAULT_UNIT, isUnitSystem, formatLength, formatArea, formatVolume, type UnitSystem } from '../core/units';
 import { closePropertyManager } from '../ui/propertymanager';
 import { DEFAULT_PLANE, RIGHT_PLANE, TOP_PLANE, type SketchPlane } from '../sketch/types';
 import { SketchController, type SketchTool } from './sketchMode';
@@ -84,7 +85,9 @@ export type AppEvent =
   /** 设计树中选中了某个特征（供属性管理器接管显示并切换左面板选项卡） */
   | 'feature'
   /** 文档列表变化（新建 / 关闭 / 切换文档）—— 供文档标签栏刷新 */
-  | 'docs';
+  | 'docs'
+  /** 单位制变化（MMGS/CGS/IPS）—— 供状态栏、测量、工程图等只读读出值刷新 */
+  | 'units';
 
 export interface StatusInfo {
   text: string;
@@ -100,6 +103,14 @@ export class App {
   selection: Selection = { faces: [], edges: [], vertices: [], bodies: [] };
   /** 选择过滤器（SolidWorks 状态栏 / 快捷键 F5）—— 'all' 不过滤（默认，行为不变） */
   selectionFilter: 'all' | 'face' | 'edge' | 'vertex' | 'body' = 'all';
+  /** 单位制（SolidWorks 工具 > 选项 > 文档属性 > 单位）。内部几何恒为 mm，仅显示换算。 */
+  unitSystem: UnitSystem = (() => {
+    try {
+      const v = localStorage.getItem('solid2.units');
+      if (isUnitSystem(v)) return v;
+    } catch { /* SSR / 隐私模式忽略 */ }
+    return DEFAULT_UNIT;
+  })();
   /** 零件外观色（十六进制，Heads-up「外观」下拉设置；默认 materials.ts 的 COLORS.body） */
   appearanceHex: number = COLORS.body;
   /** 当前光源预设名（Heads-up「光源」下拉） */
@@ -349,6 +360,16 @@ export class App {
   setSelectionFilter(f: 'all' | 'face' | 'edge' | 'vertex' | 'body'): void {
     this.selectionFilter = f;
     this.emit('selection', 'props');
+  }
+
+  /** 设置单位制（SolidWorks 工具 > 选项 > 文档属性 > 单位） */
+  setUnitSystem(sys: UnitSystem): void {
+    if (!isUnitSystem(sys) || sys === this.unitSystem) return;
+    this.unitSystem = sys;
+    try {
+      localStorage.setItem('solid2.units', sys);
+    } catch { /* 忽略 */ }
+    this.emit('units', 'view', 'drawing');
   }
 
   /** 设置零件外观色（Heads-up「外观」）；已显示的形状立即换色 */
@@ -1209,6 +1230,7 @@ export class App {
       return;
     }
     const d = this.ensureDrawing();
+    d.unitSystem = this.unitSystem;
     generateStandardViews(d, m.mesh, kinds);
     this.drawingScale && (d.fixedScale = this.drawingScale);
     this.emit('drawing', 'tree');
@@ -1221,6 +1243,7 @@ export class App {
       return;
     }
     const d = this.ensureDrawing();
+    d.unitSystem = this.unitSystem;
     d.addView(kind, m.mesh, this.drawingScale);
     d.layout();
     this.emit('drawing', 'tree');
@@ -1577,18 +1600,19 @@ export class App {
       const mp = await kernel.massProps(this.resolvedFeatures());
       const bb = this.currentModel()!.bbox;
       const st = this.currentModel()!.stats;
+      const sys = this.unitSystem;
       tableModal(
         '质量属性',
         ['项目', '数值'],
         [
-          ['体积', `${mp.volume.toFixed(3)} mm³`],
-          ['表面积', `${mp.area.toFixed(3)} mm²`],
-          ['质心 X', `${mp.centroid[0].toFixed(3)} mm`],
-          ['质心 Y', `${mp.centroid[1].toFixed(3)} mm`],
-          ['质心 Z', `${mp.centroid[2].toFixed(3)} mm`],
-          ['包围盒 X', `${(bb.max[0] - bb.min[0]).toFixed(2)} mm`],
-          ['包围盒 Y', `${(bb.max[1] - bb.min[1]).toFixed(2)} mm`],
-          ['包围盒 Z', `${(bb.max[2] - bb.min[2]).toFixed(2)} mm`],
+          ['体积', formatVolume(mp.volume, sys)],
+          ['表面积', formatArea(mp.area, sys)],
+          ['质心 X', formatLength(mp.centroid[0], sys)],
+          ['质心 Y', formatLength(mp.centroid[1], sys)],
+          ['质心 Z', formatLength(mp.centroid[2], sys)],
+          ['包围盒 X', formatLength(bb.max[0] - bb.min[0], sys)],
+          ['包围盒 Y', formatLength(bb.max[1] - bb.min[1], sys)],
+          ['包围盒 Z', formatLength(bb.max[2] - bb.min[2], sys)],
           ['面数', String(st.faces)],
           ['边数', String(st.edges)],
         ],

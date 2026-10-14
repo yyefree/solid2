@@ -45,6 +45,7 @@
     "test:doc": "node tools/run-ts.mjs tools/doc-test.ts",
     "test:features": "node tools/run-ts.mjs tools/features-test.ts",
     "test:curve": "node tools/run-ts.mjs tools/curve-test.ts",
+    "test:units": "node tools/run-ts.mjs tools/units-test.ts",
     "test:measure": "node tools/run-ts.mjs tools/measure-test.ts",
     "test:edit": "node tools/run-ts.mjs tools/edit-test.ts",
     "test:shape": "node tools/run-ts.mjs tools/sketch-shape-test.ts",
