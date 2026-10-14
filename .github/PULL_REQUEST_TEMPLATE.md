@@ -28,7 +28,7 @@ npx tsc --noEmit && npm test && npm run build
 ```
 
 - [ ] `npx tsc --noEmit` 通过
-- [ ] `npm test`（12 个套件）通过
+- [ ] `npm test`（13 个套件）通过
 - [ ] 涉及浏览器交互的改动跑过 `npm run test:browser`
 - [ ] 涉及几何/内核的改动补了 `tools/*-test.ts` 断言（体积/面数/实体数）
 - [ ] 无新增控制台报错

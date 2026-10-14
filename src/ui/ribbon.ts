@@ -11,6 +11,7 @@ import { icon } from './icons';
 import type { App } from '../app/app';
 import { notify } from './toast';
 import { featureDialogs } from './dialogs';
+import { openMeasure } from './measure';
 import { openAiModeling, openAiHelp } from './aipanel';
 
 export type CmdId = string;
@@ -211,7 +212,7 @@ export function buildTabs(): RTab[] {
           title: '测量',
           items: [
             { id: 'e.mass', label: '质量属性', icon: 'massProps', big: true, tip: '体积 / 表面积 / 质心（内核精确积分，非网格近似）', run: (a) => void a.showMassProperties() },
-            { id: 'e.dist', label: '测量距离', icon: 'measure', big: true, tip: '选中两个面或两条边后测最小距离', run: (a) => a.measureDistance() },
+            { id: 'e.dist', label: '测量', icon: 'measure', big: true, tip: '按图形区所选实体实时测量距离/角度/长度/面积/半径（SW 评估→测量）', run: (a) => openMeasure(a) },
             { id: 'e.info', label: '模型统计', icon: 'info', tip: '特征数 / 面边体数 / 包围盒 / 重建耗时', run: (a) => D.modelInfo(a) },
           ],
         },

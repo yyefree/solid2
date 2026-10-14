@@ -12,6 +12,7 @@ import { el } from './dom';
 import { icon } from './icons';
 import type { App } from '../app/app';
 import { featureDialogs } from './dialogs';
+import { openMeasure } from './measure';
 import { openPopup, type PopupItem } from './popup';
 import { sc, hotkeyGroups } from '../app/hotkeys';
 import { notify, tableModal, modal } from './toast';
@@ -409,7 +410,7 @@ function toolsMenu(app: App): PopupItem[] {
     { label: '参数表…', icon: 'smartDim', run: () => D.parameterTable(app) },
     { label: '表达式…', icon: 'relation', disabled: !app.doc.features.length, run: () => D.featureExpression(app) },
     { sep: true },
-    { label: '测量…', icon: 'measure', run: () => app.measureDistance() },
+    { label: '测量…', icon: 'measure', run: () => openMeasure(app) },
     { label: '质量属性…', icon: 'massProps', disabled: !app.hasModel, run: () => void app.showMassProperties() },
     { label: '模型统计…', icon: 'info', run: () => D.modelInfo(app) },
     { label: '几何检查…', icon: 'check', run: () => D.geometryCheck(app) },

@@ -345,6 +345,70 @@ check('特征按钮在 PropertyManager 打开（非模态、有标题/字段/底
   `${pmFeature.head} | 字段 ${pmFeature.bodyFields} | 动作 ${pmFeature.footBtns.join('/')}`);
 check('特征 PropertyManager 底部动作可关闭', pmFeature.closed);
 
+// 「测量」对话框（SW 评估→测量）：PM 宿主常驻、实时随选择重算、支持多组合
+const measureDlg = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  // 确保有模型可测（同 pmFeature 段：验完删掉，不污染后续）
+  let addedId = null;
+  if (!app.doc.features.length) {
+    const { newId } = await import('/src/sketch/types.ts');
+    addedId = newId('f');
+    app.addFeature({
+      id: addedId, type: 'primitive', name: '长方体',
+      params: { kind: 'box', dims: [20, 20, 20], origin: [0, 0, 0], operation: 'new' },
+    });
+  }
+  for (let i = 0; i < 60 && !(app.currentModel()?.mesh.faceMetas.length); i++) await sleep(100);
+
+  const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.includes('评估'));
+  if (tab) tab.click();
+  await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '测量');
+  if (!btn) {
+    if (addedId) app.removeFeature(addedId);
+    return { opened: false, reason: '按钮缺失' };
+  }
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const pm = document.querySelector('.pm');
+  const title = pm?.querySelector('.pm-head .pm-title')?.textContent ?? '';
+  const maskCount = document.querySelectorAll('.modal-mask').length;
+
+  // 选两个面 → 最小距离 + 夹角（内核 BRepExtrema + 法向夹角，实时重算）
+  app.clearSelection();
+  app.selectFace(0);
+  app.selectFace(1, true);
+  let faceOk = false;
+  for (let i = 0; i < 80; i++) {
+    await sleep(100);
+    const t = document.querySelector('.pm')?.textContent ?? '';
+    if (/最小距离/.test(t) && /夹角/.test(t)) { faceOk = true; break; }
+  }
+
+  // 选单条边 → 长度
+  app.clearSelection();
+  app.selectEdge(0);
+  let edgeOk = false;
+  for (let i = 0; i < 40; i++) {
+    await sleep(80);
+    const t = document.querySelector('.pm')?.textContent ?? '';
+    if (/长度/.test(t)) { edgeOk = true; break; }
+  }
+
+  const historyCount = [...document.querySelectorAll('.pm .list-item')].length;
+  const closeBtn = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '关闭');
+  closeBtn?.click();
+  app.clearSelection();
+  if (addedId) app.removeFeature(addedId);
+  return { opened: !!pm, title, maskCount, faceOk, edgeOk, historyCount, closed: !document.querySelector('.pm') };
+})()`);
+check('「测量」在 PropertyManager 打开（无遮罩）', measureDlg.opened && measureDlg.maskCount === 0, measureDlg.title);
+check('选两个面 → 最小距离 + 夹角（实时重算）', measureDlg.faceOk);
+check('选单条边 → 长度', measureDlg.edgeOk);
+check('测量历史自动累积', measureDlg.historyCount >= 1, `${measureDlg.historyCount} 条`);
+check('测量对话框可关闭', measureDlg.closed);
+
 // 「曲线」页签也点一下，确认弹簧/涡状线在（上轮交付）
 const curve = await evaluate(`(() => {
   const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.includes('曲线'));

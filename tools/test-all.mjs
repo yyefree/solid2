@@ -15,6 +15,7 @@ const root = path.join(here, '..');
 const SUITES = [
   { name: '草图求解器', file: 'tools/sketch-test.ts' },
   { name: '表达式引擎/参数化', file: 'tools/expr-test.ts' },
+  { name: '测量几何', file: 'tools/measure-test.ts' },
   { name: 'AI 建模助手（解析/编译）', file: 'tools/ai-test.ts' },
   { name: '工程图/尺寸标注', file: 'tools/drawing-test.ts' },
   { name: '装配体配合', file: 'tools/assembly-test.ts' },

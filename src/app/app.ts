@@ -1599,24 +1599,6 @@ export class App {
     }
   }
 
-  measureDistance(): void {
-    const faces = this.selection.faces;
-    const edges = this.selection.edges;
-    if (faces.length === 2) {
-      kernel.measure(this.resolvedFeatures(), 'faceFace', faces[0], faces[1])
-        .then((r) => notify.info(`两面最小距离：${r.distance.toFixed(4)} mm`))
-        .catch((e) => notify.err(`测量失败：${(e as Error).message}`));
-      return;
-    }
-    if (edges.length === 2) {
-      kernel.measure(this.resolvedFeatures(), 'edgeEdge', edges[0], edges[1])
-        .then((r) => notify.info(`两边最小距离：${r.distance.toFixed(4)} mm`))
-        .catch((e) => notify.err(`测量失败：${(e as Error).message}`));
-      return;
-    }
-    notify.info('请先选中两个面或两条边');
-  }
-
   setView(dir: ViewDir): void {
     this.viewport.setView(dir);
     this.emit('view');

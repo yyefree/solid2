@@ -7,6 +7,7 @@
 import type { App } from '../app/app';
 import { openContextMenu, type PopupItem } from './popup';
 import { featureDialogs } from './dialogs';
+import { openMeasure } from './measure';
 import { notify, confirmDialog, promptText } from './toast';
 import { sc } from '../app/hotkeys';
 import { FEATURE_LABEL } from '../doc/types';
@@ -40,7 +41,7 @@ export function installContextMenu(app: App, host: HTMLElement): () => void {
           { icon: 'sketch', label: '在面上绘制草图', run: () => D.sketchOnFace(app) },
           { icon: 'fillet', label: '圆角', run: () => D.fillet(app) },
           { icon: 'chamfer', label: '倒角', run: () => D.chamfer(app) },
-          { icon: 'measure', label: '测量', run: () => app.measureDistance() },
+          { icon: 'measure', label: '测量', run: () => openMeasure(app) },
         ],
         faceItems(app, e.clientX, e.clientY),
         e.clientX,
@@ -53,7 +54,7 @@ export function installContextMenu(app: App, host: HTMLElement): () => void {
         [
           { icon: 'fillet', label: '圆角', run: () => D.fillet(app) },
           { icon: 'chamfer', label: '倒角', run: () => D.chamfer(app) },
-          { icon: 'measure', label: '测量', run: () => app.measureDistance() },
+          { icon: 'measure', label: '测量', run: () => openMeasure(app) },
           { icon: 'sketch', label: '在面上绘制草图', run: () => D.sketchOnFace(app) },
         ],
         edgeItems(app),
@@ -198,7 +199,7 @@ function faceItems(app: App, x: number, y: number): PopupItem[] {
     { label: '抽壳…', icon: 'shell', run: () => D.shell(app) },
     { label: '拔模…', icon: 'draft', run: () => D.draft(app) },
     { sep: true },
-    { label: '测量…', icon: 'measure', run: () => app.measureDistance() },
+    { label: '测量…', icon: 'measure', run: () => openMeasure(app) },
     { label: '质量属性…', icon: 'massProps', run: () => app.showMassProperties() },
     { sep: true },
     { label: '清除选择', icon: 'x', sc: 'Esc', run: () => app.clearSelection() },
@@ -216,7 +217,7 @@ function edgeItems(app: App): PopupItem[] {
     { label: '倒角…', icon: 'chamfer', run: () => D.chamfer(app) },
     { label: '筋…', icon: 'rib', run: () => D.rib(app) },
     { sep: true },
-    { label: '测量…', icon: 'measure', run: () => app.measureDistance() },
+    { label: '测量…', icon: 'measure', run: () => openMeasure(app) },
     { sep: true },
     { label: '清除选择', icon: 'x', sc: 'Esc', run: () => app.clearSelection() },
     { sep: true },

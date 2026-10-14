@@ -332,7 +332,14 @@ async function tab(label) {
 }
 
 async function closeModals() {
-  await evaluate(`(() => { document.querySelectorAll('.modal-mask').forEach(m => m.remove()); return 1; })()`);
+  await evaluate(`(() => {
+    document.querySelectorAll('.modal-mask').forEach(m => m.remove());
+    // PropertyManager（特征对话框）已不再是模态框：点底部「关闭」，没有则 Esc
+    const pmClose = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '关闭');
+    if (pmClose) pmClose.click();
+    else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    return 1;
+  })()`);
 }
 
 async function installOverlay() {
@@ -1287,18 +1294,23 @@ ${primLines}
   await act(`__D.app.setMode('model'); 1`, 500);
 
   // ---------- ⑮ 评估 ----------
-  await banner(18, '评估 · 质量属性 / 测量距离 / 模型统计 / 几何检查', '体积与表面积由 OCCT 精确积分');
+  await banner(18, '评估 · 质量属性 / 测量 / 模型统计 / 几何检查', '体积与表面积由 OCCT 精确积分；测量为 SW 式常驻对话框');
   await act(`__D.reset(); __D.box(40,30,20,[0,0,0]); 1`, 400);
   await act(`__D.rebuild()`, 1100);
   await act(`__D.app.showMassProperties(); 1`, 2000);
   await hold(600);
   await closeModals();
+  // 「测量」：评估页签 → 打开 PropertyManager 里的常驻对话框，选两个面实时出最小距离+夹角
   await act(`(() => {
-    const app = __D.app;
-    app.measureDistance();
+    const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.includes('评估'));
+    if (tab) tab.click();
+    const btn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '测量');
+    if (btn) btn.click();
     return 1;
   })()`, 900);
-  await hold(400);
+  await hold(500);
+  await act(`(() => { const app = __D.app; app.selectFace(0); app.selectFace(1, true); return 1; })()`, 1200);
+  await hold(500);
   await closeModals();
   await act(`(() => { __D.app.selectFace(0); return __D.app.selectedFaceInfos().length; })()`, 700)
     .then((n) => check('选择：拾取面并高亮', n === 1, `${n} 个面被选中`));

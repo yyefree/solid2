@@ -9,6 +9,7 @@ import { el, clear } from './dom';
 import { icon } from './icons';
 import type { App } from '../app/app';
 import { featureDialogs } from './dialogs';
+import { openMeasure } from './measure';
 import { notify } from './toast';
 
 interface BarCmd {
@@ -61,7 +62,7 @@ function commandsFor(app: App): BarCmd[] {
     { icon: 'sketch', label: '草图绘制', run: (a) => a.startSketch('front') },
     { icon: 'extrude', label: '拉伸凸台', run: (a) => D.extrude(a, 'add') },
     { icon: 'fillet', label: '圆角', run: (a) => D.fillet(a) },
-    { icon: 'measure', label: '测量', run: (a) => a.measureDistance() },
+    { icon: 'measure', label: '测量', run: (a) => openMeasure(a) },
     { icon: 'extrudeCut', label: '拉伸切除', run: (a) => D.extrude(a, 'cut') },
     { icon: 'hole', label: '异型孔向导', run: (a) => D.holeWizard(a) },
     { icon: 'mirror', label: '镜像', run: (a) => D.mirror(a) },
