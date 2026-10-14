@@ -19,6 +19,8 @@ export interface PopupItem {
   sep?: boolean;
   /** 右侧显示 ▸ 的子菜单 */
   submenu?: PopupItem[];
+  /** 左侧色块（CSS 颜色串，如 '#d9432f'）—— 用于外观色板 */
+  color?: string;
   run?: () => void;
   /** 自定义标题（title 属性） */
   tip?: string;
@@ -177,7 +179,11 @@ function renderInto(box: HTMLElement, items: PopupItem[], closeSelf: () => void)
         it.checked ? '✓' : it.radio && it.checked ? '●' : ''
       )
     );
-    btn.appendChild(el('span', { class: 'dd-icon', html: it.icon ? icon(it.icon, 16) : '' }));
+    if (it.color) {
+      btn.appendChild(el('span', { class: 'dd-swatch', style: `background:${it.color}` }));
+    } else {
+      btn.appendChild(el('span', { class: 'dd-icon', html: it.icon ? icon(it.icon, 16) : '' }));
+    }
     btn.appendChild(el('span', { class: 'dd-label', text: it.label ?? '' }));
     if (it.sc) btn.appendChild(el('span', { class: 'sc', text: it.sc }));
     if (hasSub) btn.appendChild(el('span', { class: 'dd-arrow', text: '▸' }));

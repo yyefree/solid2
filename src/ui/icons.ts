@@ -200,6 +200,9 @@ export const ICONS: Record<string, string> = {
   section: S(`<path d="M8 1.6 14 4.8v6.4L8 14.4 2 11.2V4.8z"/><path d="M8 1.6v6.4M8 8l6-3.2M8 8 2 4.8" opacity=".5"/><path d="M2 8.8 8 12l6-3.2" stroke-dasharray="1.8 1.4"/>`),
   transparency: S(`<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="3.2" stroke-dasharray="1.8 1.4"/>`),
   realview: S(`<circle cx="8" cy="8" r="6"/><path d="M5 6.2a3 3 0 0 1 5.6-.8" /><circle cx="6.5" cy="9.5" r="1.2" fill="currentColor" stroke="none" opacity=".4"/>`),
+  rotateView: S(`<path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.8"/><path d="M13.6 2v3.4h-3.4"/>`),
+  appearance: S(`<path d="M8 2.2s4.1 4.6 4.1 7.3a4.1 4.1 0 0 1-8.2 0C3.9 6.8 8 2.2 8 2.2z"/><circle cx="6.3" cy="9.2" r="1.1" fill="#ffffff" stroke="none" opacity=".6"/>`),
+  lighting: S(`<path d="M8 1.8a4.6 4.6 0 0 0-2.7 8.3c.5.4.8 1 .8 1.6v.3h3.8v-.3c0-.6.3-1.2.8-1.6A4.6 4.6 0 0 0 8 1.8z"/><path d="M6.3 14h3.4M7.1 15.4h1.8"/>`),
 
   // ============ 其他 ============
   folder: S(`<path d="M1.5 12.5v-9h4l1.4 1.8h7.6v7.2z"/>`),

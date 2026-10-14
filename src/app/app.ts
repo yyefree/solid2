@@ -40,6 +40,8 @@ export interface Selection {
   faces: number[];
   /** 边索引（对应 model.edgeMetas） */
   edges: number[];
+  /** 顶点索引（对应网格顶点缓冲区下标；仅选择过滤器为「顶点」时使用） */
+  vertices: number[];
 }
 
 export type AppEvent =
@@ -69,9 +71,13 @@ export class App {
   doc = new CadDocument();
   shapeView: ShapeView | null = null;
   mode: AppMode = 'model';
-  selection: Selection = { faces: [], edges: [] };
+  selection: Selection = { faces: [], edges: [], vertices: [] };
   /** 选择过滤器（SolidWorks 状态栏 / 快捷键 F5）—— 'all' 不过滤（默认，行为不变） */
-  selectionFilter: 'all' | 'face' | 'edge' = 'all';
+  selectionFilter: 'all' | 'face' | 'edge' | 'vertex' = 'all';
+  /** 零件外观色（十六进制，Heads-up「外观」下拉设置；默认 materials.ts 的 COLORS.body） */
+  appearanceHex: number = COLORS.body;
+  /** 当前光源预设名（Heads-up「光源」下拉） */
+  lightPreset: string = '默认';
   /** 设计树中当前选中的特征 id（供属性管理器显示）—— SolidWorks「属性管理器」接管选中的特征 */
   selectedFeatureId: string | null = null;
 
@@ -190,9 +196,23 @@ export class App {
   }
 
   /** 设置选择过滤器（SolidWorks 状态栏 Filter） */
-  setSelectionFilter(f: 'all' | 'face' | 'edge'): void {
+  setSelectionFilter(f: 'all' | 'face' | 'edge' | 'vertex'): void {
     this.selectionFilter = f;
     this.emit('selection', 'props');
+  }
+
+  /** 设置零件外观色（Heads-up「外观」）；已显示的形状立即换色 */
+  setAppearance(hex: number): void {
+    this.appearanceHex = hex;
+    this.shapeView?.setBodyColor(hex);
+    this.emit('view');
+  }
+
+  /** 设置视口光源预设（Heads-up「光源」） */
+  setLightPreset(name: string): void {
+    this.lightPreset = name;
+    this.viewport.setLightPreset(name);
+    this.emit('view');
   }
 
   /** 第一个有错误的特征 id（供状态栏「What's Wrong」定位），无则 null */
@@ -417,12 +437,12 @@ export class App {
     }
     const m = this.currentModel();
     if (m) {
-      const sv = new ShapeView(m.mesh, { style: this.displayStyle });
+      const sv = new ShapeView(m.mesh, { style: this.displayStyle, bodyColor: this.appearanceHex });
       sv.setGhost(!!this.editingSketch);
       this.viewport.root.add(sv.group);
       this.shapeView = sv;
     }
-    this.selection = { faces: [], edges: [] };
+    this.selection = { faces: [], edges: [], vertices: [] };
     this.refreshHighlight();
     if (fit) {
       this.viewport.zoomFit(m?.bbox ?? null);
@@ -443,13 +463,13 @@ export class App {
   // 选择
   // ============================================================
   clearSelection(): void {
-    this.selection = { faces: [], edges: [] };
+    this.selection = { faces: [], edges: [], vertices: [] };
     this.refreshHighlight();
     this.emit('selection', 'props');
   }
 
   selectFace(index: number, additive = false): void {
-    if (this.selectionFilter === 'edge') return;
+    if (this.selectionFilter === 'edge' || this.selectionFilter === 'vertex') return;
     if (!additive) this.selection.edges = [];
     if (additive) {
       const i = this.selection.faces.indexOf(index);
@@ -463,7 +483,7 @@ export class App {
   }
 
   selectEdge(index: number, additive = false): void {
-    if (this.selectionFilter === 'face') return;
+    if (this.selectionFilter === 'face' || this.selectionFilter === 'vertex') return;
     if (!additive) this.selection.faces = [];
     if (additive) {
       const i = this.selection.edges.indexOf(index);
@@ -474,6 +494,56 @@ export class App {
     }
     this.refreshHighlight();
     this.emit('selection', 'props');
+  }
+
+  /** 选中一个网格顶点（选择过滤器为「顶点」时专用） */
+  selectVertex(index: number, additive = false): void {
+    if (this.selectionFilter !== 'vertex' && this.selectionFilter !== 'all') return;
+    if (!additive) {
+      this.selection.faces = [];
+      this.selection.edges = [];
+    }
+    if (additive) {
+      const i = this.selection.vertices.indexOf(index);
+      if (i >= 0) this.selection.vertices.splice(i, 1);
+      else this.selection.vertices.push(index);
+    } else {
+      this.selection.vertices = [index];
+    }
+    this.refreshHighlight();
+    this.emit('selection', 'props');
+  }
+
+  /**
+   * 顶点拾取：屏幕空间就近原则。
+   * 把网格每个顶点投影到 NDC 再换算成像素，取与点击位置距离最近且在 8px 内的顶点。
+   * 顶点数一般数千，全遍历在点击这种低频事件上可接受。
+   */
+  pickVertex(x: number, y: number): number | null {
+    const sv = this.shapeView;
+    if (!sv) return null;
+    const pos = sv.mesh.geometry.getAttribute('position');
+    if (!pos) return null;
+    const rect = this.viewport.renderer.domElement.getBoundingClientRect();
+    const cam = this.viewport.camera;
+    cam.updateMatrixWorld();
+    const v = new THREE.Vector3();
+    let best = -1;
+    let bestD = 8 * 8;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos as THREE.BufferAttribute, i).project(cam);
+      if (v.z < -1 || v.z > 1) continue;
+      const sx = ((v.x + 1) / 2) * rect.width;
+      const sy = ((1 - v.y) / 2) * rect.height;
+      const dx = sx - x;
+      const dy = sy - y;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best >= 0 ? best : null;
   }
 
   refreshHighlight(): void {
@@ -505,6 +575,23 @@ export class App {
     for (const ei of this.selection.edges) {
       const geo = sv.edgeGeometry(ei);
       if (geo) this.highlightGroup.add(new THREE.LineSegments(geo, edgeMat));
+    }
+
+    // 顶点高亮：只为选中顶点构造点集（像素尺寸，不随缩放放大）
+    if (this.selection.vertices.length) {
+      const attr = sv.mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const arr = new Float32Array(this.selection.vertices.length * 3);
+      this.selection.vertices.forEach((vi, k) => {
+        const i = Math.min(Math.max(vi, 0), attr.count - 1);
+        arr[k * 3] = attr.getX(i);
+        arr[k * 3 + 1] = attr.getY(i);
+        arr[k * 3 + 2] = attr.getZ(i);
+      });
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+      this.highlightGroup.add(
+        new THREE.Points(geo, new THREE.PointsMaterial({ color: COLORS.selectEdge, size: 8, sizeAttenuation: false }))
+      );
     }
     this.viewport.invalidate();
   }
@@ -575,6 +662,18 @@ export class App {
     const sv = this.shapeView;
     if (!sv) {
       this.clearSelection();
+      return;
+    }
+
+    // 过滤为「顶点」时只拾取顶点（就近原则，8px 内）
+    if (this.selectionFilter === 'vertex') {
+      const vi = this.pickVertex(x, y);
+      if (vi !== null) {
+        this.selectVertex(vi, additive);
+        this.setStatus('已选择顶点', 'ok');
+      } else {
+        this.clearSelection();
+      }
       return;
     }
 
@@ -1213,7 +1312,7 @@ export class App {
       const r = await kernel.importStep(buf);
       this.importedModel = { mesh: r.mesh, bbox: r.bbox, stats: r.stats, errors: [], rebuildMs: 0 };
       this.model = null;
-      const sv = new ShapeView(r.mesh, { style: this.displayStyle });
+      const sv = new ShapeView(r.mesh, { style: this.displayStyle, bodyColor: this.appearanceHex });
       if (this.shapeView) {
         this.shapeView.group.removeFromParent();
         this.shapeView.dispose();
@@ -1577,6 +1676,7 @@ export class App {
     this.selection = {
       faces: m.mesh.faceMetas.map((_, i) => i),
       edges: [],
+      vertices: [],
     };
     this.refreshHighlight();
     this.emit('selection', 'props');

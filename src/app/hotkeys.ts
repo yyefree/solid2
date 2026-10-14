@@ -14,7 +14,7 @@
 import type { App } from './app';
 import { notify } from '../ui/toast';
 import { openShortcutBar } from '../ui/shortcutbar';
-import { openViewOrientation } from '../ui/headsup';
+import { openViewOrientation, setRotateMode } from '../ui/headsup';
 import { toggleMagnifier } from '../ui/magnifier';
 import { featureDialogs } from '../ui/dialogs';
 
@@ -74,6 +74,7 @@ export const HOTKEYS: HotkeyDef[] = [
   { id: 'view.orientation', label: '视图定向', keys: 'Space', group: '视图', run: (a) => openViewOrientation(a) },
   { id: 'view.shortcutBar', label: '快捷方式栏', keys: 'S', group: '视图', run: (a) => openShortcutBar(a) },
   { id: 'view.prevView', label: '上一视图', keys: 'Ctrl+Shift+V', group: '视图', run: (a) => a.prevView() },
+  { id: 'view.rotate', label: '旋转视图', keys: '—', group: '视图', run: (a) => setRotateMode(a, true) },
 
   { id: 'view.front', label: '前视', keys: 'Ctrl+1', group: '视图方向', run: (a) => a.setView('front') },
   { id: 'view.back', label: '后视', keys: 'Ctrl+2', group: '视图方向', run: (a) => a.setView('back') },

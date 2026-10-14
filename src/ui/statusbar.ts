@@ -15,6 +15,7 @@ const FILTER_LABEL: Record<App['selectionFilter'], string> = {
   all: '全部',
   face: '仅面',
   edge: '仅边',
+  vertex: '顶点',
 };
 
 export function buildStatusbar(app: App, host: HTMLElement): void {
@@ -52,7 +53,12 @@ export function buildStatusbar(app: App, host: HTMLElement): void {
       },
     });
     openPopup(
-      [mk('all', '不过滤（默认）'), mk('face', '只能拾取面'), mk('edge', '只能拾取边')],
+      [
+        mk('all', '不过滤（默认）'),
+        mk('face', '只能拾取面'),
+        mk('edge', '只能拾取边'),
+        mk('vertex', '只能拾取顶点（就近 8px）'),
+      ],
       r.left,
       Math.max(4, r.top - 130),
       { minWidth: 130 }
@@ -107,7 +113,7 @@ export function buildStatusbar(app: App, host: HTMLElement): void {
     cam.getWorldDirection(camDir);
     plane.setFromNormalAndCoplanarPoint(camDir, app.viewport.controls.target);
     if (ray.ray.intersectPlane(plane, hit)) {
-      coord.textContent = `X${fmt(hit.x)}   Y${fmt(hit.y)}   Z${fmt(hit.z)}`;
+      coord.textContent = `Cursor: X${fmt(hit.x)}   Y${fmt(hit.y)}   Z${fmt(hit.z)}`;
     }
   };
   canvas.addEventListener('pointermove', onMove);

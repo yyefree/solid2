@@ -229,6 +229,7 @@ const sw = await evaluate(`(() => {
   const menuItems = [...document.querySelectorAll('.menubar .menu-item')].map(m => m.textContent.replace(/\\s+/g, ''));
   const search = !!document.querySelector('.menu-search-input');
   const headsUpBtns = document.querySelectorAll('.headsup .hu-btn').length;
+  const headsUpCmds = [...document.querySelectorAll('.headsup .hu-btn')].map(b => b.dataset.cmd);
   const viewcube = !!document.querySelector('.viewcube svg');
   const triad = !!document.querySelector('.axis-triad svg');
   const conf = !!document.querySelector('.conf-host .conf-corner');
@@ -236,14 +237,19 @@ const sw = await evaluate(`(() => {
   const coord = !!document.querySelector('.sb-coord');
   const unit = (document.querySelector('.sb-unit')?.textContent ?? '').trim();
   const tabs = [...document.querySelectorAll('.rtab')].map(t => t.textContent.trim());
-  return { menuItems, search, headsUpBtns, viewcube, triad, conf, statusRight, coord, unit, tabs };
+  return { menuItems, search, headsUpBtns, headsUpCmds, viewcube, triad, conf, statusRight, coord, unit, tabs };
 })()`);
 const wantMenus = ['文件', '编辑', '视图', '插入', '工具', '窗口', '帮助'];
 check('菜单栏含 SolidWorks 七菜单', wantMenus.every((w) => sw.menuItems.some((m) => m.startsWith(w))), sw.menuItems.join(' '));
 check('菜单栏含命令搜索框', sw.search);
 const wantTabs = ['特征', '草图', '评估', '装配体', '工程图', '曲线', '视图', 'AI'];
 check('Ribbon 含 8 个 CommandManager 页签', wantTabs.every((w) => sw.tabs.includes(w)), sw.tabs.join(' '));
-check('Heads-up 视图工具栏已渲染（12 按钮）', sw.headsUpBtns === 12, '按钮数 ' + sw.headsUpBtns);
+check('Heads-up 视图工具栏已渲染（15 按钮）', sw.headsUpBtns === 15, '按钮数 ' + sw.headsUpBtns);
+check(
+  'Heads-up 含 旋转视图 / 编辑外观 / 光源 三个新入口',
+  ['view.rotate', 'view.appearance', 'view.lighting'].every((c) => sw.headsUpCmds.includes(c)),
+  sw.headsUpCmds.join(',')
+);
 check('视图立方（ViewCube）已渲染', sw.viewcube);
 check('参考三重轴（Triad）已渲染', sw.triad);
 check('确认角（✓/✗）已挂载', sw.conf);

@@ -2,32 +2,51 @@
  * SolidWorks Heads-up 视图工具栏（图形区顶部居中）。
  *
  * 从左到右与 SolidWorks 一致：
- *   整屏显示 · 缩放至区域 · 上一视图 · 剖面视图 · 视图定向 · 显示样式 ·
- *   隐藏/显示项目 · 应用布景 · 视图设置 · 显示模式
+ *   视图定向 · 显示样式 · 隐藏/显示项目 · 应用布景 · 剖面视图 · 整屏显示 ·
+ *   缩放至区域 · 放大 · 缩小 · 上一视图 · 旋转视图 · 编辑外观 · 光源 ·
+ *   视图设置 · 显示模式
  */
 import { el } from './dom';
 import { icon } from './icons';
+import * as THREE from 'three';
 import type { App } from '../app/app';
 import { openPopup, type PopupItem } from './popup';
 import { notify, modal } from './toast';
 import { featureDialogs } from './dialogs';
 import { sc } from '../app/hotkeys';
+import { LIGHT_PRESET_NAMES, type LightPresetName } from '../view/viewport';
+
+/** 外观色板（Heads-up「编辑外观」）—— 常用工业配色 */
+const APPEARANCE_COLORS: { label: string; hex: number }[] = [
+  { label: '默认灰', hex: 0xc8d0d8 },
+  { label: '红色', hex: 0xd9432f },
+  { label: '蓝色', hex: 0x2b7de9 },
+  { label: '绿色', hex: 0x3f9d4e },
+  { label: '黄色', hex: 0xe8b93a },
+  { label: '橙色', hex: 0xe07b2a },
+  { label: '紫色', hex: 0x8a5cf6 },
+  { label: '白色', hex: 0xf2f4f6 },
+  { label: '黑色', hex: 0x2b3542 },
+];
 
 export function buildHeadsUp(app: App, host: HTMLElement): void {
   const bar = el('div', { class: 'headsup' });
 
-  const btn = (id: string, label: string, ic: string, onClick: (e: MouseEvent) => void, extra = '') =>
-    el(
+  const btn = (id: string, label: string, ic: string, onClick: (e: MouseEvent) => void, extra = '') => {
+    const shortcut = sc(id);
+    const tip = shortcut && shortcut !== '—' ? `${label} (${shortcut})` : label;
+    return el(
       'button',
       {
         class: `hu-btn ${extra}`.trim(),
         type: 'button',
-        title: `${label}${sc(id) ? ` (${sc(id)})` : ''}`,
+        title: tip,
         dataset: { cmd: id },
         onClick: (e: MouseEvent) => onClick(e),
       },
       el('span', { class: 'ic', html: icon(ic, 18) })
     );
+  };
 
   const dropdown = (id: string, label: string, ic: string, items: () => PopupItem[]) =>
     btn(id, label, ic, (e) => {
@@ -77,6 +96,33 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
   const huZoomIn = btn('view.zoomIn', '放大', 'zoomIn', () => app.viewport.zoomBy(0.8));
   const huZoomOut = btn('view.zoomOut', '缩小', 'zoomOut', () => app.viewport.zoomBy(1.25));
   const huPrev = btn('view.prevView', '上一视图', 'prevView', () => app.prevView());
+  // 旋转视图：切换式临时模式（左键拖动即旋转；Esc 或再次点击退出）
+  let rotateActive = false;
+  const huRotate = btn('view.rotate', '旋转视图', 'rotateView', () => {
+    rotateActive = !rotateActive;
+    setRotateMode(app, rotateActive);
+    huRotate.classList.toggle('on', rotateActive);
+  });
+  const huAppearance = dropdown('view.appearance', '编辑外观', 'appearance', () =>
+    APPEARANCE_COLORS.map((c) => ({
+      label: c.label,
+      icon: 'appearance',
+      color: `#${c.hex.toString(16).padStart(6, '0')}`,
+      checked: app.appearanceHex === c.hex,
+      run: () => {
+        app.setAppearance(c.hex);
+        notify.ok(`外观已改为${c.label}`);
+      },
+    }))
+  );
+  const huLighting = dropdown('view.lighting', '光源', 'lighting', () =>
+    LIGHT_PRESET_NAMES.map((n) => ({
+      label: n,
+      icon: 'lighting',
+      checked: app.lightPreset === n,
+      run: () => app.setLightPreset(n),
+    }))
+  );
   const huSet = btn('view.settings', '视图设置', 'viewSettings', () => openViewSettings(app));
   const huProj = dropdown('view.projection', '显示模式', 'perspective', () => [
     {
@@ -92,7 +138,23 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
       run: () => app.setProjection('orthographic'),
     },
   ]);
-  bar.append(huOrient, huStyle, huHide, huScene, huSection, huFit, huZoom, huZoomIn, huZoomOut, huPrev, huSet, huProj);
+  bar.append(
+    huOrient,
+    huStyle,
+    huHide,
+    huScene,
+    huSection,
+    huFit,
+    huZoom,
+    huZoomIn,
+    huZoomOut,
+    huPrev,
+    huRotate,
+    huAppearance,
+    huLighting,
+    huSet,
+    huProj
+  );
 
   host.appendChild(bar);
 
@@ -102,9 +164,15 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
       const id = (b as HTMLElement).dataset.cmd ?? '';
       b.classList.toggle('on', id === 'view.section' && app.sectionAxis !== 'none');
     });
+    huRotate.classList.toggle('on', rotateActive);
   };
   refresh();
   app.on('view', refresh);
+  installRotateModeEsc(app, () => rotateActive, () => {
+    rotateActive = false;
+    setRotateMode(app, false);
+    huRotate.classList.remove('on');
+  });
 }
 
 /** 视图定向（SolidWorks: 空格键）—— 命名视图 + 缩放比例 */
@@ -307,4 +375,43 @@ export function referenceItems(app: App): PopupItem[] {
     { label: '基准轴', icon: 'axis', disabled: true },
     { label: '坐标系', icon: 'coordSystem', disabled: true },
   ];
+}
+
+// ============================================================
+// 旋转视图（临时模式）
+// ============================================================
+
+/**
+ * 切换「旋转视图」模式（SolidWorks 同名工具）。
+ * 与中键旋转同一套 OrbitControls，区别是：左键在模式内也能旋转，Esc 退出。
+ */
+export function setRotateMode(app: App, on: boolean): void {
+  const canvas = app.viewport.renderer.domElement;
+  const wrap = canvas.parentElement;
+  if (!wrap) return;
+  const mb = app.viewport.controls.mouseButtons as unknown as { LEFT: THREE.MOUSE | null };
+  wrap.classList.toggle('view-rotating', on);
+  mb.LEFT = on ? THREE.MOUSE.ROTATE : null;
+  if (on) {
+    app.clearSelection();
+    app.setStatus('旋转视图：拖动左键旋转视角，Esc 退出', 'busy');
+  } else {
+    app.setStatus('就绪', 'ok');
+  }
+  app.viewport.invalidate();
+}
+
+/** 旋转视图模式下的 Esc 退出（在 buildHeadsUp 尾部调用） */
+export function installRotateModeEsc(app: App, onActive: () => boolean, off: () => void): void {
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key === 'Escape' && onActive()) {
+        e.preventDefault();
+        e.stopPropagation();
+        off();
+      }
+    },
+    true
+  );
 }

@@ -19,6 +19,36 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 export type ViewDir = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom' | 'iso' | 'isoBack';
 export type ProjectionMode = 'perspective' | 'orthographic';
 export type SceneName = '默认' | '单色灰' | '深色' | '白色';
+export type LightPresetName = '默认' | '明亮' | '柔和' | '顶光' | '背光';
+
+/** 光源预设名列表（Heads-up「光源」下拉按此渲染） */
+export const LIGHT_PRESET_NAMES: LightPresetName[] = ['默认', '明亮', '柔和', '顶光', '背光'];
+
+/** 每项 = [强度, 位置] */
+type LightSpec = [number, [number, number, number]];
+
+interface LightPreset {
+  hemi: number;
+  key: LightSpec;
+  fill: LightSpec;
+  rim: LightSpec;
+}
+
+/** 构造预设并锁住元组类型（否则数组字面量会被推断成 (number|number[])[]） */
+const lp = (hemi: number, key: LightSpec, fill: LightSpec, rim: LightSpec): LightPreset => ({
+  hemi,
+  key,
+  fill,
+  rim,
+});
+
+const LIGHT_PRESETS: Record<LightPresetName, LightPreset> = {
+  默认: lp(1.15, [2.1, [180, -220, 320]], [0.85, [-260, 140, 160]], [0.7, [60, 320, -240]]),
+  明亮: lp(1.6, [2.8, [180, -220, 320]], [1.2, [-260, 140, 160]], [0.95, [60, 320, -240]]),
+  柔和: lp(1.05, [1.2, [180, -220, 320]], [0.7, [-260, 140, 160]], [0.35, [60, 320, -240]]),
+  顶光: lp(0.9, [2.4, [0, 0, 420]], [0.55, [-200, -160, 120]], [0.45, [0, 260, -180]]),
+  背光: lp(1.0, [1.2, [160, -200, 260]], [0.6, [-240, 120, 140]], [1.7, [-40, 240, -320]]),
+};
 
 interface ViewSnapshot {
   position: THREE.Vector3;
@@ -156,23 +186,44 @@ export class Viewport {
   }
 
   // ---------------- 光照 ----------------
+  private hemiLight!: THREE.HemisphereLight;
+  private keyLight!: THREE.DirectionalLight;
+  private fillLight!: THREE.DirectionalLight;
+  private rimLight!: THREE.DirectionalLight;
+
   private setupLights(): void {
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x8a93a0, 1.15);
-    this.scene.add(hemi);
+    this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x8a93a0, 1.15);
+    this.scene.add(this.hemiLight);
 
-    const key = new THREE.DirectionalLight(0xffffff, 2.1);
-    key.position.set(180, -220, 320);
-    this.scene.add(key);
+    this.keyLight = new THREE.DirectionalLight(0xffffff, 2.1);
+    this.keyLight.position.set(180, -220, 320);
+    this.scene.add(this.keyLight);
 
-    const fill = new THREE.DirectionalLight(0xdfe9f7, 0.85);
-    fill.position.set(-260, 140, 160);
-    this.scene.add(fill);
+    this.fillLight = new THREE.DirectionalLight(0xdfe9f7, 0.85);
+    this.fillLight.position.set(-260, 140, 160);
+    this.scene.add(this.fillLight);
 
-    const rim = new THREE.DirectionalLight(0xffffff, 0.7);
-    rim.position.set(60, 320, -240);
-    this.scene.add(rim);
+    this.rimLight = new THREE.DirectionalLight(0xffffff, 0.7);
+    this.rimLight.position.set(60, 320, -240);
+    this.scene.add(this.rimLight);
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+  }
+
+  /**
+   * 光源预设（Heads-up「光源」下拉）。
+   * 每项 = [半球光强, 主光(强度, 位置), 补光(强度, 位置), 轮廓光(强度, 位置)]。
+   */
+  setLightPreset(name: string): void {
+    const p: LightPreset = LIGHT_PRESETS[name as LightPresetName] ?? LIGHT_PRESETS['默认'];
+    this.hemiLight.intensity = p.hemi;
+    this.keyLight.intensity = p.key[0];
+    this.keyLight.position.set(...p.key[1]);
+    this.fillLight.intensity = p.fill[0];
+    this.fillLight.position.set(...p.fill[1]);
+    this.rimLight.intensity = p.rim[0];
+    this.rimLight.position.set(...p.rim[1]);
+    this.invalidate();
   }
 
   // ---------------- 网格 ----------------

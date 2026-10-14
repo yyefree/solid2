@@ -1573,6 +1573,14 @@ select.inp {
   flex: 0 0 16px;
   color: var(--text-dim);
 }
+.dd-swatch {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  box-sizing: border-box;
+}
 .dd-label {
   flex: 1;
 }
@@ -2059,5 +2067,11 @@ select.inp {
 }
 .viewport-wrap.zooming {
   cursor: crosshair;
+}
+.viewport-wrap.view-rotating {
+  cursor: grab;
+}
+.viewport-wrap.view-rotating:active {
+  cursor: grabbing;
 }
 
