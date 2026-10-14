@@ -342,6 +342,8 @@ function insertMenu(app: App): PopupItem[] {
         { label: '拉伸曲面…', icon: 'surface', run: () => surfaceDialogs.extrude(app) },
         { label: '旋转曲面…', icon: 'surface', run: () => surfaceDialogs.revolve(app) },
         { label: '平面区域…', icon: 'surface', run: () => surfaceDialogs.planar(app) },
+        { label: '放样曲面…', icon: 'loft', run: () => surfaceDialogs.loft(app) },
+        { label: '扫描曲面…', icon: 'sweep', run: () => surfaceDialogs.sweep(app) },
       ],
     },
     {

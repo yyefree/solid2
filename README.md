@@ -107,7 +107,7 @@
     云端大模型后端只需实现同一接口、吐出同样的 `AiOp[]`，**编译层与 UI 一行都不用改**。
     该分支的云服务环境（WorkBuddy Cloud Service 免密钥 LLM）在开通时会返回
     `云服务资源紧张，请稍后再试`，因此本版本先落地离线规则解析版，云端 provider 待环境就绪后接入。
-- **真 B-rep 内核**：精确布尔、圆角/倒角、抽壳、放样、扫描、旋转、阵列、镜像、异型孔向导、参考基准面、**拔模、筋、弹簧、涡状线、曲面特征（拉伸曲面/旋转曲面/平面区域）**。
+- **真 B-rep 内核**：精确布尔、圆角/倒角、抽壳、放样、扫描、旋转、阵列、镜像、异型孔向导、参考基准面、**拔模、筋、弹簧、涡状线、曲面特征（拉伸曲面/旋转曲面/平面区域/放样曲面/扫描曲面）**。
 - **曲线族特征（弹簧 / 涡状线）**：螺旋弹簧由「圆截面沿螺旋线逐站放样」生成（`src/sketch/curve.ts` 纯数学计算螺旋点列 +
   平行移动标架，主线程对话框可直接复用），实测体积与解析式 `πr²·√((2πR)²+pitch²)·n` 吻合到 0.1%；
   支持左/右旋、锥度、任意轴向、布尔加减。涡状线（涡卷弹簧 / 发条）用阿基米德螺线加厚成闭合带材再沿法向拉伸。
@@ -380,6 +380,9 @@ npm run demo:video     # 自动巡演 + 录制，输出 videos/solid2-all-featur
 npm run demo:list                 # 列出全部脚本
 node tools/all-features-demo.mjs --script flange   # 指定脚本
 node tools/all-features-demo.mjs --probe           # 只跑各脚本的专属场景并断言（约 35s，不录视频）
+node tools/all-features-demo.mjs --speed 3         # 巡演加速 3×（缩短每步停留，视频更紧凑）
+node tools/all-features-demo.mjs --music off       # 不合成背景音乐（默认自动合成）
+node tools/all-features-demo.mjs --music my.wav    # 用指定 WAV 作为背景音乐
 ```
 
 内置 4 个脚本，各自描述「这次演什么」——AI 提示词（建模 / 编辑 / 变换 / **多实体**各一句）、
@@ -397,20 +400,25 @@ node tools/all-features-demo.mjs --probe           # 只跑各脚本的专属场
 已录好的成品：`videos/solid2-tour-<id>.mp4`（四个脚本各一份，各约 3.5 分钟 / 9 MB），
 `videos/solid2-all-features.mp4` 是最近一次运行（默认轮换）的输出。
 
-**21 个固定步骤**覆盖：界面总览 → AI 建模助手（自然语言建模 + 编辑 + 变换/曲线 + 多实体编辑）→
+**22 个固定步骤**覆盖：界面总览 → AI 建模助手（自然语言建模 + 编辑 + 变换/曲线 + 多实体编辑）→
 草图实体族（真实鼠标点击绘制矩形/圆/椭圆/槽口/圆弧/点/多边形 + 镜像）→
 草图曲线族（抛物线 / 双曲线 / B 样条 + 闭合 B 样条拉伸成体）→ 约束草图 →
 拉伸/切除 → 工程特征（圆角/倒角/变半径圆角/抽壳/拔模/筋/异型孔）→ 五种基本体 → 旋转/放样/扫描 →
 阵列（线性/圆周/镜像）→ 实体编辑族（缩放/分割/移动复制/组合/删除/新建实体）→ 参数化（表达式/参数表）→
 曲线（弹簧/涡状线）→ 基准面 → 装配体（插入/配合/干涉检查/爆炸）→
 工程图（三视图/自动标注/孔位/明细表/PNG 导出）→ 评估（质量属性/测量/统计）→
+**曲面（拉伸曲面/放样曲面/扫描曲面，均为不参与实体布尔的壳）** →
 视图（显示样式/方向/基准面/网格）→ 文件导出（STEP/STL/OBJ）→ 撤销/重做/重建。
 随后是脚本的专属场景，最后收尾环绕与汇总。
 
 每个功能组结束时切换到**等轴测视角并自动取景**（`isoView()`），画面更生动。录制流程：逐帧
 `Page.captureScreenshot(jpeg)` 存帧并记录真实时间戳，编码时用 **ffmpeg concat demuxer** 写入每帧实际
-`duration` 保持节奏，再统一为 CFR 30fps H.264。环境变量：`DEMO_W`/`DEMO_H`（默认 1600×900）、
-`DEMO_KEEP_FRAMES=1`（保留抽帧）、`FFMPEG`（自定义 ffmpeg 路径，默认用 `imageio-ffmpeg` 内置的 7.1）。
+`duration` 保持节奏，再统一为 CFR 30fps H.264。**编码后自动混入背景音乐**——`tools/tour/gen_music.py`
+用 numpy 合成一段温暖舒缓的 C 大调氛围乐（Pad + 马林巴琶音 + 贝斯 + 钟琴 + 空间延迟），长度取
+「视频时长 + 2s」，ffmpeg `-c:v copy -c:a aac -shortest` 只重编音频、不损失画质。
+环境变量：`DEMO_W`/`DEMO_H`（默认 1600×900）、`DEMO_SPEED`（速度倍率，同 `--speed`）、
+`DEMO_MUSIC`（`auto`/`off`/`<wav>`，同 `--music`）、`DEMO_KEEP_FRAMES=1`（保留抽帧）、
+`FFMPEG`（自定义 ffmpeg 路径，默认用 `imageio-ffmpeg` 内置的 7.1）、`PYTHON`（合成音乐用，默认探测项目 venv）。
 
 > 写专属场景时的几何约定：`__D.box/prim` 的 `origin` 是**角点**（不是中心），圆柱/圆锥/圆环底面在
 > `origin` 沿 +Z 生长，只有球是中心落位；`__D.cirPattern(...)` **必须**传 `seedFeatureId`（见下文已知限制）。

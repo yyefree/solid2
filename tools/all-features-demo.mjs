@@ -20,14 +20,20 @@
  *   node tools/all-features-demo.mjs --url http://127.0.0.1:5173/
  *   node tools/all-features-demo.mjs --out videos/solid2-all-features.mp4
  *   node tools/all-features-demo.mjs --no-serve      # 复用已启动的 dev server
+ *   node tools/all-features-demo.mjs --speed 3       # 巡演加速 3×（缩短每步停留）
+ *   node tools/all-features-demo.mjs --music off     # 不合成背景音乐
+ *   node tools/all-features-demo.mjs --music path.wav
  *
  * 环境变量：
  *   FFMPEG            指定 ffmpeg 可执行文件（默认自动探测 imageio-ffmpeg / PATH）
+ *   PYTHON            指定 python 可执行文件（用于合成背景音乐，默认自动探测）
  *   DEMO_W / DEMO_H   录制分辨率（默认 1600×900）
+ *   DEMO_SPEED        巡演速度倍率（等价于 --speed，默认 1）
+ *   DEMO_MUSIC        背景音乐：auto（默认，自动合成）/ off / <wav 路径>
  *   DEMO_KEEP_FRAMES  保留临时帧目录（调试）
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync, renameSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,6 +57,13 @@ const W = Number(process.env.DEMO_W ?? 1600);
 const H = Number(process.env.DEMO_H ?? 900);
 const PORT = Number(process.env.DEMO_CDP_PORT ?? 9344);
 const KEEP_FRAMES = process.env.DEMO_KEEP_FRAMES === '1';
+/** 巡演速度倍率：>1 缩短每步停留时间（视频更紧凑）。上限 8×，单步停留不低于 80ms。 */
+const SPEED = (() => {
+  const v = Number(argOf('--speed', process.env.DEMO_SPEED ?? '1'));
+  return Number.isFinite(v) && v > 1 ? Math.min(v, 8) : 1;
+})();
+/** 背景音乐：auto（自动合成）/ off / <wav 路径> */
+const MUSIC = argOf('--music', process.env.DEMO_MUSIC ?? 'auto');
 
 // ---------------- 脚本选择（轮换） ----------------
 const LAST_FILE = path.join(here, 'tour', '.last-script.json');
@@ -283,9 +296,10 @@ async function capture() {
     captureFailures.push(e.message);
   }
 }
-/** 持续抓帧 holdMs 毫秒（保持画面实时） */
+/** 持续抓帧 holdMs 毫秒（保持画面实时）；按 SPEED 倍率缩短 */
 async function hold(holdMs) {
-  const end = Date.now() + holdMs;
+  const ms = SPEED > 1 ? Math.max(80, Math.round(holdMs / SPEED)) : holdMs;
+  const end = Date.now() + ms;
   do {
     await capture();
     await sleep(16);
@@ -598,9 +612,9 @@ async function installHelpers() {
 // ==================================================================
 // 5. 全功能巡演
 // ==================================================================
-// 步骤号：1..21 为固定能力巡演；22 起是脚本的「专属场景」；末尾两步是收尾与汇总。
+// 步骤号：1..22 为固定能力巡演；23 起是脚本的「专属场景」；末尾两步是收尾与汇总。
 const N_EXTRA = S.extras.length;
-const EXTRA_BASE = 22;
+const EXTRA_BASE = 23;
 const FINAL_ORBIT_STEP = EXTRA_BASE + N_EXTRA;
 const SUMMARY_STEP = FINAL_ORBIT_STEP + 1;
 const TOTAL_STEPS = SUMMARY_STEP;
@@ -645,8 +659,8 @@ async function tour() {
   await hold(900);
 
   // ---------- ② 界面总览 ----------
-  await banner(2, '界面总览 · 8 个功能区页签', '草图 / 特征 / 曲线 / 装配体 / 工程图 / 评估 / 视图 / 文件');
-  for (const t of ['草图', '特征', '曲线', '装配体', '工程图', '评估', '视图', '文件']) {
+  await banner(2, '界面总览 · 9 个功能区页签', '特征 / 草图 / 曲面 / 评估 / 装配体 / 工程图 / 曲线 / 视图 / AI');
+  for (const t of ['特征', '草图', '曲面', '评估', '装配体', '工程图', '曲线', '视图', 'AI']) {
     await tab(t);
     await hold(300);
   }
@@ -1317,8 +1331,54 @@ ${primLines}
   await act(`__D.app.clearSelection(); 1`, 400);
   await isoView(1000);
 
-  // ---------- ⑯ 视图 ----------
-  await banner(19, '视图 · 显示样式 / 方向 / 基准面 / 网格', '');
+  // ---------- ⑯ 曲面（曲面页签：拉伸/旋转/平面区域/放样/扫描，均为壳、不参与实体布尔） ----------
+  await banner(19, '曲面 · 拉伸曲面 / 旋转曲面 / 平面区域 / 放样曲面 / 扫描曲面', '生成曲面实体（壳），不参与实体布尔、不计体积');
+  await act(`__D.reset(); __D.app.setMode('model'); 1`, 300);
+  await act(`(() => {
+    const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.includes('曲面'));
+    if (tab) tab.click();
+    return 1;
+  })()`, 700);
+  // ① 拉伸曲面：闭合矩形轮廓 → 四周侧壁
+  const surf1 = await act(`(async () => {
+    __D.reset();
+    const sid = __D.sketch('front', (h) => h.rect(0, 0, 40, 25));
+    __D.add({ id: __D.newId('f'), type: 'surfaceExtrude', name: '拉伸曲面1', params: { sketchId: sid, distance: 20 } });
+    await __D.app.rebuild();
+    return __D.app.model.stats;
+  })()`, 1800);
+  check('拉伸曲面：生成曲面实体（壳），0 实体', surf1 && surf1.surfaces === 1 && surf1.solids === 0,
+    surf1 ? `surfaces=${surf1.surfaces} solids=${surf1.solids}` : '无结果');
+  await hold(500);
+  // ② 放样曲面：两个偏移面截面 → 蒙皮
+  const surf2 = await act(`(async () => {
+    __D.reset();
+    const M = await import('/src/doc/model.ts');
+    const s0 = __D.sketch(M.offsetPlane(M.PLANES.front, 0), (h) => h.rect(-20, -20, 20, 20));
+    const s1 = __D.sketch(M.offsetPlane(M.PLANES.front, 30), (h) => h.rect(-10, -10, 10, 10));
+    __D.add({ id: __D.newId('f'), type: 'surfaceLoft', name: '放样曲面1', params: { sketchIds: [s0, s1] } });
+    await __D.app.rebuild();
+    return __D.app.model.stats;
+  })()`, 2000);
+  check('放样曲面：生成曲面实体（壳），0 实体', surf2 && surf2.surfaces === 1 && surf2.solids === 0,
+    surf2 ? `surfaces=${surf2.surfaces} solids=${surf2.solids}` : '无结果');
+  await hold(600);
+  // ③ 扫描曲面：闭合轮廓沿直线路径扫掠
+  const surf3 = await act(`(async () => {
+    __D.reset();
+    const prof = __D.sketch('front', (h) => h.rect(0, 0, 20, 10));
+    const path = __D.sketch('front', (h) => h.line(h.pt(0, 0), h.pt(60, 0)));
+    __D.add({ id: __D.newId('f'), type: 'surfaceSweep', name: '扫描曲面1', params: { profileSketchId: prof, pathSketchId: path } });
+    await __D.app.rebuild();
+    return __D.app.model.stats;
+  })()`, 2000);
+  check('扫描曲面：生成曲面实体（壳），0 实体', surf3 && surf3.surfaces === 1 && surf3.solids === 0,
+    surf3 ? `surfaces=${surf3.surfaces} solids=${surf3.solids}` : '无结果');
+  await hold(700);
+  await isoView(1000);
+
+  // ---------- ⑰ 视图 ----------
+  await banner(20, '视图 · 显示样式 / 方向 / 基准面 / 网格', '');
   await act(`__D.reset(); __D.box(50,36,24,[0,0,0]); 1`, 400);
   await act(`__D.rebuild()`, 1100);
   for (const st of ['shadedEdges', 'shaded', 'wireframe', 'hidden', 'transparent']) {
@@ -1333,8 +1393,8 @@ ${primLines}
   await act(`__D.app.toggleGrid(false); __D.app.togglePlanes(false); 1`, 800);
   await hold(300);
 
-  // ---------- ⑰ 文件导出 ----------
-  await banner(20, '文件 · STEP / STL / OBJ 导出', '真实写出文件到磁盘');
+  // ---------- ⑱ 文件导出 ----------
+  await banner(21, '文件 · STEP / STL / OBJ 导出', '真实写出文件到磁盘');
   await act(`__D.app.exportStep(); 1`, 2500);
   await act(`__D.app.exportStl(); 1`, 1800);
   await act(`__D.app.exportObj(); 1`, 1800);
@@ -1345,8 +1405,8 @@ ${primLines}
     files.join(', ') || '（无文件）');
   check('工程图 PNG 已导出', files.some((f) => /\.png$/i.test(f)), files.filter((f) => /\.png$/i.test(f)).join(', '));
 
-  // ---------- ⑱ 撤销 / 重做 / 重建 ----------
-  await banner(21, '文件编辑 · 撤销 / 重做 / 重建', '');
+  // ---------- ⑲ 撤销 / 重做 / 重建 ----------
+  await banner(22, '文件编辑 · 撤销 / 重做 / 重建', '');
   await act(`__D.app.undo(); 1`, 900);
   await act(`__D.app.undo(); 1`, 900);
   await act(`__D.app.redo(); 1`, 900);
@@ -1557,17 +1617,93 @@ async function encode() {
   return true;
 }
 
+/** 探测可用的 python（用于合成背景音乐）：优先项目 venv（带 numpy） */
+function findPython() {
+  if (process.env.PYTHON && existsSync(process.env.PYTHON)) return process.env.PYTHON;
+  const cands = process.platform === 'win32'
+    ? [
+        path.join(homedir(), '.workbuddy-ai', 'binaries', 'python', 'envs', 'default', 'Scripts', 'python.exe'),
+        path.join(homedir(), '.workbuddy-ai', 'binaries', 'python', 'versions', '3.13.12', 'python.exe'),
+        path.join(homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python312', 'python.exe'),
+      ]
+    : [
+        path.join(homedir(), '.workbuddy-ai', 'binaries', 'python', 'envs', 'default', 'bin', 'python'),
+        '/usr/bin/python3', '/usr/local/bin/python3',
+      ];
+  for (const c of cands) if (existsSync(c)) return c;
+  return null;
+}
+
+/**
+ * 给已编码的 MP4 混入背景音乐。
+ *   MUSIC === 'off'   → 跳过
+ *   MUSIC === 'auto'  → 用 tools/tour/gen_music.py 合成「视频时长 + 2s」的 WAV 再混入
+ *   MUSIC 为路径      → 直接用该 WAV
+ * 混音用 `-c:v copy`（不重编码视频）+ `-shortest`（音乐比视频长时自动裁切）。
+ */
+async function muxMusic() {
+  if (MUSIC === 'off') return false;
+  const ffmpeg = findFfmpeg();
+  if (!ffmpeg) { console.log('  未找到 ffmpeg，跳过音乐合成'); return false; }
+  if (!existsSync(OUT)) { console.log('  视频不存在，跳过音乐合成'); return false; }
+
+  let wav;
+  if (MUSIC === 'auto') {
+    const py = findPython();
+    if (!py) { console.log('  未找到 python，跳过音乐合成（可先手动生成 WAV 再用 --music 指定）'); return false; }
+    const dur = Math.max(30, Math.ceil(tourMs / 1000) + 2);
+    wav = path.join(ROOT, 'videos', 'solid2-bgm.wav');
+    mkdirSync(path.dirname(wav), { recursive: true });
+    console.log(`  合成背景音乐 ${dur}s…`);
+    const g = await run(py, [path.join(here, 'tour', 'gen_music.py'), String(dur), wav]);
+    if (g.code !== 0 || !existsSync(wav)) {
+      console.log('  音乐合成失败：' + (g.err || g.out || '').split('\n').slice(-3).join(' | '));
+      return false;
+    }
+  } else {
+    wav = path.resolve(ROOT, MUSIC);
+    if (!existsSync(wav)) { console.log(`  音乐文件不存在：${wav}`); return false; }
+  }
+
+  const tmp = OUT.replace(/\.mp4$/i, '') + '.mux.mp4';
+  const r = await run(ffmpeg, [
+    '-y', '-hide_banner', '-loglevel', 'error',
+    '-i', OUT, '-i', wav,
+    '-map', '0:v:0', '-map', '1:a:0',
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+    '-shortest', '-movflags', '+faststart', tmp,
+  ]);
+  if (r.code !== 0 || !existsSync(tmp)) {
+    console.log('  混音失败：' + (r.err || '').split('\n').slice(0, 3).join(' | '));
+    return false;
+  }
+  try {
+    rmSync(OUT, { force: true });
+    renameSync(tmp, OUT);
+  } catch (e) {
+    console.log('  替换输出失败：' + e.message);
+    return false;
+  }
+  return true;
+}
+
 console.log('\n▶ 编码 MP4…');
 const okEncode = NO_ENCODE ? false : await encode();
+let okMusic = false;
+if (okEncode) {
+  console.log('▶ 混入背景音乐…');
+  okMusic = await muxMusic();
+}
 ws.close();
 cleanup();
 
 const sizeMB = okEncode && existsSync(OUT) ? (statSync(OUT).size / 1048576).toFixed(2) : '—';
 console.log(`\n${'='.repeat(60)}`);
-console.log(`巡演脚本：${S.label}  [${S.id}]  ·  专属场景 ${S.extras.length} 个`);
+console.log(`巡演脚本：${S.label}  [${S.id}]  ·  专属场景 ${S.extras.length} 个  ·  速度 ${SPEED}×`);
 console.log(`全功能自动测试：${pass} 通过 / ${fail} 失败（共 ${pass + fail} 项）`);
 if (failures.length) console.log(`失败项：\n  - ${failures.join('\n  - ')}`);
 console.log(`视频：${okEncode ? OUT : NO_ENCODE ? '（--no-encode 跳过）' : '（未生成）'}${okEncode ? `  ${sizeMB} MB` : ''}`);
+console.log(`背景音乐：${MUSIC === 'off' ? '（--music off 关闭）' : okMusic ? '已混入（AAC 192k）' : '（未混入）'}`);
 console.log(`时长：约 ${(tourMs / 1000).toFixed(1)} s · ${timeline.length} 帧`);
 if (captureFailures.length) console.log(`抓帧警告：${captureFailures.length} 次（${captureFailures[0]}）`);
 console.log('='.repeat(60));

@@ -215,6 +215,8 @@ export function buildTabs(): RTab[] {
             { id: 'su.extrude', label: '拉伸曲面', icon: 'surface', big: true, tip: '草图轮廓沿法向拉伸成曲面（不封顶）', run: (a) => surfaceDialogs.extrude(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length > 0 },
             { id: 'su.revolve', label: '旋转曲面', icon: 'surface', big: true, tip: '草图轮廓绕轴旋转成曲面', run: (a) => surfaceDialogs.revolve(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length > 0 },
             { id: 'su.planar', label: '平面区域', icon: 'surface', big: true, tip: '把闭合草图轮廓填成平面曲面', run: (a) => surfaceDialogs.planar(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length > 0 },
+            { id: 'su.loft', label: '放样曲面', icon: 'loft', big: true, tip: '多个草图截面蒙皮成曲面（不封顶）', run: (a) => surfaceDialogs.loft(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length >= 2 },
+            { id: 'su.sweep', label: '扫描曲面', icon: 'sweep', big: true, tip: '轮廓草图沿路径草图扫成曲面', run: (a) => surfaceDialogs.sweep(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length >= 2 },
           ],
         },
       ],

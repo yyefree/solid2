@@ -407,6 +407,26 @@ export interface SurfacePlanarFeature extends FeatureBase {
   };
 }
 
+/** 放样曲面：多个草图截面蒙皮成曲面（不封顶、不成实体） */
+export interface SurfaceLoftFeature extends FeatureBase {
+  type: 'surfaceLoft';
+  params: {
+    /** 参与放样的截面草图（按顺序） */
+    sketchIds: FeatureId[];
+    /** 直纹面（截面间线性过渡），默认平滑 */
+    ruled?: boolean;
+  };
+}
+
+/** 扫描曲面：轮廓草图沿路径草图扫成曲面（不封顶、不成实体） */
+export interface SurfaceSweepFeature extends FeatureBase {
+  type: 'surfaceSweep';
+  params: {
+    profileSketchId: FeatureId;
+    pathSketchId: FeatureId;
+  };
+}
+
 export type Feature =
   | SketchFeature
   | ExtrudeFeature
@@ -433,7 +453,9 @@ export type Feature =
   | CombineFeature
   | SurfaceExtrudeFeature
   | SurfaceRevolveFeature
-  | SurfacePlanarFeature;
+  | SurfacePlanarFeature
+  | SurfaceLoftFeature
+  | SurfaceSweepFeature;
 
 export const FEATURE_LABEL: Record<string, string> = {
   sketch: '草图',
@@ -462,6 +484,8 @@ export const FEATURE_LABEL: Record<string, string> = {
   surfaceExtrude: '拉伸曲面',
   surfaceRevolve: '旋转曲面',
   surfacePlanar: '平面区域',
+  surfaceLoft: '放样曲面',
+  surfaceSweep: '扫描曲面',
 };
 
 export const FEATURE_ICON: Record<string, string> = {
@@ -491,6 +515,8 @@ export const FEATURE_ICON: Record<string, string> = {
   surfaceExtrude: 'surface',
   surfaceRevolve: 'surface',
   surfacePlanar: 'surface',
+  surfaceLoft: 'surface',
+  surfaceSweep: 'surface',
 };
 
 export function isSketch(f: Feature): f is SketchFeature {

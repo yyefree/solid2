@@ -14,6 +14,8 @@ import type {
   SurfaceExtrudeFeature,
   SurfaceRevolveFeature,
   SurfacePlanarFeature,
+  SurfaceLoftFeature,
+  SurfaceSweepFeature,
 } from '../doc/types';
 
 /** 草图下拉选项 */
@@ -144,8 +146,89 @@ function openSurfacePlanar(app: App): void {
   });
 }
 
+/** 放样曲面：多选截面草图（勾选顺序即放样顺序） */
+function openSurfaceLoft(app: App): void {
+  const sketches = app.doc.sketchFeatures();
+  if (sketches.length < 2) { notify.err('至少需要两个草图作为截面'); return; }
+  const body = el('div', { class: 'col' });
+  const list = el('div', { class: 'col' });
+  const picks: { id: string; input: HTMLInputElement }[] = [];
+  for (let i = 0; i < sketches.length; i++) {
+    const s = sketches[i];
+    const cf = checkField(`${s.name}（草图 ${i + 1}）`, true, () => {});
+    picks.push({ id: s.id, input: cf.input });
+    list.append(cf.row);
+  }
+  const ruledRow = checkField('直纹面（截面间线性过渡）', false, () => {});
+  body.append(
+    el('div', { class: 'hint' }, '勾选参与放样的截面草图（按设计树顺序连接）：'),
+    list,
+    ruledRow.row,
+    el('div', { class: 'hint' }, '把多个草图截面蒙皮成曲面（不封顶、不成实体）。至少勾选两个。')
+  );
+  modal({
+    host: 'pm',
+    title: '放样曲面',
+    body,
+    actions: [
+      { label: '取消' },
+      {
+        label: '确定', primary: true, onClick: () => {
+          const ids = picks.filter((p) => p.input.checked).map((p) => p.id);
+          if (ids.length < 2) { notify.err('至少勾选两个截面草图'); return false; }
+          const f: SurfaceLoftFeature = {
+            id: newId('f'), type: 'surfaceLoft', name: app.doc.nextName('surfaceLoft'),
+            params: { sketchIds: ids, ruled: ruledRow.input.checked },
+          };
+          app.addFeature(f);
+          notify.ok('已添加放样曲面');
+          return true;
+        },
+      },
+    ],
+  });
+}
+
+/** 扫描曲面：轮廓草图沿路径草图扫成曲面 */
+function openSurfaceSweep(app: App): void {
+  const sketches = app.doc.sketchFeatures();
+  if (sketches.length < 2) { notify.err('至少需要两个草图（轮廓 + 路径）'); return; }
+  const opts = sketchOptions(app);
+  const lastId = defaultSketchId(app);
+  const profId = sketches[sketches.length - 2]?.id ?? lastId;
+  const body = el('div', { class: 'col' });
+  const profRow = selectField('轮廓草图', profId, opts, () => {});
+  const pathRow = selectField('路径草图', lastId, opts, () => {});
+  body.append(
+    profRow.row, pathRow.row,
+    el('div', { class: 'hint' }, '把轮廓草图沿路径草图扫掠成曲面（不封顶、不成实体）。轮廓须为闭合区域，路径可为开放折线/弧串或闭环。')
+  );
+  modal({
+    host: 'pm',
+    title: '扫描曲面',
+    body,
+    actions: [
+      { label: '取消' },
+      {
+        label: '确定', primary: true, onClick: () => {
+          if (profRow.select.value === pathRow.select.value) { notify.err('轮廓与路径不能是同一个草图'); return false; }
+          const f: SurfaceSweepFeature = {
+            id: newId('f'), type: 'surfaceSweep', name: app.doc.nextName('surfaceSweep'),
+            params: { profileSketchId: profRow.select.value, pathSketchId: pathRow.select.value },
+          };
+          app.addFeature(f);
+          notify.ok('已添加扫描曲面');
+          return true;
+        },
+      },
+    ],
+  });
+}
+
 export const surfaceDialogs = {
   extrude: openSurfaceExtrude,
   revolve: openSurfaceRevolve,
   planar: openSurfacePlanar,
+  loft: openSurfaceLoft,
+  sweep: openSurfaceSweep,
 };

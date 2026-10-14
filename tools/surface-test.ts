@@ -9,10 +9,10 @@
 import { initOcctNode } from './oc-loader.mjs';
 import { setOcct } from '../src/core/occt';
 import * as S from '../src/core/solid';
-import { CadDocument, newSketchFeature } from '../src/doc/model';
+import { CadDocument, newSketchFeature, PLANES, offsetPlane } from '../src/doc/model';
 import { rebuildFeatures, buildMeshResult } from '../src/doc/engine';
 import { emptySketch, newId, type Sketch } from '../src/sketch/types';
-import type { Feature, FeatureId, SurfaceExtrudeFeature, SurfaceRevolveFeature, SurfacePlanarFeature, PrimitiveFeature } from '../src/doc/types';
+import type { Feature, FeatureId, SurfaceExtrudeFeature, SurfaceRevolveFeature, SurfacePlanarFeature, SurfaceLoftFeature, SurfaceSweepFeature, PrimitiveFeature } from '../src/doc/types';
 
 let pass = 0;
 let fail = 0;
@@ -79,6 +79,39 @@ function addSketch(d: CadDocument, sk: Sketch): FeatureId {
   const sf = newSketchFeature('front', sk);
   d.add(sf);
   return sf.id;
+}
+
+/** 在距前视基准面 z 处的自定义平面上放草图，返回其 id */
+function addSketchAtZ(d: CadDocument, sk: Sketch, z: number): FeatureId {
+  const sf = newSketchFeature('custom', sk);
+  sf.params.customPlane = offsetPlane(PLANES.front, z);
+  sf.name = `草图@${z}`;
+  d.add(sf);
+  return sf.id;
+}
+
+/** 以原点为中心的闭合正方形（边长 a） */
+function squareSketch(a: number): Sketch {
+  return rectSketchCentered(a, a);
+}
+
+/** 以原点为中心的闭合矩形（w×h） */
+function rectSketchCentered(w: number, h: number): Sketch {
+  const sk = emptySketch();
+  const pts = [
+    [-w / 2, -h / 2],
+    [w / 2, -h / 2],
+    [w / 2, h / 2],
+    [-w / 2, h / 2],
+  ].map(([x, y]) => {
+    const id = newId('p');
+    sk.points[id] = { id, x, y };
+    return id;
+  });
+  for (let i = 0; i < 4; i++) {
+    sk.entities.push({ id: newId('e'), kind: 'line', a: pts[i], b: pts[(i + 1) % 4] });
+  }
+  return sk;
 }
 
 // ---------- 1. 拉伸曲面（闭合矩形） ----------
@@ -205,6 +238,95 @@ console.log('\n【网格化】');
   const positions = new Float32Array(mesh.positions);
   check('网格有顶点', positions.length > 0, `verts=${positions.length / 3}`);
   check('面元数据与面区段对齐', mesh.faceMetas.length === mesh.faceRanges.length);
+}
+
+// ---------- 8. 放样曲面（两个等大截面 → 4 侧面，无上下盖） ----------
+console.log('\n【放样曲面 · 等大截面】');
+{
+  const d = new CadDocument();
+  const s0 = addSketchAtZ(d, squareSketch(40), 0);
+  const s1 = addSketchAtZ(d, squareSketch(40), 30);
+  const f: SurfaceLoftFeature = {
+    id: newId('f'), type: 'surfaceLoft', name: '放样曲面1',
+    params: { sketchIds: [s0, s1] },
+  };
+  d.add(f);
+  const { shape, surfaces } = rebuild(d);
+  const faces = S.faces(shape).length;
+  const area = S.surfaceArea(shape);
+  const expectArea = 4 * 40 * 30; // 4 个侧面，每个 40×30 = 4800
+  check('生成 1 个曲面实体', surfaces === 1 && S.surfacesOf(shape).length === 1);
+  check('不产生实体', S.bodiesOf(shape).length === 0);
+  check('体积为 0', near(S.solidVolume(shape), 0, 1e-6));
+  check('4 个侧面（无上下盖）', faces === 4, `faces=${faces}`);
+  check('面积 = 4 × 40 × 30', near(area, expectArea, 1), `= ${area.toFixed(3)} / 期望 ${expectArea}`);
+  check('无求值错误', d.features.every((x) => !x.error), d.features.map((x) => x.error).filter(Boolean).join('; '));
+}
+
+// ---------- 9. 放样曲面（渐变截面 → 4 个梯形侧面） ----------
+console.log('\n【放样曲面 · 渐变截面】');
+{
+  const d = new CadDocument();
+  const s0 = addSketchAtZ(d, rectSketchCentered(40, 20), 0);
+  const s1 = addSketchAtZ(d, rectSketchCentered(20, 10), 30);
+  d.add({ id: newId('f'), type: 'surfaceLoft', name: '放样曲面1', params: { sketchIds: [s0, s1] } } as SurfaceLoftFeature);
+  const { shape, surfaces } = rebuild(d);
+  // x 侧 2 个梯形：平行边 20/10，间距 √(10²+30²)；y 侧 2 个：平行边 40/20，间距 √(5²+30²)
+  const sx = Math.hypot(10, 30);
+  const sy = Math.hypot(5, 30);
+  const expectArea = 2 * ((20 + 10) / 2) * sx + 2 * ((40 + 20) / 2) * sy;
+  const area = S.surfaceArea(shape);
+  check('生成 1 个曲面实体', surfaces === 1);
+  check('面积 = 4 个梯形之和', near(area, expectArea, 1), `= ${area.toFixed(3)} / 期望 ${expectArea.toFixed(3)}`);
+  check('无求值错误', d.features.every((x) => !x.error), d.features.map((x) => x.error).filter(Boolean).join('; '));
+}
+
+// ---------- 10. 放样曲面：直纹面选项 ----------
+console.log('\n【放样曲面 · 直纹面】');
+{
+  const d = new CadDocument();
+  const s0 = addSketchAtZ(d, squareSketch(40), 0);
+  const s1 = addSketchAtZ(d, squareSketch(20), 30);
+  d.add({ id: newId('f'), type: 'surfaceLoft', name: '放样曲面1', params: { sketchIds: [s0, s1], ruled: true } } as SurfaceLoftFeature);
+  const { shape, surfaces } = rebuild(d);
+  check('直纹面生成 1 个曲面实体', surfaces === 1 && S.bodiesOf(shape).length === 0);
+  check('直纹面无错误', d.features.every((x) => !x.error), d.features.map((x) => x.error).filter(Boolean).join('; '));
+}
+
+// ---------- 11. 扫描曲面（矩形轮廓沿直线路径） ----------
+console.log('\n【扫描曲面】');
+{
+  const d = new CadDocument();
+  const profId = addSketch(d, rectSketch(20, 10));                 // 闭合轮廓
+  const pathId = addSketch(d, polylineSketch([[0, 0], [60, 0]]));  // 开放直线路径
+  const f: SurfaceSweepFeature = {
+    id: newId('f'), type: 'surfaceSweep', name: '扫描曲面1',
+    params: { profileSketchId: profId, pathSketchId: pathId },
+  };
+  d.add(f);
+  const { shape, surfaces } = rebuild(d);
+  const area = S.surfaceArea(shape);
+  const expectArea = 2 * (20 + 10) * 60; // 周长 × 路径长 = 3600
+  check('生成 1 个曲面实体', surfaces === 1);
+  check('不产生实体', S.bodiesOf(shape).length === 0);
+  check('体积为 0', near(S.solidVolume(shape), 0, 1e-6));
+  check('面积 = 周长 × 路径长', near(area, expectArea, 2), `= ${area.toFixed(3)} / 期望 ${expectArea}`);
+  check('无求值错误', d.features.every((x) => !x.error), d.features.map((x) => x.error).filter(Boolean).join('; '));
+}
+
+// ---------- 12. 错误处理：放样曲面截面不足 ----------
+console.log('\n【错误处理 · 放样曲面】');
+{
+  const d = new CadDocument();
+  const s0 = addSketchAtZ(d, squareSketch(40), 0);
+  const f: SurfaceLoftFeature = {
+    id: newId('f'), type: 'surfaceLoft', name: '放样曲面1',
+    params: { sketchIds: [s0] },
+  };
+  d.add(f);
+  const { surfaces } = rebuild(d);
+  check('单个截面 → 报错', !!d.getFeature(f.id)?.error, d.getFeature(f.id)?.error ?? '');
+  check('未生成曲面实体', surfaces === 0);
 }
 
 console.log(`\n曲面特征单测：${pass} 通过 / ${fail} 失败`);

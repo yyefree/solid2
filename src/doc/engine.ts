@@ -142,7 +142,7 @@ function extrudeFaces(faces: any[], dir: [number, number, number], distance: num
  *  - 用「平行移动标架」逐站放置截面，再交给 `loftSections` 蒙皮；
  *  - 不用 `BRepOffsetAPI_MakePipe`——实测它在弯曲路径上会算出退化结果。
  */
-function sweepProfileAlongPath(pathPts: Vec3[], profile2d: Vec2[], upNormal?: Vec3): any {
+function sweepProfileAlongPath(pathPts: Vec3[], profile2d: Vec2[], upNormal?: Vec3, isSolid = true): any {
   const pts = cleanLoop(pathPts, 1e-6);
   if (pts.length < 2) throw new Error('扫描：路径过短');
   const profile = cleanLoop2(profile2d);
@@ -156,7 +156,7 @@ function sweepProfileAlongPath(pathPts: Vec3[], profile2d: Vec2[], upNormal?: Ve
   const tangents = polylineTangents(pts);
   const frames = transportFrames(tangents, upNormal);
   const sections = placeSections(profile, pts, frames).map((s) => cleanLoop(s));
-  return S.loftSections(sections, true, false);
+  return S.loftSections(sections, isSolid, false);
 }
 
 // ============================================================
@@ -651,6 +651,36 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       const faces = facesOfSketch(skf);
       if (!faces.length) throw new Error('平面区域：草图没有闭合轮廓');
       ctx.surfaces.push(faces[0]);
+      return { shape: current };
+    }
+
+    case 'surfaceLoft': {
+      const wires: any[] = [];
+      for (const sid of f.params.sketchIds) {
+        const skf = ctx.doc.getFeature(sid);
+        if (!skf || skf.type !== 'sketch') continue;
+        wires.push(profileWireOf(skf));
+      }
+      if (wires.length < 2) throw new Error('放样曲面：至少需要两个截面草图');
+      ctx.surfaces.push(S.loftRobust(wires, false, !!f.params.ruled));
+      return { shape: current };
+    }
+
+    case 'surfaceSweep': {
+      const prof = ctx.doc.getFeature(f.params.profileSketchId);
+      const path = ctx.doc.getFeature(f.params.pathSketchId);
+      if (!prof || prof.type !== 'sketch' || !path || path.type !== 'sketch') {
+        throw new Error('扫描曲面：缺少轮廓或路径草图');
+      }
+      const plP = planeOf(prof);
+      solveSketch(prof.params.sketch);
+      const pRegions = sketchToRegions(prof.params.sketch, plP);
+      if (!pRegions.length) throw new Error('扫描曲面：轮廓草图没有封闭区域');
+      const plPath = planeOf(path);
+      solveSketch(path.params.sketch);
+      const pathPts = sampleSketchPath(path.params.sketch, plPath, 48);
+      if (pathPts.length < 2) throw new Error('扫描曲面：路径草图没有可用曲线');
+      ctx.surfaces.push(sweepProfileAlongPath(pathPts, pRegions[0].polygon, plP.normal, false));
       return { shape: current };
     }
 

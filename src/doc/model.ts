@@ -199,6 +199,8 @@ export class CadDocument {
       surfaceExtrude: '拉伸曲面',
       surfaceRevolve: '旋转曲面',
       surfacePlanar: '平面区域',
+      surfaceLoft: '放样曲面',
+      surfaceSweep: '扫描曲面',
     };
     return `${labels[type] ?? type}${n}`;
   }

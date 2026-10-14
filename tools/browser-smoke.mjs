@@ -524,13 +524,101 @@ const curve = await evaluate(`(() => {
 })()`);
 check('「曲线」页签含弹簧/涡状线', curve.includes('弹簧') || curve.includes('涡状线'), curve.join(' / '));
 
-// 「曲面」页签：确认拉伸曲面/旋转曲面/平面区域按钮已接线
+// 「曲面」页签：确认拉伸曲面/旋转曲面/平面区域/放样曲面/扫描曲面按钮已接线
 const surfTab = await evaluate(`(() => {
   const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.includes('曲面'));
   if (t) t.click();
   return [...document.querySelectorAll('.rbtn')].map(b => b.textContent.trim());
 })()`);
-check('「曲面」页签含拉伸曲面/旋转曲面/平面区域', ['拉伸曲面', '旋转曲面', '平面区域'].every(w => surfTab.includes(w)), surfTab.join(' / '));
+check('「曲面」页签含拉伸曲面/旋转曲面/平面区域/放样曲面/扫描曲面', ['拉伸曲面', '旋转曲面', '平面区域', '放样曲面', '扫描曲面'].every(w => surfTab.includes(w)), surfTab.join(' / '));
+
+// 放样曲面：两个偏移面截面 → 曲面实体（壳）
+const surfLoft = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const M = await import('/src/doc/model.ts');
+  const { newId } = T;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  const mk = (a, z) => {
+    const s = T.emptySketch();
+    const c = [[-a/2,-a/2],[a/2,-a/2],[a/2,a/2],[-a/2,a/2]];
+    const ids = c.map(function (p) { const id = newId('p'); s.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+    for (let i = 0; i < 4; i++) s.entities.push({ id: newId('e'), kind: 'line', a: ids[i], b: ids[(i + 1) % 4] });
+    const sf = M.newSketchFeature(z === 0 ? 'front' : 'custom', s);
+    if (z !== 0) sf.params.customPlane = M.offsetPlane(M.PLANES.front, z);
+    app.addFeature(sf, { rebuild: false });
+    return sf.id;
+  };
+  mk(40, 0); mk(20, 30);
+  await app.rebuild();
+  const tab = [...document.querySelectorAll('.rtab')].find(function (t) { return t.textContent.trim() === '曲面'; });
+  if (tab) tab.click();
+  await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(function (b) { return b.textContent.trim() === '放样曲面'; });
+  if (!btn) { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); return { btnFound: false }; }
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const pm = document.querySelector('.pm');
+  const title = pm && pm.querySelector('.pm-head .pm-title') ? pm.querySelector('.pm-head .pm-title').textContent : '';
+  const maskCount = document.querySelectorAll('.modal-mask').length;
+  const okBtn = [...document.querySelectorAll('.pm-foot .btn')].find(function (b) { return b.textContent.trim() === '确定'; });
+  if (okBtn) okBtn.click();
+  await sleep(150);
+  await app.rebuild();
+  const st = app.model ? app.model.stats : {};
+  const surfaces = st.surfaces || 0;
+  const solids = st.solids || 0;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return { btnFound: true, title: title, maskCount: maskCount, surfaces: surfaces, solids: solids };
+})()`);
+check('「放样曲面」按钮可点开 PropertyManager（无遮罩）', surfLoft.btnFound && surfLoft.maskCount === 0 && surfLoft.title === '放样曲面', surfLoft.title);
+check('放样曲面生成 1 个曲面实体（0 实体）', surfLoft.surfaces === 1 && surfLoft.solids === 0, `surfaces=${surfLoft.surfaces} solids=${surfLoft.solids}`);
+
+// 扫描曲面：闭合轮廓 + 直线路径 → 曲面实体（壳）
+const surfSweep = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const M = await import('/src/doc/model.ts');
+  const { newId } = T;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  const rect = T.emptySketch();
+  const rc = [[0,0],[20,0],[20,10],[0,10]];
+  const rids = rc.map(function (p) { const id = newId('p'); rect.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+  for (let i = 0; i < 4; i++) rect.entities.push({ id: newId('e'), kind: 'line', a: rids[i], b: rids[(i + 1) % 4] });
+  app.addFeature(M.newSketchFeature('front', rect), { rebuild: false });
+  const path = T.emptySketch();
+  const pc = [[0,0],[60,0]];
+  const pids = pc.map(function (p) { const id = newId('p'); path.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+  path.entities.push({ id: newId('e'), kind: 'line', a: pids[0], b: pids[1] });
+  app.addFeature(M.newSketchFeature('front', path), { rebuild: false });
+  await app.rebuild();
+  const tab = [...document.querySelectorAll('.rtab')].find(function (t) { return t.textContent.trim() === '曲面'; });
+  if (tab) tab.click();
+  await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(function (b) { return b.textContent.trim() === '扫描曲面'; });
+  if (!btn) { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); return { btnFound: false }; }
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const pm = document.querySelector('.pm');
+  const title = pm && pm.querySelector('.pm-head .pm-title') ? pm.querySelector('.pm-head .pm-title').textContent : '';
+  const okBtn = [...document.querySelectorAll('.pm-foot .btn')].find(function (b) { return b.textContent.trim() === '确定'; });
+  if (okBtn) okBtn.click();
+  await sleep(150);
+  await app.rebuild();
+  const st = app.model ? app.model.stats : {};
+  const surfaces = st.surfaces || 0;
+  const solids = st.solids || 0;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return { btnFound: true, title: title, surfaces: surfaces, solids: solids };
+})()`);
+check('「扫描曲面」按钮可点开 PropertyManager', surfSweep.btnFound && surfSweep.title === '扫描曲面', surfSweep.title);
+check('扫描曲面生成 1 个曲面实体（0 实体）', surfSweep.surfaces === 1 && surfSweep.solids === 0, `surfaces=${surfSweep.surfaces} solids=${surfSweep.solids}`);
 
 // 「草图」页签：确认本轮新增的椭圆/槽口/点/镜像实体按钮已接线
 const sketchTab = await evaluate(`(() => {
