@@ -1434,8 +1434,9 @@ select.inp {
 .brand-mark {
   width: 20px;
   height: 20px;
-  border-radius: 4px;
-  background: linear-gradient(135deg, #2b7de9, #1a5cba);
+  border-radius: 3px;
+  /* SolidWorks 品牌为红色 S 标志 */
+  background: linear-gradient(135deg, #e0392b, #a52218);
   color: #fff;
   display: flex;
   align-items: center;

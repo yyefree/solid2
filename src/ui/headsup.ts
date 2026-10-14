@@ -54,7 +54,11 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
       openPopup(items(), r.left, r.bottom + 2, { cls: 'hu-menu' });
     });
 
-  // SolidWorks Heads-up 布局（左→右）：视图定向 · 显示样式 · 隐藏/显示 · 布景 · 剖面 · 整屏显示 · 缩放至区域 · 上一视图 · 视图设置 · 显示模式
+  // SolidWorks Heads-up 布局（left→right，对照 docs/solidworks-comparison.md §2.3）：
+  // 视图定向 · 显示样式 · 隐藏/显示 · 编辑外观 · 应用布景 · 光源 · 整屏显示 ·
+  // 缩放至区域 · 放大 · 缩小 · 剖面视图 · 上一视图 · 旋转视图
+  // 注意：SW 没有「视图设置」「显示模式（透/正交）」heads-up 按钮——投影切换在视图设置对话框里
+  // （Standard 工具栏「选项」与视图定向菜单「更多视图设置…」均可打开）。
   const huOrient = btn('view.orientation', '视图定向', 'viewOrient', () => openViewOrientation(app));
   const huStyle = dropdown('view.displayStyle', '显示样式', 'displayStyle2', () => {
     const mk = (label: string, ic: string, style: string) => ({
@@ -76,26 +80,6 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
     { label: '网格', icon: 'grid', checked: app.showGrid, run: () => app.toggleGrid(!app.showGrid) },
     { label: '原点', icon: 'origin', checked: app.showOrigin, run: () => app.toggleOrigin(!app.showOrigin) },
   ]);
-  const huScene = dropdown('view.scene', '应用布景', 'applyScene', () =>
-    (['默认', '单色灰', '深色', '白色'] as const).map((n) => ({
-      label: n,
-      icon: 'applyScene',
-      checked: app.sceneName === n,
-      run: () => app.setScene(n),
-    }))
-  );
-  const huSection = dropdown('view.section', '剖面视图', 'sectionCut', () => [
-    { label: '关闭剖面', icon: 'sectionCut', checked: app.sectionAxis === 'none', run: () => app.setSection('none') },
-    { sep: true },
-    { label: '沿 X 轴剖切', icon: 'right', checked: app.sectionAxis === 'x', run: () => app.setSection('x') },
-    { label: '沿 Y 轴剖切', icon: 'top', checked: app.sectionAxis === 'y', run: () => app.setSection('y') },
-    { label: '沿 Z 轴剖切', icon: 'front', checked: app.sectionAxis === 'z', run: () => app.setSection('z') },
-  ]);
-  const huFit = btn('view.fit', '整屏显示', 'zoomFit', () => app.zoomFit());
-  const huZoom = btn('view.zoomArea', '缩放至区域', 'zoomArea', () => startZoomArea(app));
-  const huZoomIn = btn('view.zoomIn', '放大', 'zoomIn', () => app.viewport.zoomBy(0.8));
-  const huZoomOut = btn('view.zoomOut', '缩小', 'zoomOut', () => app.viewport.zoomBy(1.25));
-  const huPrev = btn('view.prevView', '上一视图', 'prevView', () => app.prevView());
   // 旋转视图：切换式临时模式（左键拖动即旋转；Esc 或再次点击退出）
   let rotateActive = false;
   const huRotate = btn('view.rotate', '旋转视图', 'rotateView', () => {
@@ -115,6 +99,14 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
       },
     }))
   );
+  const huScene = dropdown('view.scene', '应用布景', 'applyScene', () =>
+    (['默认', '单色灰', '深色', '白色'] as const).map((n) => ({
+      label: n,
+      icon: 'applyScene',
+      checked: app.sceneName === n,
+      run: () => app.setScene(n),
+    }))
+  );
   const huLighting = dropdown('view.lighting', '光源', 'lighting', () =>
     LIGHT_PRESET_NAMES.map((n) => ({
       label: n,
@@ -123,37 +115,32 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
       run: () => app.setLightPreset(n),
     }))
   );
-  const huSet = btn('view.settings', '视图设置', 'viewSettings', () => openViewSettings(app));
-  const huProj = dropdown('view.projection', '显示模式', 'perspective', () => [
-    {
-      label: '透视',
-      icon: 'perspective',
-      checked: app.projection === 'perspective',
-      run: () => app.setProjection('perspective'),
-    },
-    {
-      label: '正投影',
-      icon: 'orthographic',
-      checked: app.projection === 'orthographic',
-      run: () => app.setProjection('orthographic'),
-    },
+  const huFit = btn('view.fit', '整屏显示', 'zoomFit', () => app.zoomFit());
+  const huZoom = btn('view.zoomArea', '缩放至区域', 'zoomArea', () => startZoomArea(app));
+  const huZoomIn = btn('view.zoomIn', '放大', 'zoomIn', () => app.viewport.zoomBy(0.8));
+  const huZoomOut = btn('view.zoomOut', '缩小', 'zoomOut', () => app.viewport.zoomBy(1.25));
+  const huSection = dropdown('view.section', '剖面视图', 'sectionCut', () => [
+    { label: '关闭剖面', icon: 'sectionCut', checked: app.sectionAxis === 'none', run: () => app.setSection('none') },
+    { sep: true },
+    { label: '沿 X 轴剖切', icon: 'right', checked: app.sectionAxis === 'x', run: () => app.setSection('x') },
+    { label: '沿 Y 轴剖切', icon: 'top', checked: app.sectionAxis === 'y', run: () => app.setSection('y') },
+    { label: '沿 Z 轴剖切', icon: 'front', checked: app.sectionAxis === 'z', run: () => app.setSection('z') },
   ]);
+  const huPrev = btn('view.prevView', '上一视图', 'prevView', () => app.prevView());
   bar.append(
     huOrient,
     huStyle,
     huHide,
+    huAppearance,
     huScene,
-    huSection,
+    huLighting,
     huFit,
     huZoom,
     huZoomIn,
     huZoomOut,
+    huSection,
     huPrev,
-    huRotate,
-    huAppearance,
-    huLighting,
-    huSet,
-    huProj
+    huRotate
   );
 
   host.appendChild(bar);

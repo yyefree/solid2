@@ -895,6 +895,24 @@ export class App {
     return this.pickEdgeIn(sv, sx, sy);
   }
 
+  /**
+   * 枚举某个屏幕位置上「射线穿过」的所有候选面（按距离从近到远、去重）。
+   * 供右键菜单「选择其他…」使用（SolidWorks 同名功能）。
+   */
+  pickCandidateFaces(sx: number, sy: number): number[] {
+    const sv = this.shapeView;
+    if (!sv) return [];
+    const rc = this.viewport.rayFromScreen(sx, sy);
+    const hits = rc.intersectObject(sv.mesh, false);
+    const out: number[] = [];
+    for (const h of hits) {
+      if (h.faceIndex === undefined) continue;
+      const fi = sv.faceIndexFromTriangle(h.faceIndex);
+      if (fi >= 0 && !out.includes(fi)) out.push(fi);
+    }
+    return out;
+  }
+
   // ============================================================
   // 模式切换
   // ============================================================

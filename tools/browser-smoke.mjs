@@ -244,10 +244,15 @@ check('菜单栏含 SolidWorks 七菜单', wantMenus.every((w) => sw.menuItems.s
 check('菜单栏含命令搜索框', sw.search);
 const wantTabs = ['特征', '草图', '评估', '装配体', '工程图', '曲线', '视图', 'AI'];
 check('Ribbon 含 8 个 CommandManager 页签', wantTabs.every((w) => sw.tabs.includes(w)), sw.tabs.join(' '));
-check('Heads-up 视图工具栏已渲染（15 按钮）', sw.headsUpBtns === 15, '按钮数 ' + sw.headsUpBtns);
+check('Heads-up 视图工具栏已渲染（13 按钮）', sw.headsUpBtns === 13, '按钮数 ' + sw.headsUpBtns);
 check(
   'Heads-up 含 旋转视图 / 编辑外观 / 光源 三个新入口',
   ['view.rotate', 'view.appearance', 'view.lighting'].every((c) => sw.headsUpCmds.includes(c)),
+  sw.headsUpCmds.join(',')
+);
+check(
+  'Heads-up 不含 SW 没有的按钮（视图设置/显示模式，投影切换在视图设置对话框）',
+  ['view.settings', 'view.projection'].every((c) => !sw.headsUpCmds.includes(c)),
   sw.headsUpCmds.join(',')
 );
 check('视图立方（ViewCube）已渲染', sw.viewcube);
@@ -255,6 +260,17 @@ check('参考三重轴（Triad）已渲染', sw.triad);
 check('确认角（✓/✗）已挂载', sw.conf);
 check('状态栏右侧区（坐标/单位/重建）已渲染', sw.statusRight && sw.coord);
 check('状态栏单位显示 mm', sw.unit === 'mm', sw.unit);
+// 特征树：原点展开为 X/Y/Z 三轴（SolidWorks 零件树结构）
+const treeLabels = await evaluate(`[...document.querySelectorAll('.tree .tnode .label')].map(n => n.textContent.trim())`);
+check('特征树原点下含 X/Y/Z 轴三节点', ['原点', 'X 轴', 'Y 轴', 'Z 轴'].every((t) => treeLabels.includes(t)), treeLabels.slice(-6).join(' / '));
+// 右键菜单：「更多命令…」飞出（SolidWorks 菜单底部）
+const ctxLabels = await evaluate(`(() => {
+  const cv = document.querySelector('.viewport canvas');
+  if (!cv) return [];
+  cv.dispatchEvent(new MouseEvent('contextmenu', { clientX: 420, clientY: 320, bubbles: true }));
+  return [...document.querySelectorAll('.dropdown.ctx-menu .ctx-list .dd-label')].map(n => n.textContent.trim());
+})()`);
+check('图形区右键菜单含「更多命令…」飞出', ctxLabels.includes('更多命令…'), ctxLabels.join(' / '));
 
 // 点开「参数表」确认对话框与表达式表格渲染出来
 // 注意：Ribbon 点击会先 await 内核就绪，所以这里必须等内核加载完再做（放在 B 段之后）

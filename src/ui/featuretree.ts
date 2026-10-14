@@ -2,7 +2,7 @@
  * 特征管理器（FeatureManager 设计树，SolidWorks 风格）。
  *
  * 结构自上而下（与 SolidWorks 零件树一致）：
- *   文档根 ▸ 注解 ▸ 材质 ▸（实体）▸ 基准面（前/上/右）▸ 草图/特征（按创建顺序平铺为根的直接子节点）▸ 原点。
+ *   文档根 ▸ 注解 ▸ 材质 ▸（实体）▸ 基准面（前/上/右）▸ 草图/特征（按创建顺序平铺为根的直接子节点）▸ 原点（可折叠，展开为 X/Y/Z 轴）。
  *   草图与特征不再塞进「历史特征」文件夹，而是像 SolidWorks 那样按时间顺序直接挂在零件根下。
  *   文件夹可折叠；特征节点支持双击编辑、右键菜单。
  *   保留 `.tree` / `.tnode` / `.label` / `.ic` 类名，兼容右键「展开所有」逻辑。
@@ -83,8 +83,12 @@ export function buildFeatureTree(app: App, host: HTMLElement): void {
       root.children.appendChild(el('div', { class: 'hint', text: '特征树为空。先创建草图，再添加拉伸/旋转等特征。' }));
     }
 
-    // 原点
-    root.children.appendChild(leaf('原点', 'origin'));
+    // 原点（可折叠，展开为 X/Y/Z 三个轴 —— SolidWorks 零件树原点结构）
+    const origin = folder('原点', 'origin', [], true);
+    for (const ax of ['X 轴', 'Y 轴', 'Z 轴']) {
+      origin.children.appendChild(leaf(ax, 'axis'));
+    }
+    root.children.appendChild(origin.node);
 
     host.appendChild(tree);
   };

@@ -10,6 +10,7 @@ import { featureDialogs } from './dialogs';
 import { notify, confirmDialog, promptText } from './toast';
 import { sc } from '../app/hotkeys';
 import { FEATURE_LABEL } from '../doc/types';
+import { openViewSettings } from './headsup';
 
 const D = featureDialogs;
 
@@ -41,7 +42,7 @@ export function installContextMenu(app: App, host: HTMLElement): () => void {
           { icon: 'chamfer', label: '倒角', run: () => D.chamfer(app) },
           { icon: 'measure', label: '测量', run: () => app.measureDistance() },
         ],
-        faceItems(app),
+        faceItems(app, e.clientX, e.clientY),
         e.clientX,
         e.clientY
       );
@@ -122,9 +123,18 @@ function sceneItems(app: App): PopupItem[] {
   }));
 }
 
+function moreCommandsItems(app: App): PopupItem[] {
+  return [
+    { label: '快捷键一览…', icon: 'help', run: () => window.dispatchEvent(new CustomEvent('solid2:help')) },
+    { label: '视图设置…', icon: 'viewSettings', run: () => openViewSettings(app) },
+    { sep: true },
+    { label: '自定义…', icon: 'options', disabled: true },
+    { label: '关于 Solid2…', icon: 'about', run: () => notify.info('Solid2 — Web 参数化三维 CAD') },
+  ];
+}
+
 function blankItems(app: App): PopupItem[] {
   return [
-    { label: '选择其他…', icon: 'check', disabled: true },
     { label: '缩放至区域…', icon: 'zoomArea', run: () => notify.info('请用顶部视图工具栏的「缩放至区域」按钮') },
     { label: '上一视图', icon: 'prevView', sc: sc('view.prevView'), run: () => app.prevView() },
     { sep: true },
@@ -145,13 +155,41 @@ function blankItems(app: App): PopupItem[] {
     { sep: true },
     { label: '重建模型', icon: 'rebuild', sc: sc('view.rebuild'), run: () => app.rebuildModel() },
     { label: '属性…', icon: 'info', sc: sc('edit.properties'), run: () => app.showProperties() },
+    { sep: true },
+    { label: '更多命令…', icon: 'help', submenu: moreCommandsItems(app) },
   ];
 }
 
-function faceItems(app: App): PopupItem[] {
+/**
+ * 「选择其他…」子菜单：列出该屏幕位置射线穿过的所有候选面（SolidWorks 同名功能）。
+ * 只有候选 ≥ 1（即确实有其它面可重选）时才出现。
+ */
+function selectOtherItems(app: App, x: number, y: number): PopupItem[] {
+  const cands = app.pickCandidateFaces(x, y);
+  const cur = app.selection.faces;
+  return [
+    { label: `选择其他…（${cands.length} 个候选）`, icon: 'check', disabled: true },
+    { sep: true },
+    ...cands.map((fi): PopupItem => {
+      const meta = app.shapeView?.faceMetas[fi];
+      const area = meta ? ` ${meta.area.toFixed(1)} mm²` : '';
+      return {
+        label: `面 ${fi + 1}${area}`,
+        icon: 'plane',
+        radio: true,
+        checked: cur.includes(fi),
+        run: () => app.selectFace(fi),
+      };
+    }),
+  ];
+}
+
+function faceItems(app: App, x: number, y: number): PopupItem[] {
   const n = app.selection.faces.length;
+  const others = app.pickCandidateFaces(x, y).length;
   return [
     { label: `已选中 ${n} 个面`, icon: 'check', disabled: true },
+    ...(others > 1 ? ([{ label: '选择其他…', icon: 'plane', submenu: selectOtherItems(app, x, y) }] as PopupItem[]) : []),
     { sep: true },
     { label: '在面上绘制草图', icon: 'sketch', run: () => D.sketchOnFace(app) },
     { label: '异型孔向导…', icon: 'hole', run: () => D.holeWizard(app) },
@@ -164,6 +202,8 @@ function faceItems(app: App): PopupItem[] {
     { label: '质量属性…', icon: 'massProps', run: () => app.showMassProperties() },
     { sep: true },
     { label: '清除选择', icon: 'x', sc: 'Esc', run: () => app.clearSelection() },
+    { sep: true },
+    { label: '更多命令…', icon: 'help', submenu: moreCommandsItems(app) },
   ];
 }
 
@@ -179,6 +219,8 @@ function edgeItems(app: App): PopupItem[] {
     { label: '测量…', icon: 'measure', run: () => app.measureDistance() },
     { sep: true },
     { label: '清除选择', icon: 'x', sc: 'Esc', run: () => app.clearSelection() },
+    { sep: true },
+    { label: '更多命令…', icon: 'help', submenu: moreCommandsItems(app) },
   ];
 }
 
@@ -207,6 +249,8 @@ function sketchItems(app: App): PopupItem[] {
     { label: '全选', icon: 'check', sc: sc('edit.selectAll'), run: () => app.selectAll() },
     { sep: true },
     { label: '退出草图', icon: 'exitSketch', sc: 'Esc', run: () => app.exitSketch(false) },
+    { sep: true },
+    { label: '更多命令…', icon: 'help', submenu: moreCommandsItems(app) },
   ];
 }
 
