@@ -866,7 +866,7 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       return { shape: S.fuse(current, solid), added: solid };
     }
 
-    // ---- 曲面特征：生成曲面实体（壳），**不参与实体布尔**，累积到 ctx.surfaces ----
+    // ---- 曲面特征：生成曲面实体（壳），**不参与实体布尔**，汇入 ctx.surfaceById ----
     case 'surfaceExtrude': {
       const skf = ctx.doc.getFeature(f.params.sketchId);
       if (!skf || skf.type !== 'sketch') throw new Error('拉伸曲面：找不到引用的草图');
@@ -874,7 +874,7 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       const wire = profileWireOf(skf);
       const sign = f.params.reverse ? -1 : 1;
       const dir: [number, number, number] = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
-      ctx.surfaces.push(S.surfaceExtrude(wire, dir, f.params.distance, !!f.params.symmetric));
+      ctx.surfaceById.set(f.id, [S.surfaceExtrude(wire, dir, f.params.distance, !!f.params.symmetric)]);
       return { shape: current };
     }
 
@@ -888,7 +888,7 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       const axis: [number, number, number] = [p2[0] - origin[0], p2[1] - origin[1], p2[2] - origin[2]];
       const sign = f.params.reverse ? -1 : 1;
       const ang = ((f.params.angleDeg * Math.PI) / 180) * sign;
-      ctx.surfaces.push(S.surfaceRevolve(wire, origin, axis, ang));
+      ctx.surfaceById.set(f.id, [S.surfaceRevolve(wire, origin, axis, ang)]);
       return { shape: current };
     }
 
@@ -897,7 +897,7 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       if (!skf || skf.type !== 'sketch') throw new Error('平面区域：找不到引用的草图');
       const faces = facesOfSketch(skf);
       if (!faces.length) throw new Error('平面区域：草图没有闭合轮廓');
-      ctx.surfaces.push(faces[0]);
+      ctx.surfaceById.set(f.id, [faces[0]]);
       return { shape: current };
     }
 
@@ -909,7 +909,7 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
         wires.push(profileWireOf(skf));
       }
       if (wires.length < 2) throw new Error('放样曲面：至少需要两个截面草图');
-      ctx.surfaces.push(S.loftRobust(wires, false, !!f.params.ruled));
+      ctx.surfaceById.set(f.id, [S.loftRobust(wires, false, !!f.params.ruled)]);
       return { shape: current };
     }
 
@@ -927,7 +927,43 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       solveSketch(path.params.sketch);
       const pathPts = sampleSketchPath(path.params.sketch, plPath, 48);
       if (pathPts.length < 2) throw new Error('扫描曲面：路径草图没有可用曲线');
-      ctx.surfaces.push(sweepProfileAlongPath(pathPts, pRegions[0].polygon, plP.normal, false));
+      ctx.surfaceById.set(f.id, [sweepProfileAlongPath(pathPts, pRegions[0].polygon, plP.normal, false)]);
+      return { shape: current };
+    }
+
+    case 'surfaceTrim': {
+      const inputs = collectSurfaceShells(ctx, f.params.surfaceIds, '裁剪曲面');
+      const axisIdx = f.params.axis === 'x' ? 0 : f.params.axis === 'y' ? 1 : 2;
+      // 用一个「半空间盒」裁剪：把盒覆盖的设定一侧与曲面求交（common）即得保留部分。
+      const BIG = 1e5;
+      const base = inputs.length === 1 ? inputs[0] : S.compoundOf(inputs);
+      const bb = S.shapeBBox(base);
+      const c = [(bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2, (bb.min[2] + bb.max[2]) / 2];
+      const origin: [number, number, number] = [c[0] - BIG / 2, c[1] - BIG / 2, c[2] - BIG / 2];
+      origin[axisIdx] = f.params.keep === 'positive' ? f.params.offset : f.params.offset - BIG;
+      const box = S.translate(S.primitives.box(BIG, BIG, BIG), origin[0], origin[1], origin[2]);
+      const kept: any[] = [];
+      for (const s of inputs) {
+        try {
+          kept.push(...S.surfacesOf(S.common(s, box)));
+        } catch {
+          /* 该曲面与裁剪盒无交集 → 被整片裁掉；其余曲面继续裁剪 */
+        }
+      }
+      if (!kept.length) throw new Error('裁剪曲面：裁剪后没有任何剩余');
+      for (const sid of f.params.surfaceIds) ctx.surfaceById.delete(sid);
+      ctx.surfaceById.set(f.id, kept);
+      return { shape: current };
+    }
+
+    case 'surfaceSew': {
+      const inputs = collectSurfaceShells(ctx, f.params.surfaceIds, '缝合曲面');
+      if (inputs.length < 2) throw new Error('缝合曲面：至少需要两个曲面体');
+      const sewn = S.sewShapes(inputs, f.params.tolerance ?? 1e-4);
+      let shells = S.surfacesOf(sewn);
+      if (!shells.length) shells = [sewn]; // 不相邻时仍返回原形状（含自由面），保证可渲染
+      for (const sid of f.params.surfaceIds) ctx.surfaceById.delete(sid);
+      ctx.surfaceById.set(f.id, shells);
       return { shape: current };
     }
 
@@ -939,8 +975,25 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
 interface EvalCtx {
   doc: CadDocument;
   byId: Map<FeatureId, Feature>;
-  /** 累积的曲面实体（壳），不参与实体布尔；求值末尾与实体合成为一个可网格化形状 */
-  surfaces: any[];
+  /**
+   * 每个曲面类特征产出的壳（按特征 id 存）。求值末尾汇总与实体合成一个可网格化形状。
+   * 裁剪/缝合会「消费」被引用曲面：删除其条目并写入自身新的壳，从而替换而非叠加。
+   */
+  surfaceById: Map<FeatureId, any[]>;
+}
+
+/**
+ * 汇总被引用「曲面类」特征产出的壳（供裁剪/缝合消费）。
+ * 引用缺失、引用了非曲面特征、或该壳已被上游曲面操作替换时明确报错。
+ */
+function collectSurfaceShells(ctx: EvalCtx, ids: FeatureId[], what: string): any[] {
+  const out: any[] = [];
+  for (const sid of ids) {
+    const shells = ctx.surfaceById.get(sid);
+    if (!shells || !shells.length) throw new Error(`${what}：引用的特征不是曲面体或已被其它曲面操作替换`);
+    out.push(...shells);
+  }
+  return out;
 }
 
 export interface RebuildOutcome {
@@ -954,14 +1007,15 @@ export interface RebuildOutcome {
 /**
  * 重放整棵特征树，返回最终 TopoDS（仅在 Worker 内有效）与出错特征列表。
  *
- * 曲面特征产生的壳累积在 `ctx.surfaces`，末尾与实体合成一个复合形状（供三角化渲染）；
+ * 曲面特征产生的壳按特征 id 记入 `ctx.surfaceById`（裁剪/缝合会引用并替换其中条目），
+ * 末尾汇总与实体合成一个复合形状（供三角化渲染）；
  * 因此返回的 `shape` 可能同时含实体与曲面体，`surfaces` 给出曲面体数量。
  */
 export function rebuildFeatures(features: Feature[], upto?: FeatureId): RebuildOutcome {
   const t0 = performance.now();
   const doc = new CadDocument();
   doc.features = features as Feature[];
-  const ctx: EvalCtx = { doc, byId: new Map(features.map((f) => [f.id, f])), surfaces: [] };
+  const ctx: EvalCtx = { doc, byId: new Map(features.map((f) => [f.id, f])), surfaceById: new Map() };
   let current: any = null;
   const errors: { id: string; message: string }[] = [];
   const stopAt = upto === undefined ? features.length : doc.indexOf(upto) + 1;
@@ -986,9 +1040,13 @@ export function rebuildFeatures(features: Feature[], upto?: FeatureId): RebuildO
   // 实体 + 曲面体合成一个形状供网格化/渲染；体积/实体数仍只由实体部分贡献。
   const parts: any[] = [];
   if (current) parts.push(current);
-  parts.push(...ctx.surfaces);
+  let surfaceCount = 0;
+  for (const shells of ctx.surfaceById.values()) {
+    parts.push(...shells);
+    surfaceCount += shells.length;
+  }
   const shape = parts.length === 0 ? null : parts.length === 1 ? parts[0] : S.compoundOf(parts);
-  return { shape, errors, ms: performance.now() - t0, surfaces: ctx.surfaces.length };
+  return { shape, errors, ms: performance.now() - t0, surfaces: surfaceCount };
 }
 
 export type { PlaneRef };

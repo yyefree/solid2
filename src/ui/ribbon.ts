@@ -217,6 +217,8 @@ export function buildTabs(): RTab[] {
             { id: 'su.planar', label: '平面区域', icon: 'surface', big: true, tip: '把闭合草图轮廓填成平面曲面', run: (a) => surfaceDialogs.planar(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length > 0 },
             { id: 'su.loft', label: '放样曲面', icon: 'loft', big: true, tip: '多个草图截面蒙皮成曲面（不封顶）', run: (a) => surfaceDialogs.loft(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length >= 2 },
             { id: 'su.sweep', label: '扫描曲面', icon: 'sweep', big: true, tip: '轮廓草图沿路径草图扫成曲面', run: (a) => surfaceDialogs.sweep(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length >= 2 },
+            { id: 'su.trim', label: '裁剪曲面', icon: 'surface', big: true, tip: '用一个平面裁剪所选曲面体，保留一侧', run: (a) => surfaceDialogs.trim(a), enabled: (a) => a.mode !== 'sketch' && a.doc.surfaceFeatures().length > 0 },
+            { id: 'su.sew', label: '缝合曲面', icon: 'surface', big: true, tip: '把多个曲面体接合成一个曲面实体', run: (a) => surfaceDialogs.sew(a), enabled: (a) => a.mode !== 'sketch' && a.doc.surfaceFeatures().length >= 2 },
           ],
         },
       ],

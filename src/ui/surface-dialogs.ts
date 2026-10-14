@@ -16,6 +16,8 @@ import type {
   SurfacePlanarFeature,
   SurfaceLoftFeature,
   SurfaceSweepFeature,
+  SurfaceTrimFeature,
+  SurfaceSewFeature,
 } from '../doc/types';
 
 /** 草图下拉选项 */
@@ -225,10 +227,110 @@ function openSurfaceSweep(app: App): void {
   });
 }
 
+/** 裁剪曲面：用一个平面按轴裁剪所选曲面体，保留一侧 */
+function openSurfaceTrim(app: App): void {
+  const surfaces = app.doc.surfaceFeatures();
+  if (!surfaces.length) { notify.err('没有可裁剪的曲面体'); return; }
+  const body = el('div', { class: 'col' });
+  const list = el('div', { class: 'col' });
+  const picks: { id: string; input: HTMLInputElement }[] = [];
+  surfaces.forEach((s, i) => {
+    const cf = checkField(`${s.name}（曲面 ${i + 1}）`, true, () => {});
+    picks.push({ id: s.id, input: cf.input });
+    list.append(cf.row);
+  });
+  const axisRow = selectField('裁剪轴向', 'x', [
+    { value: 'x', label: 'X → 沿 YZ 平面裁剪' },
+    { value: 'y', label: 'Y → 沿 XZ 平面裁剪' },
+    { value: 'z', label: 'Z → 沿 XY 平面裁剪' },
+  ], () => {});
+  const offRow = numberField('平面位置', 0, () => {}, { step: 1, unit: 'mm' });
+  const keepRow = selectField('保留侧', 'positive', [
+    { value: 'positive', label: '保留正侧（坐标 ≥ 位置）' },
+    { value: 'negative', label: '保留负侧（坐标 ≤ 位置）' },
+  ], () => {});
+  body.append(
+    el('div', { class: 'hint' }, '勾选要裁剪的曲面体：'),
+    list,
+    axisRow.row, offRow.row, keepRow.row,
+    el('div', { class: 'hint' }, 'SolidWorks「裁剪曲面」：用一个平面裁剪所选曲面，保留设定一侧，其余被裁掉。')
+  );
+  modal({
+    host: 'pm',
+    title: '裁剪曲面',
+    body,
+    actions: [
+      { label: '取消' },
+      {
+        label: '确定', primary: true, onClick: () => {
+          const ids = picks.filter((p) => p.input.checked).map((p) => p.id);
+          if (!ids.length) { notify.err('至少勾选一个曲面体'); return false; }
+          const offset = parseFloat(offRow.input.value);
+          if (!Number.isFinite(offset)) { notify.err('平面位置必须是数字'); return false; }
+          const f: SurfaceTrimFeature = {
+            id: newId('f'), type: 'surfaceTrim', name: app.doc.nextName('surfaceTrim'),
+            params: {
+              surfaceIds: ids,
+              axis: axisRow.select.value as 'x' | 'y' | 'z',
+              offset,
+              keep: keepRow.select.value as 'positive' | 'negative',
+            },
+          };
+          app.addFeature(f);
+          notify.ok('已添加裁剪曲面');
+          return true;
+        },
+      },
+    ],
+  });
+}
+
+/** 缝合曲面：把多个曲面体的相邻面合并成一个壳 */
+function openSurfaceSew(app: App): void {
+  const surfaces = app.doc.surfaceFeatures();
+  if (surfaces.length < 2) { notify.err('至少需要两个曲面体'); return; }
+  const body = el('div', { class: 'col' });
+  const list = el('div', { class: 'col' });
+  const picks: { id: string; input: HTMLInputElement }[] = [];
+  surfaces.forEach((s, i) => {
+    const cf = checkField(`${s.name}（曲面 ${i + 1}）`, true, () => {});
+    picks.push({ id: s.id, input: cf.input });
+    list.append(cf.row);
+  });
+  body.append(
+    el('div', { class: 'hint' }, '勾选要缝合的曲面体（相邻面会合并成一个壳）：'),
+    list,
+    el('div', { class: 'hint' }, 'SolidWorks「缝合曲面」：把多个开放曲面接合成一个完整曲面实体。至少勾选两个。')
+  );
+  modal({
+    host: 'pm',
+    title: '缝合曲面',
+    body,
+    actions: [
+      { label: '取消' },
+      {
+        label: '确定', primary: true, onClick: () => {
+          const ids = picks.filter((p) => p.input.checked).map((p) => p.id);
+          if (ids.length < 2) { notify.err('至少勾选两个曲面体'); return false; }
+          const f: SurfaceSewFeature = {
+            id: newId('f'), type: 'surfaceSew', name: app.doc.nextName('surfaceSew'),
+            params: { surfaceIds: ids },
+          };
+          app.addFeature(f);
+          notify.ok('已添加缝合曲面');
+          return true;
+        },
+      },
+    ],
+  });
+}
+
 export const surfaceDialogs = {
   extrude: openSurfaceExtrude,
   revolve: openSurfaceRevolve,
   planar: openSurfacePlanar,
   loft: openSurfaceLoft,
   sweep: openSurfaceSweep,
+  trim: openSurfaceTrim,
+  sew: openSurfaceSew,
 };

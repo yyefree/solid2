@@ -344,6 +344,8 @@ function insertMenu(app: App): PopupItem[] {
         { label: '平面区域…', icon: 'surface', run: () => surfaceDialogs.planar(app) },
         { label: '放样曲面…', icon: 'loft', run: () => surfaceDialogs.loft(app) },
         { label: '扫描曲面…', icon: 'sweep', run: () => surfaceDialogs.sweep(app) },
+        { label: '裁剪曲面…', icon: 'surface', run: () => surfaceDialogs.trim(app) },
+        { label: '缝合曲面…', icon: 'surface', run: () => surfaceDialogs.sew(app) },
       ],
     },
     {

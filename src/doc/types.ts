@@ -479,6 +479,32 @@ export interface SurfaceSweepFeature extends FeatureBase {
   };
 }
 
+/** 裁剪曲面（SW「裁剪曲面」）：用一个平面把所选曲面体裁成两半，保留设定一侧 */
+export interface SurfaceTrimFeature extends FeatureBase {
+  type: 'surfaceTrim';
+  params: {
+    /** 要裁剪的曲面体（surface 类特征 id 列表） */
+    surfaceIds: FeatureId[];
+    /** 裁剪平面朝向的坐标轴 */
+    axis: 'x' | 'y' | 'z';
+    /** 裁剪平面沿该轴的偏移（世界坐标） */
+    offset: number;
+    /** 保留侧：positive 保留 coord≥offset 的半侧；negative 保留 coord≤offset 的半侧 */
+    keep: 'positive' | 'negative';
+  };
+}
+
+/** 缝合曲面（SW「缝合曲面」）：把多个曲面体缝合成一个曲面实体（壳） */
+export interface SurfaceSewFeature extends FeatureBase {
+  type: 'surfaceSew';
+  params: {
+    /** 要缝合的曲面体（surface 类特征 id 列表） */
+    surfaceIds: FeatureId[];
+    /** 缝合容差（mm），默认 1e-4 */
+    tolerance?: number;
+  };
+}
+
 export type Feature =
   | SketchFeature
   | ExtrudeFeature
@@ -507,7 +533,9 @@ export type Feature =
   | SurfaceRevolveFeature
   | SurfacePlanarFeature
   | SurfaceLoftFeature
-  | SurfaceSweepFeature;
+  | SurfaceSweepFeature
+  | SurfaceTrimFeature
+  | SurfaceSewFeature;
 
 export const FEATURE_LABEL: Record<string, string> = {
   sketch: '草图',
@@ -538,6 +566,8 @@ export const FEATURE_LABEL: Record<string, string> = {
   surfacePlanar: '平面区域',
   surfaceLoft: '放样曲面',
   surfaceSweep: '扫描曲面',
+  surfaceTrim: '裁剪曲面',
+  surfaceSew: '缝合曲面',
 };
 
 export const FEATURE_ICON: Record<string, string> = {
@@ -569,6 +599,8 @@ export const FEATURE_ICON: Record<string, string> = {
   surfacePlanar: 'surface',
   surfaceLoft: 'surface',
   surfaceSweep: 'surface',
+  surfaceTrim: 'surface',
+  surfaceSew: 'surface',
 };
 
 export function isSketch(f: Feature): f is SketchFeature {

@@ -201,6 +201,8 @@ export class CadDocument {
       surfacePlanar: '平面区域',
       surfaceLoft: '放样曲面',
       surfaceSweep: '扫描曲面',
+      surfaceTrim: '裁剪曲面',
+      surfaceSew: '缝合曲面',
     };
     return `${labels[type] ?? type}${n}`;
   }
@@ -241,6 +243,15 @@ export class CadDocument {
 
   sketchFeatures(): SketchFeature[] {
     return this.features.filter((f): f is SketchFeature => f.type === 'sketch');
+  }
+
+  /** 产出曲面实体（壳）的特征，供「裁剪曲面 / 缝合曲面」列出可选曲面体 */
+  surfaceFeatures(): Feature[] {
+    return this.features.filter(
+      (f) => f.type === 'surfaceExtrude' || f.type === 'surfaceRevolve' ||
+        f.type === 'surfacePlanar' || f.type === 'surfaceLoft' || f.type === 'surfaceSweep' ||
+        f.type === 'surfaceTrim' || f.type === 'surfaceSew',
+    );
   }
 
   toJSON(): any {

@@ -1405,7 +1405,7 @@ ${primLines}
   await isoView(1000);
 
   // ---------- ⑯ 曲面（曲面页签：拉伸/旋转/平面区域/放样/扫描，均为壳、不参与实体布尔） ----------
-  await banner(19, '曲面 · 拉伸曲面 / 旋转曲面 / 平面区域 / 放样曲面 / 扫描曲面', '生成曲面实体（壳），不参与实体布尔、不计体积');
+  await banner(19, '曲面 · 拉伸 / 旋转 / 平面区域 / 放样 / 扫描 / 裁剪 / 缝合', '生成曲面实体（壳），不参与实体布尔、不计体积');
   await act(`__D.reset(); __D.app.setMode('model'); 1`, 300);
   await act(`(() => {
     const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.includes('曲面'));
@@ -1447,6 +1447,48 @@ ${primLines}
   })()`, 2000);
   check('扫描曲面：生成曲面实体（壳），0 实体', surf3 && surf3.surfaces === 1 && surf3.solids === 0,
     surf3 ? `surfaces=${surf3.surfaces} solids=${surf3.solids}` : '无结果');
+  await hold(500);
+  // ④ 裁剪曲面：平面裁剪壳，保留一侧（面积 3900 → 1300）
+  const surf4 = await act(`(async () => {
+    __D.reset();
+    const sid = __D.sketch('front', (h) => h.rect(0, 0, 40, 25));
+    __D.add({ id: __D.newId('f'), type: 'surfaceExtrude', name: '拉伸曲面1', params: { sketchId: sid, distance: 30 } });
+    await __D.app.rebuild();
+    const b = { area: __D.app.model.stats.area, surfaces: __D.app.model.stats.surfaces, solids: __D.app.model.stats.solids };
+    __D.add({ id: __D.newId('f'), type: 'surfaceTrim', name: '裁剪曲面1', params: { surfaceIds: [__D.app.doc.features[1].id], axis: 'z', offset: 10, keep: 'negative' } });
+    await __D.app.rebuild();
+    return { before: b, after: __D.app.model.stats };
+  })()`, 1900);
+  check('裁剪曲面：面积 3900 → 1300（保留 z≤10 一侧），仍 1 个曲面实体',
+    surf4 && surf4.after.surfaces === 1 && surf4.after.solids === 0
+    && Math.abs(surf4.before.area - 3900) < 2 && Math.abs(surf4.after.area - 1300) < 2,
+    surf4 ? `before=${surf4.before.area.toFixed(1)} after=${surf4.after.area.toFixed(1)} surfaces=${surf4.after.surfaces}` : '无结果');
+  await hold(600);
+  // ⑤ 缝合曲面：两块相邻平面区域 → 1 个壳（面积守恒）
+  const surf5 = await act(`(async () => {
+    __D.reset();
+    const T = await import('/src/sketch/types.ts');
+    const M = await import('/src/doc/model.ts');
+    const mk = (ox) => {
+      const s = T.emptySketch();
+      const c = [[ox, 0], [ox + 40, 0], [ox + 40, 20], [ox, 20]];
+      const pids = c.map((p) => { const id = T.newId('p'); s.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+      for (let i = 0; i < 4; i++) s.entities.push({ id: T.newId('e'), kind: 'line', a: pids[i], b: pids[(i + 1) % 4] });
+      const sf = M.newSketchFeature('front', s);
+      __D.app.addFeature(sf, { rebuild: false });
+      __D.add({ id: __D.newId('f'), type: 'surfacePlanar', name: '平面区域' + (ox ? '2' : '1'), params: { sketchId: sf.id } });
+    };
+    mk(0); mk(40);
+    await __D.app.rebuild();
+    const b = { area: __D.app.model.stats.area, surfaces: __D.app.model.stats.surfaces, solids: __D.app.model.stats.solids };
+    __D.add({ id: __D.newId('f'), type: 'surfaceSew', name: '缝合曲面1', params: { surfaceIds: [__D.app.doc.features[1].id, __D.app.doc.features[3].id] } });
+    await __D.app.rebuild();
+    return { before: b, after: __D.app.model.stats };
+  })()`, 2100);
+  check('缝合曲面：2 个曲面实体 → 1 个壳，面积守恒 1600',
+    surf5 && surf5.before.surfaces === 2 && surf5.after.surfaces === 1 && surf5.after.solids === 0
+    && Math.abs(surf5.after.area - 1600) < 2,
+    surf5 ? `before=${surf5.before.surfaces} after=${surf5.after.surfaces} area=${surf5.after.area.toFixed(1)}` : '无结果');
   await hold(700);
   await isoView(1000);
 

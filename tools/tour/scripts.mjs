@@ -271,7 +271,97 @@ const spring = {
   ],
 };
 
-export const SCRIPTS = [classic, flange, bracket, spring];
+/**
+ * 战斗机专题：用放样机身 + 薄板机翼 + 平尾/垂尾 + 座舱盖气泡，组合出一架可辨识的喷气战斗机。
+ * 四个「专属场景」逐步搭建（机身 → 主翼 → 尾翼 → 座舱盖），每个场景在上一场景基础上增量布尔并。
+ *
+ * 几何坐标约定（与全功能巡演一致）：
+ *   - 机身沿 +X 轴（机头 X=0 → 机尾 X≈122），截面圆在法向 [1,0,0] 的自定义基准面里；
+ *   - 主翼/平尾在「前视」(XY) 平面画后掠梯形轮廓，沿 Z 对称拉伸成薄板；
+ *   - 垂尾在法向 [0,1,0] 的自定义基准面里画侧视轮廓，沿 Y 对称拉伸成薄板（立起来）；
+ *   - 座舱盖用球体熔接在机背。
+ */
+const fighter = {
+  id: 'fighter',
+  label: '喷气战斗机 · 实体建模',
+  desc: '航空专题：放样机身 + 后掠主翼 + 平尾/垂尾 + 座舱盖，逐步布尔并成整机',
+  extras: [
+    {
+      title: '专属场景 · 机身（侧轮廓旋转成形）',
+      sub: '前视平面画机身边廓（机头→座舱段→机尾），绕 X 轴 360° 旋转成体',
+      code: `(async () => {
+        __D.reset();
+        // 机身半边轮廓（X 为机长，Y 为半径）：鼻锥 → 座舱段最粗 → 机尾收锥，最后沿轴线封口
+        const prof = __D.sketch('front', (h) => {
+          const p = [
+            [0, 0], [10, 5], [24, 8.5], [40, 9], [60, 9], [80, 8],
+            [100, 6], [112, 4], [122, 2.5], [122, 0],
+          ];
+          const ids = p.map(([x, y]) => h.pt(x, y));
+          for (let i = 0; i < ids.length; i++) h.line(ids[i], ids[(i + 1) % ids.length]);
+        });
+        // 绕 X 轴（前视平面内的 [0,0]→[1,0]）旋转 360°
+        __D.revolve(prof, [0, 0], [1, 0], 360, 'new');
+        return __D.rebuild();
+      })()`,
+      holdMs: 2800,
+      expect: { solids: 1, volumeBetween: [12000, 32000] },
+    },
+    {
+      title: '专属场景 · 主翼（后掠梯形薄板，左右对称）',
+      sub: '前视平面画后掠翼轮廓 → 沿 Z 对称拉伸成薄板，熔接机身',
+      code: `(async () => {
+        const wing = __D.sketch('front', (h) => {
+          const p = [[40, 0], [70, 46], [84, 46], [78, 0], [84, -46], [70, -46]];
+          const ids = p.map(([x, y]) => h.pt(x, y));
+          for (let i = 0; i < ids.length; i++) h.line(ids[i], ids[(i + 1) % ids.length]);
+        });
+        __D.extrude(wing, 5, 'add', { symmetric: true });
+        return __D.rebuild();
+      })()`,
+      holdMs: 2800,
+      expect: { volumeBetween: [22000, 50000] },
+    },
+    {
+      title: '专属场景 · 尾翼（平尾 + 垂尾）',
+      sub: '尾部小后掠平尾 + 立起的垂尾，熔接机身',
+      code: `(async () => {
+        // 平尾（小后掠翼，位于机尾）
+        const tp = __D.sketch('front', (h) => {
+          const p = [[98, 0], [112, 34], [120, 34], [116, 0], [120, -34], [112, -34]];
+          const ids = p.map(([x, y]) => h.pt(x, y));
+          for (let i = 0; i < ids.length; i++) h.line(ids[i], ids[(i + 1) % ids.length]);
+        });
+        __D.extrude(tp, 4, 'add', { symmetric: true });
+        // 垂尾（侧视轮廓，法向 Y 的自定义面 → 立起来，沿 Y 对称拉伸）
+        const fin = __D.sketch(
+          { origin: [122, 0, 0], u: [1, 0, 0], v: [0, 0, 1], normal: [0, 1, 0], ref: '垂尾' },
+          (h) => {
+            const p = [[-28, 0], [0, 0], [0, 22], [-18, 22]];
+            const ids = p.map(([x, y]) => h.pt(x, y));
+            for (let i = 0; i < ids.length; i++) h.line(ids[i], ids[(i + 1) % ids.length]);
+          }
+        );
+        __D.extrude(fin, 3, 'add', { symmetric: true });
+        return __D.rebuild();
+      })()`,
+      holdMs: 3000,
+      expect: { volumeBetween: [24000, 56000] },
+    },
+    {
+      title: '专属场景 · 座舱盖（机背气泡）',
+      sub: '球体熔接在座舱段机背，模拟气泡式座舱盖',
+      code: `(async () => {
+        __D.prim('sphere', [6], [52, 0, 7], 'add');
+        return __D.rebuild();
+      })()`,
+      holdMs: 2600,
+      expect: { volumeBetween: [26000, 60000] },
+    },
+  ],
+};
+
+export const SCRIPTS = [classic, flange, bracket, spring, fighter];
 
 /** 按 id 取脚本；未找到返回 null */
 export function scriptById(id) {

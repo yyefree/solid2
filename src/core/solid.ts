@@ -214,6 +214,24 @@ export function surfacesOf(shape: Shape): Shape[] {
 }
 
 /**
+ * 缝合多个曲面（面/壳）为一个壳（SolidWorks「缝合曲面」）。
+ * 用 `ShapeUpgrade_ShellSewing` 把相邻面缝合成一个壳——相邻面会共享公共边，
+ * 自由边清零；不相邻的输入面则原样保留（调用方需自行容错地包成壳）。
+ * ⚠️ 另两个缝合 API 在本绑定里不可用：`BRepBuilderAPI_Sewing.Perform()` 需要
+ * `Handle_Message_ProgressIndicator`（无免费构造器）、`FastSewing` 签名不匹配，故走 ShellSewing。
+ */
+export function sewShapes(shapes: Shape[], tolerance = 1e-4): Shape {
+  const o = oc();
+  const shell = new o.TopoDS_Shell();
+  const builder = new o.BRep_Builder();
+  builder.MakeShell(shell);
+  for (const s of shapes) {
+    for (const fc of faces(s)) builder.Add(shell, fc);
+  }
+  return new o.ShapeUpgrade_ShellSewing().ApplySewing(shell, tolerance);
+}
+
+/**
  * 拉伸曲面：把线框（或面）沿 dir 拉伸成壳。
  *
  * 与 `extrude` 的区别：**不把 wire 转成 face**、也不封顶——直接对 wire 做

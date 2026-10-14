@@ -12,7 +12,7 @@ import * as S from '../src/core/solid';
 import { CadDocument, newSketchFeature, PLANES, offsetPlane } from '../src/doc/model';
 import { rebuildFeatures, buildMeshResult } from '../src/doc/engine';
 import { emptySketch, newId, type Sketch } from '../src/sketch/types';
-import type { Feature, FeatureId, SurfaceExtrudeFeature, SurfaceRevolveFeature, SurfacePlanarFeature, SurfaceLoftFeature, SurfaceSweepFeature, PrimitiveFeature } from '../src/doc/types';
+import type { Feature, FeatureId, SurfaceExtrudeFeature, SurfaceRevolveFeature, SurfacePlanarFeature, SurfaceLoftFeature, SurfaceSweepFeature, SurfaceTrimFeature, SurfaceSewFeature, PrimitiveFeature } from '../src/doc/types';
 
 let pass = 0;
 let fail = 0;
@@ -114,7 +114,26 @@ function rectSketchCentered(w: number, h: number): Sketch {
   return sk;
 }
 
-// ---------- 1. 拉伸曲面（闭合矩形） ----------
+/** 在 (ox,oy) 处放一个 w×h 的闭合矩形草图 */
+function rectSketchAt(w: number, h: number, ox = 0, oy = 0): Sketch {
+  const sk = emptySketch();
+  const pts = [
+    [ox, oy],
+    [ox + w, oy],
+    [ox + w, oy + h],
+    [ox, oy + h],
+  ].map(([x, y]) => {
+    const id = newId('p');
+    sk.points[id] = { id, x, y };
+    return id;
+  });
+  for (let i = 0; i < 4; i++) {
+    sk.entities.push({ id: newId('e'), kind: 'line', a: pts[i], b: pts[(i + 1) % 4] });
+  }
+  return sk;
+}
+
+// ---------- 拉伸曲面（闭合矩形） ----------
 console.log('【拉伸曲面 · 闭合轮廓】');
 {
   const d = new CadDocument();
@@ -327,6 +346,85 @@ console.log('\n【错误处理 · 放样曲面】');
   const { surfaces } = rebuild(d);
   check('单个截面 → 报错', !!d.getFeature(f.id)?.error, d.getFeature(f.id)?.error ?? '');
   check('未生成曲面实体', surfaces === 0);
+}
+
+// ---------- 13. 裁剪曲面（用一个平面裁剪壳，保留一侧） ----------
+console.log('\n【裁剪曲面】');
+{
+  // 每个子文档自带一条 40×20 前视矩形沿 Z 拉伸 30 → 4 侧壁，周长(2·(40+20)=120)×30 = 3600
+  const mkExtrude = () => {
+    const dd = new CadDocument();
+    const s = addSketch(dd, rectSketch(40, 20));
+    const ext: SurfaceExtrudeFeature = { id: newId('f'), type: 'surfaceExtrude', name: '拉伸曲面1', params: { sketchId: s, distance: 30 } };
+    dd.add(ext);
+    return { dd, ext, r: rebuild(dd) };
+  };
+
+  const pre = mkExtrude();
+  check('裁剪前 1 个曲面实体、面积 3600', pre.r.surfaces === 1 && near(S.surfaceArea(pre.r.shape), 3600, 1),
+    `area=${S.surfaceArea(pre.r.shape).toFixed(1)}`);
+
+  // 保留 z≥10 的正侧：4 侧壁 z∈[10,30] → 周长×20 = 2400
+  const pos = mkExtrude();
+  pos.dd.add({ id: newId('f'), type: 'surfaceTrim', name: '裁剪曲面1', params: { surfaceIds: [pos.ext.id], axis: 'z', offset: 10, keep: 'positive' } } as SurfaceTrimFeature);
+  const rp = rebuild(pos.dd);
+  check('保留 z≥10 → 面积 2400', !!rp.shape && near(S.surfaceArea(rp.shape), 2400, 1), `= ${rp.shape ? S.surfaceArea(rp.shape).toFixed(3) : 'null'}`);
+  check('裁剪后仍为 1 个曲面实体（替换而非叠加）', rp.surfaces === 1, `surfaces=${rp.surfaces}`);
+  check('裁剪后 0 实体', S.bodiesOf(rp.shape).length === 0);
+  check('裁剪无错误', pos.dd.features.every((x) => !x.error), pos.dd.features.map((x) => x.error).filter(Boolean).join('; '));
+
+  // 保留 z≤10 的负侧 → 周长×10 = 1200
+  const neg = mkExtrude();
+  neg.dd.add({ id: newId('f'), type: 'surfaceTrim', name: '裁剪曲面1', params: { surfaceIds: [neg.ext.id], axis: 'z', offset: 10, keep: 'negative' } } as SurfaceTrimFeature);
+  const rn = rebuild(neg.dd);
+  check('保留 z≤10 → 面积 1200', !!rn.shape && near(S.surfaceArea(rn.shape), 1200, 1), `= ${rn.shape ? S.surfaceArea(rn.shape).toFixed(3) : 'null'}`);
+
+  // 保留空的一侧（z≥100，但曲面最高 30）→ 报错，原曲面保留
+  const none = mkExtrude();
+  const trimNone = { id: newId('f'), type: 'surfaceTrim', name: '裁剪曲面1', params: { surfaceIds: [none.ext.id], axis: 'z', offset: 100, keep: 'positive' } } as SurfaceTrimFeature;
+  none.dd.add(trimNone);
+  const rnone = rebuild(none.dd);
+  check('保留空侧 → 报错', !!none.dd.getFeature(trimNone.id)?.error, none.dd.getFeature(trimNone.id)?.error ?? '');
+  check('裁剪失败保留原曲面（面积 3600）', rnone.surfaces === 1 && near(S.surfaceArea(rnone.shape), 3600, 1), `area=${rnone.shape ? S.surfaceArea(rnone.shape).toFixed(1) : 'null'}`);
+}
+
+// ---------- 14. 缝合曲面（相邻面合并成一个壳；被引用面被替换） ----------
+console.log('\n【缝合曲面】');
+{
+  // 两块相邻平面：A=[0..40]×[0..20]，B=[40..80]×[0..20]（共享 x=40 边）
+  const d = new CadDocument();
+  const aSk = addSketch(d, rectSketchAt(40, 20, 0, 0));
+  const bSk = addSketch(d, rectSketchAt(40, 20, 40, 0));
+  const fa: SurfacePlanarFeature = { id: newId('f'), type: 'surfacePlanar', name: '平面区域1', params: { sketchId: aSk } };
+  const fb: SurfacePlanarFeature = { id: newId('f'), type: 'surfacePlanar', name: '平面区域2', params: { sketchId: bSk } };
+  d.add(fa); d.add(fb);
+  const r0 = rebuild(d);
+  check('缝合前 2 个曲面实体、面积 1600', r0.surfaces === 2 && near(S.surfaceArea(r0.shape), 1600, 1),
+    `surfaces=${r0.surfaces} area=${S.surfaceArea(r0.shape).toFixed(1)}`);
+
+  const sew: SurfaceSewFeature = {
+    id: newId('f'), type: 'surfaceSew', name: '缝合曲面1',
+    params: { surfaceIds: [fa.id, fb.id] },
+  };
+  d.add(sew);
+  const r1 = rebuild(d);
+  check('缝合后 1 个曲面实体', r1.surfaces === 1, `surfaces=${r1.surfaces}`);
+  check('缝合后仍是 1 个壳', S.surfacesOf(r1.shape).length === 1);
+  check('2 个面被合并（面数保持 2）', S.faces(r1.shape).length === 2, `faces=${S.faces(r1.shape).length}`);
+  check('面积守恒 = 1600（被引用面被替换，不叠加）', near(S.surfaceArea(r1.shape), 1600, 1),
+    `= ${S.surfaceArea(r1.shape).toFixed(3)}`);
+  check('缝合后 0 实体', S.bodiesOf(r1.shape).length === 0);
+  check('缝合无错误', d.features.every((x) => !x.error), d.features.map((x) => x.error).filter(Boolean).join('; '));
+
+  // 错误：只缝合一个曲面体
+  const d1 = new CadDocument();
+  const s = addSketch(d1, rectSketchAt(40, 20, 0, 0));
+  const f1: SurfacePlanarFeature = { id: newId('f'), type: 'surfacePlanar', name: '平面区域1', params: { sketchId: s } };
+  d1.add(f1);
+  const sew1: SurfaceSewFeature = { id: newId('f'), type: 'surfaceSew', name: '缝合曲面1', params: { surfaceIds: [f1.id] } };
+  d1.add(sew1);
+  rebuild(d1);
+  check('少于两个曲面体 → 报错', !!d1.getFeature(sew1.id)?.error, d1.getFeature(sew1.id)?.error ?? '');
 }
 
 console.log(`\n曲面特征单测：${pass} 通过 / ${fail} 失败`);

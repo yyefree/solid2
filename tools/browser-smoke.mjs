@@ -530,7 +530,7 @@ const surfTab = await evaluate(`(() => {
   if (t) t.click();
   return [...document.querySelectorAll('.rbtn')].map(b => b.textContent.trim());
 })()`);
-check('「曲面」页签含拉伸曲面/旋转曲面/平面区域/放样曲面/扫描曲面', ['拉伸曲面', '旋转曲面', '平面区域', '放样曲面', '扫描曲面'].every(w => surfTab.includes(w)), surfTab.join(' / '));
+check('「曲面」页签含拉伸曲面/旋转曲面/平面区域/放样曲面/扫描曲面/裁剪曲面/缝合曲面', ['拉伸曲面', '旋转曲面', '平面区域', '放样曲面', '扫描曲面', '裁剪曲面', '缝合曲面'].every(w => surfTab.includes(w)), surfTab.join(' / '));
 
 // 放样曲面：两个偏移面截面 → 曲面实体（壳）
 const surfLoft = await evaluate(`(async () => {
@@ -619,6 +619,101 @@ const surfSweep = await evaluate(`(async () => {
 })()`);
 check('「扫描曲面」按钮可点开 PropertyManager', surfSweep.btnFound && surfSweep.title === '扫描曲面', surfSweep.title);
 check('扫描曲面生成 1 个曲面实体（0 实体）', surfSweep.surfaces === 1 && surfSweep.solids === 0, `surfaces=${surfSweep.surfaces} solids=${surfSweep.solids}`);
+
+// 裁剪曲面：拉伸曲面 + 平面裁剪（保留一侧）→ 仍为 1 个曲面实体
+const surfTrim = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const { newId } = T;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  const s = T.emptySketch();
+  const ids = [[0,0],[40,0],[40,25],[0,25]].map(function (p) { const id = newId('p'); s.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+  for (let i = 0; i < 4; i++) s.entities.push({ id: newId('e'), kind: 'line', a: ids[i], b: ids[(i + 1) % 4] });
+  const sid = newId('f');
+  app.addFeature({ id: sid, type: 'sketch', name: '矩形草图', params: { plane: 'front', sketch: s } }, { rebuild: false });
+  app.addFeature({ id: newId('f'), type: 'surfaceExtrude', name: '拉伸曲面1', params: { sketchId: sid, distance: 30 } }, { rebuild: false });
+  await app.rebuild();
+  const before = app.model ? app.model.stats : {};
+  const tab = [...document.querySelectorAll('.rtab')].find(function (t) { return t.textContent.trim() === '曲面'; });
+  if (tab) tab.click();
+  await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(function (b) { return b.textContent.trim() === '裁剪曲面'; });
+  if (!btn) { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); return { btnFound: false }; }
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const pm = document.querySelector('.pm');
+  const title = pm && pm.querySelector('.pm-head .pm-title') ? pm.querySelector('.pm-head .pm-title').textContent : '';
+  const maskCount = document.querySelectorAll('.modal-mask').length;
+  const checks = pm ? [...pm.querySelectorAll('.pm-body input[type=checkbox]')] : [];
+  const selects = pm ? [...pm.querySelectorAll('.pm-body select')] : [];
+  if (selects.length >= 2) selects[1].value = 'negative';
+  const nums = pm ? [...pm.querySelectorAll('.pm-body input[type=number]')] : [];
+  if (nums.length) nums[0].value = '10';
+  const okBtn = [...document.querySelectorAll('.pm-foot .btn')].find(function (b) { return b.textContent.trim() === '确定'; });
+  if (okBtn) okBtn.click();
+  await sleep(150);
+  await app.rebuild();
+  const st = app.model ? app.model.stats : {};
+  const errs = app.doc.features.map((x) => x.error).filter(Boolean);
+  const treeText = document.querySelector('.tree') ? document.querySelector('.tree').textContent : '';
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return { btnFound: true, title: title, maskCount: maskCount, bodyChecks: checks.length,
+    before: before.surfaces || 0, after: st.surfaces || 0, solids: st.solids || 0,
+    errs: errs.join('; '), trimmed: treeText.indexOf('裁剪曲面1') >= 0 };
+})()`);
+check('「裁剪曲面」按钮可点开 PropertyManager（无遮罩、含曲面体勾选）', surfTrim.btnFound && surfTrim.maskCount === 0 && surfTrim.title === '裁剪曲面' && surfTrim.bodyChecks >= 1, surfTrim.title);
+check('裁剪前 1 个曲面实体', surfTrim.before === 1, `surfaces=${surfTrim.before}`);
+check('裁剪后仍为 1 个曲面实体（替换而非叠加）、0 实体', surfTrim.after === 1 && surfTrim.solids === 0, `surfaces=${surfTrim.after} solids=${surfTrim.solids}`);
+check('裁剪曲面无错误且进入设计树', !surfTrim.errs && surfTrim.trimmed, surfTrim.errs || '未入树');
+
+// 缝合曲面：两块相邻平面区域 → 1 个曲面实体
+const surfSew = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const M = await import('/src/doc/model.ts');
+  const { newId } = T;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  const mk = (ox) => {
+    const s = T.emptySketch();
+    const c = [[ox,0],[ox+40,0],[ox+40,20],[ox,20]];
+    const pids = c.map(function (p) { const id = newId('p'); s.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+    for (let i = 0; i < 4; i++) s.entities.push({ id: newId('e'), kind: 'line', a: pids[i], b: pids[(i + 1) % 4] });
+    const sf = M.newSketchFeature('front', s);
+    app.addFeature(sf, { rebuild: false });
+    app.addFeature({ id: newId('f'), type: 'surfacePlanar', name: '平面区域' + (ox ? '2' : '1'), params: { sketchId: sf.id } }, { rebuild: false });
+  };
+  mk(0); mk(40);
+  await app.rebuild();
+  const before = app.model ? app.model.stats : {};
+  const tab = [...document.querySelectorAll('.rtab')].find(function (t) { return t.textContent.trim() === '曲面'; });
+  if (tab) tab.click();
+  await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(function (b) { return b.textContent.trim() === '缝合曲面'; });
+  if (!btn) { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); return { btnFound: false }; }
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const pm = document.querySelector('.pm');
+  const title = pm && pm.querySelector('.pm-head .pm-title') ? pm.querySelector('.pm-head .pm-title').textContent : '';
+  const maskCount = document.querySelectorAll('.modal-mask').length;
+  const okBtn = [...document.querySelectorAll('.pm-foot .btn')].find(function (b) { return b.textContent.trim() === '确定'; });
+  if (okBtn) okBtn.click();
+  await sleep(150);
+  await app.rebuild();
+  const st = app.model ? app.model.stats : {};
+  const errs = app.doc.features.map((x) => x.error).filter(Boolean);
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return { btnFound: true, title: title, maskCount: maskCount,
+    before: before.surfaces || 0, after: st.surfaces || 0, solids: st.solids || 0, errs: errs.join('; ') };
+})()`);
+check('「缝合曲面」按钮可点开 PropertyManager（无遮罩）', surfSew.btnFound && surfSew.maskCount === 0 && surfSew.title === '缝合曲面', surfSew.title);
+check('缝合前 2 个曲面实体 → 缝合后 1 个（0 实体）', surfSew.before === 2 && surfSew.after === 1 && surfSew.solids === 0, `before=${surfSew.before} after=${surfSew.after} solids=${surfSew.solids}`);
+check('缝合曲面无错误', !surfSew.errs, surfSew.errs);
 
 // 拉伸终止条件（SW 式：起始条件 + 方向1 五选项 + 方向2）
 const extrudeCtl = await evaluate(`(async () => {
