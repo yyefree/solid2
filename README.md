@@ -564,7 +564,7 @@ Solid2 是「ES module + Web Worker + 62 MB WASM」的纯前端应用，用 `fil
 
 ```bash
 npx tsc --noEmit   # 类型干净
-npm test           # 14 个套件：草图/表达式/测量几何/AI/工程图/装配体/内核/单位制…
+npm test           # 15 个套件：草图/表达式/测量几何/AI/工程图/装配体/内核/单位制/截面属性…
 npm run build      # 生产构建 + 预压缩 + 「主线程不引用 OCCT」架构不变量校验
 ```
 

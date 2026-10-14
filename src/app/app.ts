@@ -34,6 +34,7 @@ import { DEFAULT_PLANE, RIGHT_PLANE, TOP_PLANE, type SketchPlane } from '../sket
 import { SketchController, type SketchTool } from './sketchMode';
 import { Assembly, mateRefLabel, type MateRef, type Component } from './assembly';
 import { Drawing, generateStandardViews, type ViewKind } from './drawing';
+import { openSectionProperties } from '../ui/sectionprops-dialog';
 
 export type AppMode = 'model' | 'sketch' | 'assembly' | 'drawing';
 
@@ -1621,6 +1622,15 @@ export class App {
     } catch (e) {
       notify.err(`计算失败：${(e as Error).message}`);
     }
+  }
+
+  /** 截面属性（SolidWorks 评估 → 截面属性，PropertyManager 实时重算） */
+  showSectionProperties(): void {
+    if (!this.hasModel) {
+      notify.err('没有实体');
+      return;
+    }
+    openSectionProperties(this);
   }
 
   setView(dir: ViewDir): void {

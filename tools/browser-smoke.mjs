@@ -434,6 +434,45 @@ check('单位下拉含 MMGS/CGS/IPS', ['MMGS', 'CGS', 'IPS'].every(x => unitSwit
 check('切换到 IPS 后状态栏显示 IPS', unitSwitch.after === 'IPS', unitSwitch.after);
 check('切回 MMGS 恢复默认', unitSwitch.restored === 'MMGS', unitSwitch.restored);
 
+// 截面属性（SW 评估→截面属性）：PM 宿主、选基准面/偏移实时算 面积/惯性矩
+const secDlg = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  let addedId = null;
+  if (!app.doc.features.length) {
+    const { newId } = await import('/src/sketch/types.ts');
+    addedId = newId('f');
+    app.addFeature({ id: addedId, type: 'primitive', name: '长方体',
+      params: { kind: 'box', dims: [20, 20, 20], origin: [0, 0, 0], operation: 'new' } });
+  }
+  for (let i = 0; i < 60 && !(app.currentModel()?.mesh.faceMetas.length); i++) await sleep(100);
+  const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.includes('评估'));
+  if (tab) tab.click();
+  await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '截面属性');
+  if (!btn) { if (addedId) app.removeFeature(addedId); return { opened: false, reason: '按钮缺失' }; }
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const pm = document.querySelector('.pm');
+  const maskCount = document.querySelectorAll('.modal-mask').length;
+  const title = pm?.querySelector('.pm-head .pm-title')?.textContent ?? '';
+  let areaText = '';
+  for (let i = 0; i < 40; i++) {
+    await sleep(80);
+    const t = document.querySelector('.pm')?.textContent ?? '';
+    const m = t.match(/面积([0-9.]+)/);
+    if (m) { areaText = m[1]; break; }
+  }
+  const closeBtn = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '关闭');
+  closeBtn?.click();
+  app.clearSelection();
+  if (addedId) app.removeFeature(addedId);
+  return { opened: !!pm, title, maskCount, area: parseFloat(areaText), closed: !document.querySelector('.pm') };
+})()`);
+check('「截面属性」在 PropertyManager 打开（无遮罩）', secDlg.opened && secDlg.maskCount === 0, secDlg.title);
+check('截面属性实时算出 面积 > 0（默认穿过质心）', secDlg.area > 0, `${secDlg.area}`);
+check('截面属性对话框可关闭', secDlg.closed);
+
 // 「曲线」页签也点一下，确认弹簧/涡状线在（上轮交付）
 const curve = await evaluate(`(() => {
   const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.includes('曲线'));

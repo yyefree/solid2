@@ -213,6 +213,7 @@ export function buildTabs(): RTab[] {
           items: [
             { id: 'e.mass', label: '质量属性', icon: 'massProps', big: true, tip: '体积 / 表面积 / 质心（内核精确积分，非网格近似）', run: (a) => void a.showMassProperties() },
             { id: 'e.dist', label: '测量', icon: 'measure', big: true, tip: '按图形区所选实体实时测量距离/角度/长度/面积/半径（SW 评估→测量）', run: (a) => openMeasure(a) },
+            { id: 'e.sec', label: '截面属性', icon: 'sectionPlane', big: true, tip: '选基准面+偏移，实时算截面面积/质心/惯性矩（SW 评估→截面属性）', run: (a) => a.showSectionProperties() },
             { id: 'e.info', label: '模型统计', icon: 'info', tip: '特征数 / 面边体数 / 包围盒 / 重建耗时', run: (a) => D.modelInfo(a) },
           ],
         },

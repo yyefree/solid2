@@ -415,6 +415,7 @@ function toolsMenu(app: App): PopupItem[] {
     { label: '质量属性…', icon: 'massProps', disabled: !app.hasModel, run: () => void app.showMassProperties() },
     { label: '模型统计…', icon: 'info', run: () => D.modelInfo(app) },
     { label: '几何检查…', icon: 'check', run: () => D.geometryCheck(app) },
+    { label: '截面属性…', icon: 'sectionPlane', run: () => app.showSectionProperties() },
     { sep: true },
     {
       label: '单位制',

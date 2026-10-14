@@ -67,6 +67,7 @@ function commandsFor(app: App): BarCmd[] {
     { icon: 'hole', label: '异型孔向导', run: (a) => D.holeWizard(a) },
     { icon: 'mirror', label: '镜像', run: (a) => D.mirror(a) },
     { icon: 'massProps', label: '质量属性', run: (a) => a.showMassProperties() },
+    { icon: 'sectionPlane', label: '截面属性', run: (a) => a.showSectionProperties() },
   ];
 }
 

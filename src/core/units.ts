@@ -93,6 +93,12 @@ export function formatVolume(mm3: number, sys: UnitSystem): string {
   return `${fix(convertVolume(mm3, sys), u.digits.vol)} ${u.volUnit}`;
 }
 
+/** 惯性矩（长度⁴）值 + 单位 */
+export function formatInertia(mm4: number, sys: UnitSystem): string {
+  const u = UNIT_BY_ID[sys];
+  return `${fix(convertVolume(mm4, sys), u.digits.vol + 1)} ${u.volUnit.replace('³', '⁴')}`;
+}
+
 /** 仅数值（用于坐标等已自带上下文的位置） */
 export function fmtCoord(mm: number, sys: UnitSystem): string {
   return trim(convertLength(mm, sys), UNIT_BY_ID[sys].digits.len);
