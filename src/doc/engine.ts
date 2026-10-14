@@ -685,6 +685,28 @@ export function buildMeshResult(shape: any, linear = TESS_LINEAR, angular = TESS
     faceMetas.push({ id: i, area: 0, centroid: [0, 0, 0], normal: [0, 0, 1], surfaceType: 'other' });
   }
 
+  // 实体归属（供主线程「选择过滤器 = 实体」使用）：
+  // 按 bodiesOf 展开顺序逐 body 枚举面，用 IsSame 与 tessellate 的 faceList 匹配。
+  // 注意 bodiesOf 顺序 ≠ compound 的 TopExp 面序，所以不能按顺序拼，必须逐个 IsSame 比对。
+  try {
+    const bodies = S.bodiesOf(shape);
+    if (bodies.length > 1) {
+      for (let b = 0; b < bodies.length; b++) {
+        for (const f of S.faces(bodies[b])) {
+          for (let i = 0; i < md.faceList.length; i++) {
+            if (faceMetas[i].bodyIndex !== undefined) continue;
+            if (md.faceList[i].IsSame(f)) {
+              faceMetas[i].bodyIndex = b;
+              break;
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    /* IsSame 不可用时退化为无实体归属（行为与旧版一致） */
+  }
+
   // 特征边：离散成折线，并附元数据（中点/方向/长度）
   const eis = featureEdgeInfos(shape, 25);
   const edgePolylines: number[][] = [];

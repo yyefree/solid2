@@ -42,6 +42,8 @@ export interface Selection {
   edges: number[];
   /** 顶点索引（对应网格顶点缓冲区下标；仅选择过滤器为「顶点」时使用） */
   vertices: number[];
+  /** 实体索引（对应 bodiesOf 展开顺序；仅选择过滤器为「实体」时使用） */
+  bodies: number[];
 }
 
 export type AppEvent =
@@ -71,13 +73,15 @@ export class App {
   doc = new CadDocument();
   shapeView: ShapeView | null = null;
   mode: AppMode = 'model';
-  selection: Selection = { faces: [], edges: [], vertices: [] };
+  selection: Selection = { faces: [], edges: [], vertices: [], bodies: [] };
   /** 选择过滤器（SolidWorks 状态栏 / 快捷键 F5）—— 'all' 不过滤（默认，行为不变） */
-  selectionFilter: 'all' | 'face' | 'edge' | 'vertex' = 'all';
+  selectionFilter: 'all' | 'face' | 'edge' | 'vertex' | 'body' = 'all';
   /** 零件外观色（十六进制，Heads-up「外观」下拉设置；默认 materials.ts 的 COLORS.body） */
   appearanceHex: number = COLORS.body;
   /** 当前光源预设名（Heads-up「光源」下拉） */
   lightPreset: string = '默认';
+  /** RealView 图形（Heads-up「RealView」按钮）—— 实体材质带环境反射 */
+  realView = false;
   /** 设计树中当前选中的特征 id（供属性管理器显示）—— SolidWorks「属性管理器」接管选中的特征 */
   selectedFeatureId: string | null = null;
 
@@ -196,7 +200,7 @@ export class App {
   }
 
   /** 设置选择过滤器（SolidWorks 状态栏 Filter） */
-  setSelectionFilter(f: 'all' | 'face' | 'edge' | 'vertex'): void {
+  setSelectionFilter(f: 'all' | 'face' | 'edge' | 'vertex' | 'body'): void {
     this.selectionFilter = f;
     this.emit('selection', 'props');
   }
@@ -212,6 +216,13 @@ export class App {
   setLightPreset(name: string): void {
     this.lightPreset = name;
     this.viewport.setLightPreset(name);
+    this.emit('view');
+  }
+
+  /** RealView 图形（Heads-up 按钮，SolidWorks 同名显示效果） */
+  setRealView(on: boolean): void {
+    this.realView = on;
+    this.viewport.setRealView(on);
     this.emit('view');
   }
 
@@ -442,7 +453,7 @@ export class App {
       this.viewport.root.add(sv.group);
       this.shapeView = sv;
     }
-    this.selection = { faces: [], edges: [], vertices: [] };
+    this.selection = { faces: [], edges: [], vertices: [], bodies: [] };
     this.refreshHighlight();
     if (fit) {
       this.viewport.zoomFit(m?.bbox ?? null);
@@ -463,13 +474,13 @@ export class App {
   // 选择
   // ============================================================
   clearSelection(): void {
-    this.selection = { faces: [], edges: [], vertices: [] };
+    this.selection = { faces: [], edges: [], vertices: [], bodies: [] };
     this.refreshHighlight();
     this.emit('selection', 'props');
   }
 
   selectFace(index: number, additive = false): void {
-    if (this.selectionFilter === 'edge' || this.selectionFilter === 'vertex') return;
+    if (this.selectionFilter === 'edge' || this.selectionFilter === 'vertex' || this.selectionFilter === 'body') return;
     if (!additive) this.selection.edges = [];
     if (additive) {
       const i = this.selection.faces.indexOf(index);
@@ -483,7 +494,7 @@ export class App {
   }
 
   selectEdge(index: number, additive = false): void {
-    if (this.selectionFilter === 'face' || this.selectionFilter === 'vertex') return;
+    if (this.selectionFilter === 'face' || this.selectionFilter === 'vertex' || this.selectionFilter === 'body') return;
     if (!additive) this.selection.faces = [];
     if (additive) {
       const i = this.selection.edges.indexOf(index);
@@ -593,6 +604,17 @@ export class App {
         new THREE.Points(geo, new THREE.PointsMaterial({ color: COLORS.selectEdge, size: 8, sizeAttenuation: false }))
       );
     }
+    // 实体高亮：该实体的所有面用选中面同款半透明材质（选择过滤器为「实体」）
+    if (this.selection.bodies.length) {
+      const metas = this.currentModel()?.mesh.faceMetas ?? [];
+      for (const bi of this.selection.bodies) {
+        for (let fi = 0; fi < metas.length; fi++) {
+          if ((metas[fi].bodyIndex ?? -1) !== bi) continue;
+          const geo = sv.faceGeometry(fi);
+          if (geo) this.highlightGroup.add(new THREE.Mesh(geo, faceMat));
+        }
+      }
+    }
     this.viewport.invalidate();
   }
 
@@ -671,6 +693,23 @@ export class App {
       if (vi !== null) {
         this.selectVertex(vi, additive);
         this.setStatus('已选择顶点', 'ok');
+      } else {
+        this.clearSelection();
+      }
+      return;
+    }
+
+    // 过滤为「实体」时：命中的面反查 bodyIndex，选中整个实体（装配体语义）
+    if (this.selectionFilter === 'body') {
+      const hits = rc.intersectObject(sv.mesh, false);
+      let picked = -1;
+      if (hits.length && hits[0].faceIndex !== undefined) {
+        const fi = sv.faceIndexFromTriangle(hits[0].faceIndex);
+        if (fi >= 0) picked = this.bodyIndexOfFace(fi);
+      }
+      if (picked >= 0) {
+        this.selectBody(picked, additive);
+        this.setStatus('已选择实体', 'ok', `实体 ${picked + 1}`);
       } else {
         this.clearSelection();
       }
@@ -893,6 +932,32 @@ export class App {
     if (!sv) return null;
     void rc;
     return this.pickEdgeIn(sv, sx, sy);
+  }
+
+  /** 选中一个实体（选择过滤器为「实体」时专用；经命中的面反查 bodyIndex） */
+  selectBody(index: number, additive = false): void {
+    if (this.selectionFilter !== 'body' && this.selectionFilter !== 'all') return;
+    if (!additive) {
+      this.selection.faces = [];
+      this.selection.edges = [];
+      this.selection.vertices = [];
+    }
+    if (additive) {
+      const i = this.selection.bodies.indexOf(index);
+      if (i >= 0) this.selection.bodies.splice(i, 1);
+      else this.selection.bodies.push(index);
+    } else {
+      this.selection.bodies = [index];
+    }
+    this.refreshHighlight();
+    this.emit('selection', 'props');
+  }
+
+  /** 命中的面所属实体下标（无归属信息时 -1） */
+  bodyIndexOfFace(fi: number): number {
+    const m = this.currentModel();
+    const bi = m?.mesh.faceMetas[fi]?.bodyIndex;
+    return bi ?? -1;
   }
 
   /**
@@ -1693,6 +1758,7 @@ export class App {
     }
     this.selection = {
       faces: m.mesh.faceMetas.map((_, i) => i),
+      bodies: [],
       edges: [],
       vertices: [],
     };

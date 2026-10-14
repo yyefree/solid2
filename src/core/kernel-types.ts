@@ -33,6 +33,8 @@ export interface FaceMeta {
   area: number;
   centroid: Vec3;
   normal: Vec3;
+  /** 所属实体下标（多实体模型；顺序同 bodiesOf 展开顺序；旧数据可能缺失） */
+  bodyIndex?: number;
   /** 解析曲面类型（可选；旧数据可能缺失） */
   surfaceType?: FaceSurfaceType;
   /** 圆柱/圆锥/圆环面的轴线 */

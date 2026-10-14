@@ -2,9 +2,8 @@
  * SolidWorks Heads-up 视图工具栏（图形区顶部居中）。
  *
  * 从左到右与 SolidWorks 一致：
- *   视图定向 · 显示样式 · 隐藏/显示项目 · 应用布景 · 剖面视图 · 整屏显示 ·
- *   缩放至区域 · 放大 · 缩小 · 上一视图 · 旋转视图 · 编辑外观 · 光源 ·
- *   视图设置 · 显示模式
+ *   视图定向 · 显示样式 · 隐藏/显示项目 · 编辑外观 · 应用布景 · 光源 · 整屏显示 ·
+ *   缩放至区域 · 放大 · 缩小 · 剖面视图 · RealView · 上一视图 · 旋转视图
  */
 import { el } from './dom';
 import { icon } from './icons';
@@ -127,6 +126,13 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
     { label: '沿 Z 轴剖切', icon: 'front', checked: app.sectionAxis === 'z', run: () => app.setSection('z') },
   ]);
   const huPrev = btn('view.prevView', '上一视图', 'prevView', () => app.prevView());
+  const huRealView = btn(
+    'view.realview',
+    'RealView',
+    'realview',
+    () => app.setRealView(!app.realView),
+    'toggle'
+  );
   bar.append(
     huOrient,
     huStyle,
@@ -139,6 +145,7 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
     huZoomIn,
     huZoomOut,
     huSection,
+    huRealView,
     huPrev,
     huRotate
   );
@@ -152,6 +159,7 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
       b.classList.toggle('on', id === 'view.section' && app.sectionAxis !== 'none');
     });
     huRotate.classList.toggle('on', rotateActive);
+    huRealView.classList.toggle('on', app.realView);
   };
   refresh();
   app.on('view', refresh);

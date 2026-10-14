@@ -244,7 +244,7 @@ check('菜单栏含 SolidWorks 七菜单', wantMenus.every((w) => sw.menuItems.s
 check('菜单栏含命令搜索框', sw.search);
 const wantTabs = ['特征', '草图', '评估', '装配体', '工程图', '曲线', '视图', 'AI'];
 check('Ribbon 含 8 个 CommandManager 页签', wantTabs.every((w) => sw.tabs.includes(w)), sw.tabs.join(' '));
-check('Heads-up 视图工具栏已渲染（13 按钮）', sw.headsUpBtns === 13, '按钮数 ' + sw.headsUpBtns);
+check('Heads-up 视图工具栏已渲染（14 按钮）', sw.headsUpBtns === 14, '按钮数 ' + sw.headsUpBtns);
 check(
   'Heads-up 含 旋转视图 / 编辑外观 / 光源 三个新入口',
   ['view.rotate', 'view.appearance', 'view.lighting'].every((c) => sw.headsUpCmds.includes(c)),
@@ -1061,6 +1061,42 @@ const ai = await (async () => {
     process.exit(1);
   }
 })();
+
+// ---- G6. 选择过滤器「实体」：bodyIndex 归属 + 拾取门控（第五轮交付） ----
+const bodyFilter = await evaluate(`(async () => {
+  const app = window.__solid2.app;
+  const ai = await import('/src/ai/index.ts');
+  try {
+    const { compiled } = await ai.interpret('20x20x20 的长方体，复制一份沿X偏移10');
+    app.loadFeatures(compiled.features, { replace: true, fit: false });
+    await app.rebuild();
+    const metas = app.model?.mesh.faceMetas ?? [];
+    const bodies = app.model?.stats.solids ?? 0;
+    const withBody = metas.filter((m) => m.bodyIndex !== undefined).length;
+    app.clearSelection();
+    app.setSelectionFilter('body');
+    app.selectFace(0);
+    const faceRejected = app.selection.faces.length === 0;
+    app.selectEdge(0);
+    const edgeRejected = app.selection.edges.length === 0;
+    app.selectBody(0);
+    const bodyPicked = app.selection.bodies.length === 1 && app.selection.bodies[0] === 0;
+    app.clearSelection();
+    app.setSelectionFilter('vertex');
+    app.selectFace(0);
+    app.selectEdge(0);
+    const vertexModeRejects = app.selection.faces.length === 0 && app.selection.edges.length === 0;
+    app.clearSelection();
+    app.setSelectionFilter('all');
+    return { bodies, withBody, metas: metas.length, faceRejected, edgeRejected, bodyPicked, vertexModeRejects, err: '' };
+  } catch (e) {
+    return { err: String(e && e.message ? e.message : e) };
+  }
+})()`);
+check('多实体模型的面元数据带 bodyIndex 归属', !bodyFilter.err && bodyFilter.bodies === 2 && bodyFilter.withBody === bodyFilter.metas && bodyFilter.metas > 0, JSON.stringify(bodyFilter));
+check('过滤器=实体：selectFace/selectEdge 被门控拒绝', bodyFilter.faceRejected && bodyFilter.edgeRejected, JSON.stringify(bodyFilter));
+check('过滤器=实体：selectBody 选中整个实体', bodyFilter.bodyPicked, JSON.stringify(bodyFilter));
+check('过滤器=顶点：面/边选择同样被门控', bodyFilter.vertexModeRejects, JSON.stringify(bodyFilter));
 
 for (const s of ai.steps) {
   console.log(`    ${s.text.slice(0, 28).padEnd(30)} 体积=${s.volume.toFixed(2).padStart(10)}  ${s.features} 特征 / ${s.faces} 面`);

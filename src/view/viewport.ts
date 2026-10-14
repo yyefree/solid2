@@ -15,6 +15,7 @@
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 export type ViewDir = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom' | 'iso' | 'isoBack';
 export type ProjectionMode = 'perspective' | 'orthographic';
@@ -190,6 +191,9 @@ export class Viewport {
   private keyLight!: THREE.DirectionalLight;
   private fillLight!: THREE.DirectionalLight;
   private rimLight!: THREE.DirectionalLight;
+  /** 预过滤环境贴图（RealView 用；默认不挂到 scene，保持经典 CAD 外观） */
+  private envTexture: THREE.Texture | null = null;
+  private realView = false;
 
   private setupLights(): void {
     this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x8a93a0, 1.15);
@@ -208,6 +212,24 @@ export class Viewport {
     this.scene.add(this.rimLight);
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+    // RealView：预过滤环境贴图（默认不启用，仅 heads-up「RealView」打开时挂上）
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const env = pmrem.fromScene(new RoomEnvironment(), 0.04);
+    this.envTexture = env.texture;
+    pmrem.dispose();
+  }
+
+  /** RealView 图形：给实体材质加环境反射（SolidWorks 同名显示效果）。
+   *  只开关 scene.environment，不改光源——LineBasic/Basic 材质不受影响，网格/基准面保持原样。 */
+  setRealView(on: boolean): void {
+    this.realView = on;
+    this.scene.environment = on ? this.envTexture : null;
+    this.invalidate();
+  }
+
+  get realViewOn(): boolean {
+    return this.realView;
   }
 
   /**

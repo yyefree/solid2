@@ -16,6 +16,7 @@ const FILTER_LABEL: Record<App['selectionFilter'], string> = {
   face: '仅面',
   edge: '仅边',
   vertex: '顶点',
+  body: '实体',
 };
 
 export function buildStatusbar(app: App, host: HTMLElement): void {
@@ -58,6 +59,7 @@ export function buildStatusbar(app: App, host: HTMLElement): void {
         mk('face', '只能拾取面'),
         mk('edge', '只能拾取边'),
         mk('vertex', '只能拾取顶点（就近 8px）'),
+        mk('body', '只能拾取实体（整实体选中）'),
       ],
       r.left,
       Math.max(4, r.top - 130),

@@ -75,6 +75,7 @@ export const HOTKEYS: HotkeyDef[] = [
   { id: 'view.shortcutBar', label: '快捷方式栏', keys: 'S', group: '视图', run: (a) => openShortcutBar(a) },
   { id: 'view.prevView', label: '上一视图', keys: 'Ctrl+Shift+V', group: '视图', run: (a) => a.prevView() },
   { id: 'view.rotate', label: '旋转视图', keys: '—', group: '视图', run: (a) => setRotateMode(a, true) },
+  { id: 'view.realview', label: 'RealView 图形', keys: '—', group: '视图', run: (a) => a.setRealView(!a.realView) },
 
   { id: 'view.front', label: '前视', keys: 'Ctrl+1', group: '视图方向', run: (a) => a.setView('front') },
   { id: 'view.back', label: '后视', keys: 'Ctrl+2', group: '视图方向', run: (a) => a.setView('back') },
