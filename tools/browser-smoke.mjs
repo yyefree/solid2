@@ -272,7 +272,8 @@ const ctxLabels = await evaluate(`(() => {
 })()`);
 check('图形区右键菜单含「更多命令…」飞出', ctxLabels.includes('更多命令…'), ctxLabels.join(' / '));
 
-// 点开「参数表」确认对话框与表达式表格渲染出来
+// 点开「参数表」确认它在 PropertyManager（左面板「属性管理器」页签）内嵌渲染，
+// 不再是居中模态框——这正是 SolidWorks  PropertyManager 的交互形态。
 // 注意：Ribbon 点击会先 await 内核就绪，所以这里必须等内核加载完再做（放在 B 段之后）
 const paramDialog = await (async () => {
   await waitFor('window.__solid2.app.kernelReady === true', 90000, '内核就绪（对话框检查）');
@@ -283,21 +284,66 @@ const paramDialog = await (async () => {
   const btn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '参数表');
   if (!btn) return { opened: false, reason: '按钮缺失' };
   btn.click();
-  for (let i = 0; i < 40 && !document.querySelector('.modal'); i++) await new Promise(r => setTimeout(r, 50));
-  const modal = document.querySelector('.modal');
-  const head = modal?.querySelector('.modal-head')?.textContent ?? '';
-  const table = modal?.querySelector('table.expr-table');
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await new Promise(r => setTimeout(r, 50));
+  const pm = document.querySelector('.pm');
+  const head = pm?.querySelector('.pm-head .pm-title')?.textContent ?? '';
+  const kind = pm?.querySelector('.pm-head .pm-kind')?.textContent ?? '';
+  const table = pm?.querySelector('table.expr-table');
   const cols = table ? [...table.querySelectorAll('thead th')].map(th => th.textContent.trim()) : [];
-  const hasAddBtn = !![...document.querySelectorAll('.modal .btn')].find(b => b.textContent.includes('添加参数'));
-  const hasHint = (modal?.textContent ?? '').includes('=');
-  document.querySelector('.modal-mask')?.remove();
-  return { opened: !!modal, head, cols, hasAddBtn, hasHint };
+  const hasAddBtn = !![...document.querySelectorAll('.pm .btn')].find(b => b.textContent.includes('添加参数'));
+  const hasHint = (pm?.textContent ?? '').includes('=');
+  const propTabActive = !!document.querySelector('.ptab[data-ltab="prop"]')?.classList.contains('active');
+  const maskCount = document.querySelectorAll('.modal-mask').length;
+  const closeBtn = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '关闭');
+  closeBtn?.click();
+  return { opened: !!pm, head, kind, cols, hasAddBtn, hasHint, propTabActive, maskCount, closed: !document.querySelector('.pm') };
 })()`);
 })();
-check('「参数表」对话框可打开', paramDialog.opened, paramDialog.head);
+check('「参数表」在 PropertyManager 内嵌打开（无模态遮罩）', paramDialog.opened && paramDialog.maskCount === 0 && paramDialog.kind === '属性管理器', paramDialog.head);
 check('参数表含 名称/表达式/值 三列', JSON.stringify(paramDialog.cols) === JSON.stringify(['名称', '表达式', '值', '']),
   JSON.stringify(paramDialog.cols));
 check('参数表含「添加参数」按钮与用法说明', paramDialog.hasAddBtn && paramDialog.hasHint);
+check('打开参数表时左侧自动切到「属性管理器」页签', paramDialog.propTabActive);
+check('点 PropertyManager 底部「关闭」后面板收起', paramDialog.closed);
+
+// PropertyManager 实质断言：点特征按钮 → 无 .modal-mask、.pm 渲染、底部 ✓/✗ 动作可关闭
+const pmFeature = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  // 「线性阵列」按钮要求已有特征；空文档时先造一个长方体，验完删掉（不污染后续段）
+  let addedId = null;
+  if (!app.doc.features.length) {
+    const { newId } = await import('/src/sketch/types.ts');
+    addedId = newId('f');
+    app.addFeature({
+      id: addedId, type: 'primitive', name: '长方体',
+      params: { kind: 'box', dims: [20, 20, 20], origin: [0, 0, 0], operation: 'new' },
+    });
+  }
+  const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.includes('特征'));
+  if (tab) tab.click();
+  await new Promise(r => setTimeout(r, 60));
+  const btn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '线性阵列');
+  if (!btn) {
+    if (addedId) app.removeFeature(addedId);
+    return { opened: false, reason: '按钮缺失' };
+  }
+  btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await new Promise(r => setTimeout(r, 50));
+  const pm = document.querySelector('.pm');
+  const head = pm?.querySelector('.pm-head .pm-title')?.textContent ?? '';
+  const footBtns = pm ? [...pm.querySelectorAll('.pm-foot .btn')].map(b => b.textContent.trim()) : [];
+  const bodyFields = pm ? pm.querySelectorAll('.pm-body .field').length : 0;
+  const maskCount = document.querySelectorAll('.modal-mask').length;
+  const propTabActive = !!document.querySelector('.ptab[data-ltab="prop"]')?.classList.contains('active');
+  const cancel = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '取消');
+  cancel?.click();
+  if (addedId) app.removeFeature(addedId);
+  return { opened: !!pm, head, footBtns, bodyFields, maskCount, propTabActive, closed: !document.querySelector('.pm') };
+})()`);
+check('特征按钮在 PropertyManager 打开（非模态、有标题/字段/底部动作）',
+  pmFeature.opened && pmFeature.maskCount === 0 && pmFeature.bodyFields > 0 && pmFeature.footBtns.length >= 2,
+  `${pmFeature.head} | 字段 ${pmFeature.bodyFields} | 动作 ${pmFeature.footBtns.join('/')}`);
+check('特征 PropertyManager 底部动作可关闭', pmFeature.closed);
 
 // 「曲线」页签也点一下，确认弹簧/涡状线在（上轮交付）
 const curve = await evaluate(`(() => {
@@ -714,24 +760,28 @@ const ex = await (async () => {
     out.roundParams = round.params.map(p => p.name);
     out.roundExpr = round.features[1]?.expressions?.distance ?? '';
 
-    // --- E5. 表达式对话框 DOM ---
+    // --- E5. 表达式对话框 DOM（渲染在 PropertyManager，不是模态框） ---
     const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.includes('特征'));
     if (tab) tab.click();
     await new Promise(r => setTimeout(r, 60));
     const btn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '表达式');
-    out.exprDialog = { opened: false, head: '', hasSelect: false, hasInput: false, found: !!btn };
+    out.exprDialog = { opened: false, head: '', hasSelect: false, hasInput: false, found: !!btn, maskCount: 0, closed: false };
     if (btn) {
       btn.click();
-      for (let i = 0; i < 40 && !document.querySelector('.modal'); i++) await new Promise(r => setTimeout(r, 50));
-      const modal = document.querySelector('.modal');
+      for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await new Promise(r => setTimeout(r, 50));
+      const pm = document.querySelector('.pm');
       out.exprDialog = {
-        opened: !!modal,
-        head: modal?.querySelector('.modal-head')?.textContent ?? '',
-        hasSelect: !!modal?.querySelector('select'),
-        hasInput: !!modal?.querySelector('input.inp.wide'),
+        opened: !!pm,
+        head: pm?.querySelector('.pm-head .pm-title')?.textContent ?? '',
+        hasSelect: !!pm?.querySelector('select'),
+        hasInput: !!pm?.querySelector('input.inp.wide'),
         found: true,
+        maskCount: document.querySelectorAll('.modal-mask').length,
+        closed: false,
       };
-      document.querySelector('.modal-mask')?.remove();
+      const closeBtn = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '关闭');
+      closeBtn?.click();
+      out.exprDialog.closed = !document.querySelector('.pm');
     }
 
     // 清理，恢复空文档
@@ -765,8 +815,9 @@ check('表达式问题进入 issues（带位置）', ex.issueCount === 1 && ex.i
 check('复合公式 + 函数（板厚*2+sqrt(16)=44 → 66000）', near(ex.steps[2].volume, 66000, 1e-3), ex.steps[2].volume.toFixed(2));
 check('序列化保留参数表', JSON.stringify(ex.roundParams) === JSON.stringify(['板厚']), JSON.stringify(ex.roundParams));
 check('序列化保留特征表达式', ex.roundExpr === '=板厚*2 + sqrt(16)', ex.roundExpr);
-check('「表达式」对话框可打开', ex.exprDialog.opened, `${ex.exprDialog.head}（按钮=${ex.exprDialog.found}）`);
-check('表达式对话框含参数下拉与输入框', ex.exprDialog.hasSelect && ex.exprDialog.hasInput);
+check('「表达式」在 PropertyManager 内打开（无模态遮罩）', ex.exprDialog.opened && ex.exprDialog.maskCount === 0, `${ex.exprDialog.head}（按钮=${ex.exprDialog.found}）`);
+check('表达式含参数下拉与输入框', ex.exprDialog.hasSelect && ex.exprDialog.hasInput);
+check('表达式 PropertyManager 可关闭', ex.exprDialog.closed);
 
 // ==================================================================
 // F. 草图高级曲线族：圆锥曲线 + B 样条（真实 Worker 内核）

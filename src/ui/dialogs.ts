@@ -131,7 +131,7 @@ export const featureDialogs = {
       el('div', { class: 'hint' }, '弹簧 = 圆截面沿螺旋线放样；中径 = 外径 − 线径。锥度让半径沿轴向线性变化（正数向外扩）。')
     );
 
-    modal({
+    modal({ host: 'pm',
       title: '弹簧', body,
       actions: [
         { label: '取消' },
@@ -211,7 +211,7 @@ export const featureDialogs = {
       el('div', { class: 'hint' }, '阿基米德螺线 r = 起始半径 + 每圈增量 × 圈数占比；带材沿径向加厚成闭合轮廓后沿法向拉伸。')
     );
 
-    modal({
+    modal({ host: 'pm',
       title: '涡状线', body,
       actions: [
         { label: '取消' },
@@ -269,7 +269,7 @@ export const featureDialogs = {
       body.appendChild(row.row);
       inputs.push(row.input);
     }
-    modal({
+    modal({ host: 'pm',
       title: `插入 ${kind === 'box' ? '长方体' : kind === 'cylinder' ? '圆柱' : kind === 'sphere' ? '球' : kind === 'cone' ? '圆锥' : '圆环'}`,
       body,
       actions: [
@@ -302,7 +302,7 @@ export const featureDialogs = {
       r2.row,
       el('div', { class: 'hint' }, '两个半径不同时生成**变半径圆角**：半径沿边从起点值线性过渡到末端值；相同则等价于普通定半径圆角。')
     );
-    modal({
+    modal({ host: 'pm',
       title: `圆角（已选 ${edges.length} 条边）`,
       body,
       actions: [
@@ -346,7 +346,7 @@ export const featureDialogs = {
       uni.row, fRow.row, fx.row, fy.row, fz.row, cx.row, cy.row, cz.row,
       el('div', { class: 'hint' }, '中心点是缩放的不动点（默认取模型包围盒中心，即原地缩放）。非均匀缩放会把圆柱变成椭圆柱——此时「圆柱面」不再存在。')
     );
-    modal({
+    modal({ host: 'pm',
       title: '缩放',
       body,
       actions: [
@@ -405,7 +405,7 @@ export const featureDialogs = {
       planeRow.row, offRow.row, keepRow.row,
       el('div', { class: 'hint' }, '用一张垂直于所选基准面的无限平面切开实体。保留两侧时结果是多个实体（复合体），后续特征会作用在整体上。')
     );
-    modal({
+    modal({ host: 'pm',
       title: '分割',
       body,
       actions: [
@@ -457,7 +457,7 @@ export const featureDialogs = {
     body.append(
       el('div', { class: 'hint' }, '先绕所选轴（过原点）旋转，再整体平移。勾选「复制」会保留原件，并沿同一方向生成多份副本（第 i 份施加 i 倍变换）。')
     );
-    modal({
+    modal({ host: 'pm',
       title: '移动/复制实体',
       body,
       actions: [
@@ -502,7 +502,7 @@ export const featureDialogs = {
       ...list.rows,
       el('div', { class: 'hint' }, `当前共 ${count} 个实体。勾选要删除的实体；至少要保留一个。`)
     );
-    modal({
+    modal({ host: 'pm',
       title: '删除实体',
       body,
       actions: [
@@ -545,7 +545,7 @@ export const featureDialogs = {
       opRow.row,
       el('div', { class: 'hint' }, '把工具体依次与主体做布尔运算；未被选中的实体会原样保留。')
     );
-    modal({
+    modal({ host: 'pm',
       title: '组合',
       body,
       actions: [
@@ -670,7 +670,7 @@ export const featureDialogs = {
     throughRow.input.addEventListener('change', sync);
     sync();
 
-    modal({
+    modal({ host: 'pm',
       title: '异型孔向导', body,
       actions: [
         { label: '取消' },
@@ -743,7 +743,7 @@ export const featureDialogs = {
     kindRow.select.addEventListener('change', sync);
     sync();
 
-    modal({
+    modal({ host: 'pm',
       title: '基准面', body,
       actions: [
         { label: '取消' },
@@ -807,7 +807,7 @@ export const featureDialogs = {
     const angRow = numberField('拔模角 (°)', 5, () => {}, { min: 0, max: 89, step: 1, unit: '°' });
     const revRow = checkField('反向（向内/向外互换）', false, () => {});
     body.append(neutralRow.row, angRow.row, revRow.row);
-    modal({
+    modal({ host: 'pm',
       title: '拔模', body,
       actions: [
         { label: '取消' },
@@ -849,7 +849,7 @@ export const featureDialogs = {
     const dpRow = numberField('深度', 10, () => {}, { min: 0.1, step: 1, unit: 'mm' });
     const symRow = checkField('对称拉伸', false, () => {});
     body.append(thRow.row, dpRow.row, symRow.row);
-    modal({
+    modal({ host: 'pm',
       title: '筋', body,
       actions: [
         { label: '取消' },
@@ -878,7 +878,7 @@ export const featureDialogs = {
     const spRow = numberField('间距', 20, () => {}, { unit: 'mm' });
     const cntRow = numberField('数量', 3, () => {}, { min: 2, step: 1 });
     body.append(dirRow.row, dirY.row, dirZ.row, spRow.row, cntRow.row);
-    modal({
+    modal({ host: 'pm',
       title: '线性阵列', body,
       actions: [
         { label: '取消' },
@@ -909,7 +909,7 @@ export const featureDialogs = {
     const cntRow = numberField('数量', 4, () => {}, { min: 2, step: 1 });
     const angRow = numberField('总角度 (°)', 360, () => {}, {});
     body.append(axO.row, axOY.row, axOZ.row, axD.row, axDY.row, axDZ.row, cntRow.row, angRow.row);
-    modal({
+    modal({ host: 'pm',
       title: '圆周阵列', body,
       actions: [
         { label: '取消' },
@@ -939,7 +939,7 @@ export const featureDialogs = {
     const nY = numberField('法向 Y', 0, () => {}, {});
     const nZ = numberField('法向 Z', 1, () => {}, {});
     body.append(pRow.row, pY.row, pZ.row, nRow.row, nY.row, nZ.row);
-    modal({
+    modal({ host: 'pm',
       title: '镜像', body,
       actions: [
         { label: '取消' },
@@ -1008,7 +1008,7 @@ export const featureDialogs = {
     const valRow = numberField('数值', 0, () => {}, { unit: 'mm / °' });
     const hint = el('div', { class: 'hint' }, picks.length === 0 ? '提示：先在视口点选两个参考（平面/棱边/圆柱面）再执行本命令' : '');
     body.append(sel.row, refModeRow.row, c1Row.row, c2Row.row, valRow.row, hint);
-    modal({
+    modal({ host: 'pm',
       title: '添加配合', body,
       actions: [
         { label: '取消' },
@@ -1133,7 +1133,7 @@ export const featureDialogs = {
       { value: 'all', label: '总宽高 + 各直线边' },
     ], () => {});
     body.appendChild(modeRow.row);
-    modal({
+    modal({ host: 'pm',
       title: '自动标注',
       body,
       actions: [
@@ -1178,7 +1178,7 @@ export const featureDialogs = {
     const loRow = numberField('下偏差', 0, () => {}, { step: 0.01, unit: 'mm' });
     const preRow = textField('前缀（如 φ / ⌀）', '', () => {});
     body.append(selDim.row, symRow.row, upRow.row, loRow.row, preRow.row, el('div', { class: 'hint' }, '说明：± > 0 时按对称公差渲染；否则用上/下偏差渲染成上下堆叠。清空前缀可移除。'));
-    modal({
+    modal({ host: 'pm',
       title: '尺寸公差',
       body,
       actions: [
@@ -1215,7 +1215,7 @@ export const featureDialogs = {
     const datRow = textField('基准（如 A / A-B）', 'A', () => {});
     const diaRow = checkField('标注 ⌀（尺寸要素为孔径）', false, () => {});
     body.append(viewRow.row, symRow.row, tolRow.row, datRow.row, diaRow.row);
-    modal({
+    modal({ host: 'pm',
       title: '形位公差标注',
       body,
       actions: [
@@ -1249,7 +1249,7 @@ export const featureDialogs = {
     const c = textField('图号', s.code, () => {});
     const m = textField('材料', s.material, () => {});
     body.append(t.row, c.row, m.row);
-    modal({
+    modal({ host: 'pm',
       title: '图纸属性', body,
       actions: [
         { label: '取消' },
@@ -1399,7 +1399,7 @@ export const featureDialogs = {
 
     render();
     const off = app.on('params', render);
-    modal({
+    modal({ host: 'pm',
       title: '参数表 · 全局参数与表达式',
       body: host,
       actions: [{ label: '关闭', primary: true }],
@@ -1489,7 +1489,7 @@ export const featureDialogs = {
 
     render();
     const off = app.on('params', render);
-    modal({
+    modal({ host: 'pm',
       title: `表达式 · ${sel.name}`,
       body: host,
       actions: [{ label: '关闭', primary: true }],

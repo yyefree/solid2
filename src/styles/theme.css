@@ -1924,6 +1924,51 @@ select.inp {
   color: var(--accent-dark);
 }
 
+/* ---------- PropertyManager（SolidWorks 属性管理器宿主） ---------- */
+.pm-host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.pm {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #fff;
+}
+.pm-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.pm-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-dark);
+}
+.pm-kind {
+  font-size: 10px;
+  color: var(--text-mute);
+}
+.pm-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+}
+.pm-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+
 /* ---------- 特征树（文件夹 / 折叠） ---------- */
 .tree-children {
   margin-left: 12px;

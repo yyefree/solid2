@@ -27,6 +27,7 @@ import { installMouseGestures } from './ui/shortcutbar';
 import { installHotkeys } from './app/hotkeys';
 import { el, clear } from './ui/dom';
 import { openPopup } from './ui/popup';
+import { bindPropertyManager, closePropertyManager } from './ui/propertymanager';
 import { icon } from './ui/icons';
 import './styles/theme.css';
 
@@ -52,6 +53,10 @@ async function boot() {
     const leftTabs = el('div', { class: 'panel-tabs' });
     const leftBodyTree = el('div', { class: 'panel-body' });
     const leftBodyProp = el('div', { class: 'panel-body' });
+    // 属性管理器 body 内叠放两个宿主：常规属性面板（pp）与 PropertyManager（pm，特征对话框）
+    const ppHost = el('div', { class: 'pp-host' });
+    const pmHost = el('div', { class: 'pm-host hidden' });
+    leftBodyProp.append(ppHost, pmHost);
     const leftBodyCfg = el('div', { class: 'panel-body' });
     leftPanel.append(leftTabs, leftBodyTree, leftBodyProp, leftBodyCfg);
 
@@ -115,8 +120,16 @@ async function boot() {
     buildStdToolbar(app, stdToolbarEl);
     renderRibbon(app, ribbonTabsEl, ribbonPanelEl);
     buildFeatureTree(app, leftBodyTree);
-    buildPropertyPanel(app, leftBodyProp);
+    buildPropertyPanel(app, ppHost);
     buildConfigPanel(app, leftBodyCfg);
+    // SolidWorks PropertyManager：特征对话框渲染进左侧「属性管理器」选项卡（非模态）
+    bindPropertyManager({
+      pp: ppHost,
+      pm: pmHost,
+      activate: () => {
+        if (leftActive !== 'prop') setLeftTab('prop');
+      },
+    });
     buildTaskPane(app, rightPanel);
     buildStatusbar(app, statusbarEl);
 

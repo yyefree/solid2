@@ -37,9 +37,22 @@ export interface ModalOptions {
   actions?: { label: string; primary?: boolean; danger?: boolean; onClick?: () => boolean | void }[];
   width?: number;
   onClose?: () => void;
+  /** 'pm' = 渲染进左侧属性管理器（SolidWorks PropertyManager，非模态）；默认 'modal' 居中模态框 */
+  host?: 'modal' | 'pm';
+}
+
+let pmOpener: ((opts: ModalOptions) => (() => void) | null) | null = null;
+
+/** 注入 PropertyManager 宿主（ui/propertymanager.ts 初始化时调用） */
+export function setPropertyManagerOpener(fn: ((opts: ModalOptions) => (() => void) | null) | null): void {
+  pmOpener = fn;
 }
 
 export function modal(opts: ModalOptions): () => void {
+  if (opts.host === 'pm' && pmOpener) {
+    const closePm = pmOpener(opts);
+    if (closePm) return closePm;
+  }
   const mask = el('div', { class: 'modal-mask' });
   const box = el('div', { class: 'modal' });
   if (opts.width) box.style.minWidth = `${opts.width}px`;

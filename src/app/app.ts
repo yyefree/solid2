@@ -28,6 +28,7 @@ import { Viewport, type ViewDir } from '../view/viewport';
 import { ShapeView, type DisplayStyle } from '../view/shapeview';
 import { COLORS, previewMaterial } from '../view/materials';
 import { notify, tableModal } from '../ui/toast';
+import { closePropertyManager } from '../ui/propertymanager';
 import { DEFAULT_PLANE, RIGHT_PLANE, TOP_PLANE, type SketchPlane } from '../sketch/types';
 import { SketchController, type SketchTool } from './sketchMode';
 import { Assembly, mateRefLabel, type MateRef, type Component } from './assembly';
@@ -291,6 +292,7 @@ export class App {
 
   /** 激活条目：换引用 + 刷新一切依赖文档的 UI */
   private activateEntry(entry: DocumentEntry): void {
+    closePropertyManager(); // PM 引用旧文档上下文，先关
     this.doc = entry.doc;
     this.model = entry.model;
     this.importedModel = entry.imported;
@@ -1427,6 +1429,7 @@ export class App {
 
   exitSketch(revert = false): void {
     if (!this.editingSketch) return;
+    closePropertyManager(); // 草图 PropertyManager 随退出关闭
     const f = this.editingSketch;
     this.editingSketch = null;
     this.activeSketchFeature = null;
