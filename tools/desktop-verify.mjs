@@ -281,17 +281,48 @@ if (opened === 'ok') {
   const info = await evaluate(`document.querySelector('.vp-info')?.textContent ?? ''`);
   check('模型已生成并渲染', built, info.trim());
 
+  // 体积走真实 UI：评估页签 →「模型统计」对话框（tableModal 的「体积」行）。
+  // 不用 window.__solid2——那个调试句柄只在 DEV 模式暴露，生产包里没有。
+  const statsOpen = await evaluate(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const tab = [...document.querySelectorAll('.rtab')].find((t) => t.textContent.trim() === '评估');
+    if (!tab) return 'no-tab';
+    tab.click();
+    await sleep(80);
+    const btn = [...document.querySelectorAll('.rbtn')].find((b) => b.textContent.trim() === '模型统计');
+    if (!btn) return 'no-btn';
+    btn.click();
+    for (let i = 0; i < 40 && !document.querySelector('.modal'); i++) await sleep(50);
+    return document.querySelector('.modal') ? 'opened' : 'no-modal';
+  })()`);
+  check('评估 → 模型统计 对话框已打开', statsOpen === 'opened', statsOpen);
+
   const summary = await evaluate(`(() => {
     const t = document.querySelector('.statusbar')?.textContent ?? '';
     const nodes = [...document.querySelectorAll('.panel-left .tnode')].map(n => n.querySelector('.label')?.textContent ?? '');
-    const vol = t.match(/体积\\s*([\\d.]+)/);
-    return { status: t.trim(), nodes, volume: vol ? Number(vol[1]) : 0 };
+    const modal = document.querySelector('.modal');
+    const rows = [];
+    if (modal) {
+      for (const tr of modal.querySelectorAll('tbody tr')) {
+        const tds = tr.querySelectorAll('td');
+        if (tds.length >= 2) rows.push([tds[0].textContent.trim(), tds[1].textContent.trim()]);
+      }
+    }
+    return { status: t.trim(), nodes, rows: rows };
   })()`);
   check('特征树已出现节点', summary.nodes.length > 0, summary.nodes.join(' → '));
   // 解析解：60×40×10 长方体 24000 − Φ16 通孔 2010.62 − 四角 R5 圆角 214.60 = 21774.78 mm³
   const expect = 24000 - Math.PI * 64 * 10 - 4 * (25 - (Math.PI * 25) / 4) * 10;
-  check('体积与解析解吻合', Math.abs(summary.volume - expect) < 1.0,
-    `${summary.volume.toFixed(2)} vs 解析解 ${expect.toFixed(2)} mm³`);
+  // 模型统计行（Node 侧解析，避免页面内 Number() 的 NaN 被 CDP 序列化成 null）
+  const cell = (label) => summary.rows.find((r) => r[0] === label)?.[1] ?? '';
+  const num = (label) => {
+    const m = /[\d.]+/.exec(cell(label).replace(/,/g, ''));
+    return m ? Number(m[0]) : 0;
+  };
+  const volume = num('体积');
+  const faces = num('面数');
+  check('体积与解析解吻合', faces > 0 && Math.abs(volume - expect) < 1.0,
+    `${volume.toFixed(2)} vs 解析解 ${expect.toFixed(2)} mm³（面数=${faces}，行=${JSON.stringify(summary.rows)}）`);
   console.log(`    状态栏："${summary.status}"`);
 }
 

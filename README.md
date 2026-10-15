@@ -438,7 +438,7 @@ node tools/all-features-demo.mjs --music my.wav    # 用指定 WAV 作为背景�
 
 ```bash
 npm run desktop:build    # 装配 → release/Solid2-win32-x64/Solid2.exe + Solid2-win32-x64.zip
-npm run desktop:verify   # 真的启动 exe，走 CDP 端到端验证（18 项断言）
+npm run desktop:verify   # 真的启动 exe，走 CDP 端到端验证（19 项断言）
 npm run desktop          # 开发态直接跑 Electron 壳（复用 dist/）
 ```
 
