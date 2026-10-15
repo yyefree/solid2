@@ -920,6 +920,34 @@ const lineExtrude = await evaluate(`(async () => {
 check('直线工具画矩形：链式闭合端点共享（4 点）', lineExtrude.lineCount === 4 && lineExtrude.ptCount === 4, `lines=${lineExtrude.lineCount} pts=${lineExtrude.ptCount}`);
 check('新建草图 → 直线轮廓 → 拉伸凸台：1 个实体、入树、无「未封闭」错误', lineExtrude.solids === 1 && lineExtrude.treeHasExtrude && !lineExtrude.err, `solids=${lineExtrude.solids} vol=${(lineExtrude.volume || 0).toFixed(1)} err=${lineExtrude.err || '无'}`);
 
+// 槽口（3 次点击闭合）→ 拉伸，回归：绘制预览中 cur 为空时曾对 null 取 [0] 崩溃
+const slotExtrude = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild();
+  app.startSketch('front'); await sleep(30);
+  const sk = app.sketch; sk.setTool('slot');
+  const cv = document.querySelector('canvas');
+  const r = cv ? cv.getBoundingClientRect() : { left: 0, top: 0, width: 800, height: 600 };
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  for (const [dx, dy] of [[-40, 0], [40, 0], [0, 20]]) sk.handleClick(cx + dx, cy + dy, false);
+  const out = { ents: app.editingSketch.params.sketch.entities.map(e => e.kind) };
+  app.exitSketch(false); await sleep(30);
+  const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.trim() === '特征');
+  if (tab) tab.click(); await sleep(60);
+  const eb = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '拉伸凸台');
+  if (eb) eb.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const ok = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '确定');
+  if (ok) ok.click(); await sleep(250); await app.rebuild();
+  out.solids = app.model?.stats?.solids ?? 0;
+  out.volume = app.model?.stats?.volume ?? 0;
+  out.err = app.doc.features.map(x => x.error).filter(Boolean).join('; ');
+  for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild();
+  return out;
+})()`);
+check('新建草图 → 槽口 → 拉伸凸台：闭合轮廓出 1 个实体、无错误', slotExtrude.solids === 1 && !slotExtrude.err, `ents=${(slotExtrude.ents || []).join('+')} solids=${slotExtrude.solids} vol=${(slotExtrude.volume || 0).toFixed(1)} err=${slotExtrude.err || '无'}`);
+
 // Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
 const enterRepeat = await evaluate(`(async () => {
   const { app } = window.__solid2;

@@ -733,7 +733,7 @@ export class SketchController {
         const uy = (c2[1] - c1[1]) / L;
         const nx = -uy;
         const ny = ux;
-        const r = this.staged.length >= 2 ? Math.abs((cur[0] - c1[0]) * nx + (cur[1] - c1[1]) * ny) : L * 0.35;
+        const r = this.staged.length >= 2 && cur ? Math.abs((cur[0] - c1[0]) * nx + (cur[1] - c1[1]) * ny) : L * 0.35;
         if (r < 1e-9) break;
         const pts: [number, number][] = [];
         const p1: [number, number] = [c1[0] + nx * r, c1[1] + ny * r];
