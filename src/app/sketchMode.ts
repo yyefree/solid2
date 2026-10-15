@@ -225,10 +225,16 @@ export class SketchController {
     switch (this.tool) {
       case 'line': {
         if (this.staged.length === 2) {
+          const n0 = sk.entities.length;
           this.addLine(sk, this.staged[0], this.staged[1], this.stagedSnaps[0], this.stagedSnaps[1]);
-          // 连续绘制：以上一点为新起点
+          // 连续绘制：让下一条线段**复用上一条的终点**（共享点 id）。
+          // ⚠️ 不能用 stagedSnaps[1]——那是端点「点击瞬间」的捕捉结果，而此刻该点还不存在，
+          //    几乎总是 null；于是每段都新建一个点，链式草图的相邻端点 id 不同，
+          //    首尾点即使坐标重合也不连通 → 轮廓判成「未封闭」，拉伸失败。
+          //    复用终点 id 后，相邻段首尾相接（等效 SW 的自动「重合」约束），首尾即可闭合。
+          const ent = sk.entities[n0] ?? sk.entities[sk.entities.length - 1];
+          const lastSnap = ent && ent.kind === 'line' ? ent.b : this.stagedSnaps[1];
           const last = this.staged[1];
-          const lastSnap = this.stagedSnaps[1];
           this.staged = [last];
           this.stagedSnaps = [lastSnap];
         }

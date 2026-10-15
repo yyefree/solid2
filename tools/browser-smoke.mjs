@@ -884,6 +884,42 @@ check('基体法兰生成 1 个实体薄板、入设计树、无错误', sheetMe
 check('「边线法兰」对话框可点开（选中边后、无遮罩、标题正确）', sheetMetal.edgeTitle === '边线法兰' && sheetMetal.edgeMask === 0, `${sheetMetal.edgeTitle} mask=${sheetMetal.edgeMask}`);
 check('边线法兰与基体融合为 1 个实体、入设计树、无错误', sheetMetal.solids2 === 1 && sheetMetal.treeHasEdge && !sheetMetal.errs2, `solids=${sheetMetal.solids2} err=${sheetMetal.errs2 || '无'}`);
 
+// 交互式「直线工具画闭合矩形 → 拉伸凸台」回归：连续线段必须共享端点，
+// 否则 4 条线各带独立端点 id、findLoops 判成未封闭，拉伸报「草图没有封闭轮廓」。
+const lineExtrude = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  app.startSketch('front'); await sleep(30);
+  const sk = app.sketch; sk.setTool('line');
+  const cv = document.querySelector('canvas');
+  const r = cv ? cv.getBoundingClientRect() : { left: 0, top: 0, width: 800, height: 600 };
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const offs = [[-50, -30], [50, -30], [50, 30], [-50, 30], [-50, -30]]; // 5 次点击回到起点闭合
+  for (const [dx, dy] of offs) sk.handleClick(cx + dx, cy + dy, false);
+  const s = app.editingSketch.params.sketch;
+  const out = { lineCount: s.entities.filter(e => e.kind === 'line').length, ptCount: Object.keys(s.points).length };
+  app.exitSketch(false); await sleep(30);
+  const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.trim() === '特征');
+  if (tab) tab.click(); await sleep(60);
+  const btn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '拉伸凸台');
+  if (btn) btn.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const ok = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '确定');
+  if (ok) ok.click();
+  await sleep(250); await app.rebuild();
+  out.solids = app.model && app.model.stats ? app.model.stats.solids : 0;
+  out.volume = app.model && app.model.stats ? app.model.stats.volume : 0;
+  out.err = app.doc.features.map(x => x.error).filter(Boolean).join('; ');
+  out.treeHasExtrude = (document.querySelector('.tree') ? document.querySelector('.tree').textContent : '').indexOf('拉伸') >= 0;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return out;
+})()`);
+check('直线工具画矩形：链式闭合端点共享（4 点）', lineExtrude.lineCount === 4 && lineExtrude.ptCount === 4, `lines=${lineExtrude.lineCount} pts=${lineExtrude.ptCount}`);
+check('新建草图 → 直线轮廓 → 拉伸凸台：1 个实体、入树、无「未封闭」错误', lineExtrude.solids === 1 && lineExtrude.treeHasExtrude && !lineExtrude.err, `solids=${lineExtrude.solids} vol=${(lineExtrude.volume || 0).toFixed(1)} err=${lineExtrude.err || '无'}`);
+
 // Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
 const enterRepeat = await evaluate(`(async () => {
   const { app } = window.__solid2;
