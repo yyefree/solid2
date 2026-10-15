@@ -69,6 +69,33 @@ export function eventToKeys(e: {
   return parts.join('+');
 }
 
+/**
+ * 键盘主键别名归一：浏览器 `e.key` 的长名与键位表里的短名必须等价。
+ * 缺了它，键位表里的 'Esc' 永远匹配不上事件的 'Escape'（退出草图热键曾因此失效）。
+ */
+const KEY_ALIASES: Record<string, string> = {
+  ESC: 'ESC',
+  ESCAPE: 'ESC',
+  DEL: 'DELETE',
+  DELETE: 'DELETE',
+  RETURN: 'ENTER',
+  ENTER: 'ENTER',
+  INS: 'INSERT',
+  INSERT: 'INSERT',
+  BKSP: 'BACKSPACE',
+  BACKSPACE: 'BACKSPACE',
+  SPACEBAR: 'SPACE',
+  SPACE: 'SPACE',
+  PGUP: 'PAGEUP',
+  PGDN: 'PAGEDOWN',
+};
+
+/** 归一化 + 别名收敛（大小写不敏感） */
+export function canonicalKey(k: string): string {
+  const n = normalizeKey(k);
+  return KEY_ALIASES[n] ?? n;
+}
+
 /** 键位文本是否匹配事件（覆盖后的「当前键」走这里） */
 export function keysMatchEvent(keys: string, e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey?: boolean }): boolean {
   const p = parseKeys(keys);
@@ -76,7 +103,7 @@ export function keysMatchEvent(keys: string, e: { key: string; ctrlKey: boolean;
   if (p.ctrl !== !!(e.ctrlKey || e.metaKey)) return false;
   if (p.alt !== !!e.altKey) return false;
   if (p.shift !== !!e.shiftKey) return false;
-  return normalizeKey(e.key) === p.key;
+  return canonicalKey(e.key) === canonicalKey(p.key);
 }
 
 /** 键位是否合法（有主键、且不是纯修饰键） */

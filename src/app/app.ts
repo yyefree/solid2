@@ -1844,10 +1844,13 @@ export class App {
     notify.info('没有可删除的对象');
   }
 
-  /** Esc：退出当前命令 / 清除选择 / 退出草图 */
-  escape(): void {
+  /**
+   * Esc / Enter：退出当前命令 / 清除选择 / 退出草图。
+   * `kind='confirm'` 对应确认角 ✓ 的 Enter 提示 —— 直接退出草图（不等第二次按键）。
+   */
+  escape(kind: 'esc' | 'confirm' = 'esc'): void {
     if (this.mode === 'sketch') {
-      this.sketch.handleKey(new KeyboardEvent('keydown', { key: 'Escape' }));
+      this.sketch.handleKey(new KeyboardEvent('keydown', { key: kind === 'confirm' ? 'Enter' : 'Escape' }));
       return;
     }
     if (this.selection.faces.length || this.selection.edges.length) {

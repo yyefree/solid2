@@ -63,6 +63,10 @@ check('Meta 视同 Ctrl（macOS）', keysMatchEvent('Ctrl+B', { key: 'b', ctrlKe
 check('未绑定（空串）不命中', !keysMatchEvent('', ev('x')));
 check('Enter 单键命中', keysMatchEvent('Enter', ev('Enter')));
 check('Space 命中空格键', keysMatchEvent('Space', ev(' ')));
+check("'Esc' 命中 Escape 键（退出草图热键回归）", keysMatchEvent('Esc', ev('Escape')));
+check("'Escape' 也命中 Escape 键", keysMatchEvent('Escape', ev('Escape')));
+check("'Del' 命中 Delete 键", keysMatchEvent('Del', ev('Delete')));
+check('Esc 不命中 Enter', !keysMatchEvent('Esc', ev('Enter')));
 
 console.log('\n【自定义覆盖存储】');
 check('初始无覆盖', !hotkeyOverrides.hasAny() && hotkeyOverrides.get('file.new') === null);

@@ -255,7 +255,25 @@ export const HOTKEYS: HotkeyDef[] = [
   { id: 'sk.spline', label: 'B 样条', keys: 'B', group: '草图', scope: 'sketch', run: (a) => a.setSketchTool('bspline') },
   { id: 'sk.trim', label: '剪裁实体（删除选中）', keys: 'T', group: '草图', scope: 'sketch', run: (a) => featureDialogs.deleteSketchSelection(a) },
   { id: 'sk.dim', label: '智能尺寸', keys: 'D', group: '草图', scope: 'sketch', run: (a) => featureDialogs.smartDimension(a) },
-  { id: 'sk.exit', label: '退出草图', keys: 'Esc', group: '草图', scope: 'sketch', run: (a) => a.escape() },
+  {
+    id: 'sk.exit',
+    label: '退出草图',
+    keys: 'Esc',
+    group: '草图',
+    scope: 'sketch',
+    // 草图属性管理器（智能尺寸等）打开时按键归对话框，避免误退草图
+    when: () => !document.querySelector('.pm') && !document.querySelector('.modal-mask'),
+    run: (a) => a.escape(),
+  },
+  {
+    id: 'sk.confirm',
+    label: '确认并退出草图',
+    keys: 'Enter',
+    group: '草图',
+    scope: 'sketch',
+    when: () => !document.querySelector('.pm') && !document.querySelector('.modal-mask'),
+    run: (a) => a.escape('confirm'),
+  },
 ];
 
 const byId = new Map(HOTKEYS.map((h) => [h.id, h]));

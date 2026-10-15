@@ -182,6 +182,8 @@ export class SketchController {
 
   setTool(t: SketchTool): void {
     this.tool = t;
+    // 与 App 字段同步：Esc 逐层退出（取消链→回选择→退草图）时丝带高亮不能停留在旧工具上
+    this.app.sketchTool = t;
     this.staged = [];
     this.previewLocal = [];
     this.snapHint = null;
@@ -978,10 +980,13 @@ export class SketchController {
       return true;
     }
     if (e.key === 'Enter') {
+      // B 样条：Enter 结束取点（确认角 ✓ 标题「确定并退出草图（Enter）」的等价物）
       if (this.tool === 'bspline' && this.staged.length) {
         this.finishBSpline();
         return true;
       }
+      this.app.exitSketch(false);
+      return true;
     }
     if (e.key === 'Delete' || e.key === 'Backspace') {
       this.deleteSelection();

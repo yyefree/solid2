@@ -968,6 +968,83 @@ const slotExtrude = await evaluate(`(async () => {
 })()`);
 check('新建草图 → 槽口 → 拉伸凸台：闭合轮廓出 1 个实体、无错误', slotExtrude.solids === 1 && !slotExtrude.err, `ents=${(slotExtrude.ents || []).join('+')} solids=${slotExtrude.solids} vol=${(slotExtrude.volume || 0).toFixed(1)} err=${slotExtrude.err || '无'}`);
 
+// Esc / Enter 退出草图（SolidWorks 手册路径）回归：
+// 'Esc' 曾因 normalizeKey('Esc')='ESC' vs 事件 'Escape' 永不匹配而失效；
+// Enter（确认角 ✓ 的键盘等价物）曾无 sketch 作用域绑定。
+const escExit = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const cv = document.querySelector('canvas');
+  const r = cv ? cv.getBoundingClientRect() : { left: 0, top: 0, width: 800, height: 600 };
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const rbn = (label) => [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === label);
+  const clickCanvas = (x, y) => {
+    const o = { clientX: x, clientY: y, button: 0, bubbles: true, pointerId: 1 };
+    cv.dispatchEvent(new PointerEvent('pointerdown', { ...o, buttons: 1 }));
+    cv.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0 }));
+  };
+  const tab = async (n) => { const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.trim() === n); if (t) t.click(); await sleep(60); };
+  const clearAll = async () => { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); await sleep(50); };
+  const overlayInfo = () => {
+    const o = app.viewport.scene.getObjectByName('sketchOverlay');
+    if (!o) return { exists: false };
+    let lines = 0; o.traverse(x => { if (x.type === 'Line') lines++; });
+    return { exists: true, visible: o.visible, lines };
+  };
+  const drawRect = async () => {
+    await tab('草图');
+    const b = rbn('草图绘制'); if (b) b.click(); await sleep(70);
+    const rb = rbn('矩形'); if (rb) rb.click(); await sleep(40);
+    clickCanvas(cx - 50, cy - 30); clickCanvas(cx + 50, cy + 30);
+    await sleep(60);
+  };
+  const extrudeOk = async () => {
+    await tab('特征');
+    const eb = rbn('拉伸凸台');
+    if (!eb || eb.disabled || eb.classList.contains('disabled')) return { disabled: true };
+    eb.click();
+    for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+    const ok = [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '确定');
+    if (ok) ok.click(); await sleep(250); await app.rebuild(); await sleep(50);
+    return { solids: app.model?.stats?.solids ?? 0 };
+  };
+
+  // Esc：第一次取消当前链/回选择工具，第二次退出草图
+  await clearAll();
+  await drawRect();
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(80);
+  out.esc1StillSketch = app.mode === 'sketch';
+  out.esc1ToolSelect = app.sketchTool === 'select';
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(120);
+  out.esc2Mode = app.mode;
+  out.esc2Overlay = overlayInfo();
+  out.esc2Extrude = await extrudeOk();
+
+  // Enter：直接退出草图（确认角 ✓ 的键盘等价物）
+  await clearAll();
+  await drawRect();
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await sleep(120);
+  out.enterMode = app.mode;
+  out.enterOverlay = overlayInfo();
+  out.enterExtrude = await extrudeOk();
+
+  await clearAll();
+  return out;
+})()`);
+check('Esc 退出草图：第一次回选择工具、第二次退出（SW 手册分层语义）',
+  escExit.esc1StillSketch === true && escExit.esc1ToolSelect === true && escExit.esc2Mode === 'model',
+  `esc1=${escExit.esc1StillSketch}/${escExit.esc1ToolSelect} esc2=${escExit.esc2Mode}`);
+check('Esc 退出后草图保留可见且可拉伸成型',
+  escExit.esc2Overlay.exists === true && escExit.esc2Overlay.visible === true && escExit.esc2Overlay.lines === 4 && escExit.esc2Extrude.solids === 1,
+  `lines=${escExit.esc2Overlay.lines} solids=${escExit.esc2Extrude.solids}`);
+check('Enter 退出草图（确认角 ✓ 键盘等价物）后草图可见且可拉伸',
+  escExit.enterMode === 'model' && escExit.enterOverlay.visible === true && escExit.enterOverlay.lines === 4 && escExit.enterExtrude.solids === 1,
+  `mode=${escExit.enterMode} lines=${escExit.enterOverlay.lines} solids=${escExit.enterExtrude.solids}`);
+
 // Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
 const enterRepeat = await evaluate(`(async () => {
   const { app } = window.__solid2;
