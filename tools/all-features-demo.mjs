@@ -602,6 +602,31 @@ async function installHelpers() {
         return best;
       },
       bbox() { return app.model.bbox; },
+      /** 钣金 · 基体法兰：把草图轮廓沿法向拉伸成薄板（板厚 = thickness） */
+      baseFlange(sketchId, params) {
+        const id = newId('f');
+        app.addFeature({ id, type: 'sheetBaseFlange', name: '基体法兰',
+          params: { sketchId, thickness: 1.5, bendRadius: 2, kFactor: 0.5, operation: 'new', ...(params ?? {}) } }, { rebuild: false });
+        return id;
+      },
+      /** 钣金 · 边线法兰：在第 idx 条边上折起墙（edge 引用从当前 mesh 边元数据生成） */
+      edgeFlange(idx, params) {
+        const m = app.model.mesh.edgeMetas[idx];
+        if (!m) return null;
+        const ref = { point: [...m.mid], dir: [...m.dir] };
+        const id = newId('f');
+        app.addFeature({ id, type: 'sheetEdgeFlange', name: '边线法兰',
+          params: { edge: ref, length: 20, angleDeg: 90, bendRadius: 2, thickness: 1.5, operation: 'add', ...(params ?? {}) } }, { rebuild: false });
+        return id;
+      },
+      /** 全部直线边索引，按长度降序（方便挑长边做折弯） */
+      lineEdges() {
+        return app.model.mesh.edgeMetas
+          .map((m, i) => ({ m, i }))
+          .filter(({ m }) => m && m.curveType === 'line')
+          .sort((a, b) => b.m.length - a.m.length)
+          .map(({ i }) => i);
+      },
       hasModel() { return app.hasModel; },
       planes: planeAx2,
     };
@@ -659,8 +684,8 @@ async function tour() {
   await hold(900);
 
   // ---------- ② 界面总览 ----------
-  await banner(2, '界面总览 · 9 个功能区页签', '特征 / 草图 / 曲面 / 评估 / 装配体 / 工程图 / 曲线 / 视图 / AI');
-  for (const t of ['特征', '草图', '曲面', '评估', '装配体', '工程图', '曲线', '视图', 'AI']) {
+  await banner(2, '界面总览 · 10 个功能区页签', '特征 / 钣金 / 草图 / 曲面 / 评估 / 装配体 / 工程图 / 曲线 / 视图 / AI');
+  for (const t of ['特征', '钣金', '草图', '曲面', '评估', '装配体', '工程图', '曲线', '视图', 'AI']) {
     await tab(t);
     await hold(300);
   }

@@ -203,6 +203,8 @@ export class CadDocument {
       surfaceSweep: '扫描曲面',
       surfaceTrim: '裁剪曲面',
       surfaceSew: '缝合曲面',
+      sheetBaseFlange: '基体法兰',
+      sheetEdgeFlange: '边线法兰',
     };
     return `${labels[type] ?? type}${n}`;
   }

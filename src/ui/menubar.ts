@@ -329,6 +329,15 @@ function insertMenu(app: App): PopupItem[] {
         { label: '扫描凸台…', icon: 'sweep', run: () => D.sweep(app) },
       ],
     },
+    { sep: true },
+    {
+      label: '钣金',
+      icon: 'sheet',
+      submenu: [
+        { label: '基体法兰…', icon: 'sheet', run: () => D.sheetBaseFlange(app) },
+        { label: '边线法兰…', icon: 'sheet', run: () => D.sheetEdgeFlange(app) },
+      ],
+    },
     {
       label: '切除',
       icon: 'extrudeCut',

@@ -299,11 +299,12 @@ const ribbonCtx = await evaluate(`(async () => {
   ribbonController().toggleCollapse();
   await sleep(60);
   out.restored = document.querySelectorAll('.rtab').length === before && !ribbonController().collapsed();
+  out.before = before;
   document.querySelector('.dropdown')?.remove();
   return out;
 })()`);
 check('Ribbon 页签右键菜单可打开且含全部页签勾选项', ribbonCtx.menuOpened && ribbonCtx.menuItems.length >= 9, (ribbonCtx.menuItems ?? []).join(' / '));
-check('右键菜单可隐藏页签（9 → 8，记入 hiddenTabs）', ribbonCtx.afterHide === 8 && ribbonCtx.hiddenList.includes('curves'), `afterHide=${ribbonCtx.afterHide} hidden=${ribbonCtx.hiddenList}`);
+check('右键菜单可隐藏页签（count-1 → count，记入 hiddenTabs）', ribbonCtx.afterHide === ribbonCtx.before - 1 && ribbonCtx.hiddenList.includes('curves'), `afterHide=${ribbonCtx.afterHide} before=${ribbonCtx.before} hidden=${ribbonCtx.hiddenList}`);
 check('右键菜单可折叠 CommandManager（面板收起）', ribbonCtx.collapsed === true && ribbonCtx.panelHidden === true, `collapsed=${ribbonCtx.collapsed}`);
 check('页签显隐/折叠可还原（不污染后续断言）', ribbonCtx.restored === true, `restored=${ribbonCtx.restored}`);
 
@@ -800,6 +801,88 @@ const surfSew = await evaluate(`(async () => {
 check('「缝合曲面」按钮可点开 PropertyManager（无遮罩）', surfSew.btnFound && surfSew.maskCount === 0 && surfSew.title === '缝合曲面', surfSew.title);
 check('缝合前 2 个曲面实体 → 缝合后 1 个（0 实体）', surfSew.before === 2 && surfSew.after === 1 && surfSew.solids === 0, `before=${surfSew.before} after=${surfSew.after} solids=${surfSew.solids}`);
 check('缝合曲面无错误', !surfSew.errs, surfSew.errs);
+
+// 钣金（SW「钣金」页签）：基体法兰 → 薄板实体；边线法兰 → 折弯墙并融合
+const sheetMetal = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const { newId } = T;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  const s = T.emptySketch();
+  const ids = [[0,0],[40,0],[40,20],[0,20]].map(function (p) { const id = newId('p'); s.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+  for (let i = 0; i < 4; i++) s.entities.push({ id: newId('e'), kind: 'line', a: ids[i], b: ids[(i + 1) % 4] });
+  const sid = newId('f');
+  app.addFeature({ id: sid, type: 'sketch', name: '矩形草图', params: { plane: 'front', sketch: s } }, { rebuild: false });
+  await app.rebuild();
+
+  // 钣金页签 + 按钮接线（注意：ribbon 只渲染**当前激活页签**的按钮，须先点开「钣金」再统计）
+  const tab = [...document.querySelectorAll('.rtab')].find(function (t) { return t.textContent.trim() === '钣金'; });
+  const tabFound = !!tab;
+  if (tab) tab.click();
+  await sleep(80);
+  const allBtns = [...document.querySelectorAll('.rbtn')].map(b => b.textContent.trim());
+  const baseBtn = allBtns.includes('基体法兰');
+  const edgeBtn = allBtns.includes('边线法兰');
+
+  // 基体法兰：点开对话框 → 默认参数 → 确定
+  const baseBtnEl = [...document.querySelectorAll('.rbtn')].find(function (b) { return b.textContent.trim() === '基体法兰'; });
+  if (!baseBtnEl) { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); return { tabFound, baseBtn, edgeBtn, baseOpened: false }; }
+  baseBtnEl.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const pm = document.querySelector('.pm');
+  const title = pm && pm.querySelector('.pm-head .pm-title') ? pm.querySelector('.pm-head .pm-title').textContent : '';
+  const maskCount = document.querySelectorAll('.modal-mask').length;
+  const okBtn = [...document.querySelectorAll('.pm-foot .btn')].find(function (b) { return b.textContent.trim() === '确定'; });
+  if (okBtn) okBtn.click();
+  await sleep(200);
+  await app.rebuild();
+  const st1 = app.model ? app.model.stats : {};
+  const solids1 = st1.solids || 0;
+  const treeText1 = document.querySelector('.tree') ? document.querySelector('.tree').textContent : '';
+  const treeHasBase = treeText1.indexOf('基体法兰') >= 0;
+  const errs1 = app.doc.features.map(x => x.error).filter(Boolean).join('; ');
+
+  // 边线法兰：选中一条长直线边 → 点开对话框 → 默认参数 → 确定（应与基体融合）
+  const metas = app.model ? app.model.mesh.edgeMetas : [];
+  let lineIdx = -1;
+  for (let i = 0; i < metas.length; i++) {
+    const m = metas[i];
+    if (m && m.curveType === 'line' && m.length > 30) { lineIdx = i; break; }
+  }
+  let edgeTitle = '', edgeMask = 0, solids2 = solids1, errs2 = '';
+  const treeHasEdge = false;
+  if (lineIdx >= 0) {
+    app.selectEdge(lineIdx);
+    await sleep(60);
+    const edgeBtnEl = [...document.querySelectorAll('.rbtn')].find(function (b) { return b.textContent.trim() === '边线法兰'; });
+    if (edgeBtnEl) {
+      edgeBtnEl.click();
+      for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+      const pm2 = document.querySelector('.pm');
+      edgeTitle = pm2 && pm2.querySelector('.pm-head .pm-title') ? pm2.querySelector('.pm-head .pm-title').textContent : '';
+      edgeMask = document.querySelectorAll('.modal-mask').length;
+      const okBtn2 = [...document.querySelectorAll('.pm-foot .btn')].find(function (b) { return b.textContent.trim() === '确定'; });
+      if (okBtn2) okBtn2.click();
+      await sleep(200);
+      await app.rebuild();
+      const st2 = app.model ? app.model.stats : {};
+      solids2 = st2.solids || 0;
+      errs2 = app.doc.features.map(x => x.error).filter(Boolean).join('; ');
+    }
+  }
+  const treeText2 = document.querySelector('.tree') ? document.querySelector('.tree').textContent : '';
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return { tabFound, baseBtn, edgeBtn, baseOpened: true, title, maskCount, solids1, treeHasBase, errs1,
+    edgeTitle, edgeMask, solids2, treeHasEdge: treeText2.indexOf('边线法兰') >= 0, errs2 };
+})()`);
+check('「钣金」页签存在且含基体法兰/边线法兰按钮', sheetMetal.tabFound && sheetMetal.baseBtn && sheetMetal.edgeBtn, `tab=${sheetMetal.tabFound} base=${sheetMetal.baseBtn} edge=${sheetMetal.edgeBtn}`);
+check('「基体法兰」对话框可点开（无遮罩、标题正确）', sheetMetal.baseOpened && sheetMetal.maskCount === 0 && sheetMetal.title === '基体法兰', `${sheetMetal.title} mask=${sheetMetal.maskCount}`);
+check('基体法兰生成 1 个实体薄板、入设计树、无错误', sheetMetal.solids1 === 1 && sheetMetal.treeHasBase && !sheetMetal.errs1, `solids=${sheetMetal.solids1} err=${sheetMetal.errs1 || '无'}`);
+check('「边线法兰」对话框可点开（选中边后、无遮罩、标题正确）', sheetMetal.edgeTitle === '边线法兰' && sheetMetal.edgeMask === 0, `${sheetMetal.edgeTitle} mask=${sheetMetal.edgeMask}`);
+check('边线法兰与基体融合为 1 个实体、入设计树、无错误', sheetMetal.solids2 === 1 && sheetMetal.treeHasEdge && !sheetMetal.errs2, `solids=${sheetMetal.solids2} err=${sheetMetal.errs2 || '无'}`);
 
 // Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
 const enterRepeat = await evaluate(`(async () => {

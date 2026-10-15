@@ -505,6 +505,56 @@ export interface SurfaceSewFeature extends FeatureBase {
   };
 }
 
+/**
+ * 钣金 · 基体法兰（SW「Base Flange」）。
+ *
+ * 语义：把草图轮廓当作「钣金展开轮廓」，沿草图法向拉伸出一块**薄板**（板厚 = thickness），
+ * 这等价于把薄壁特征固化为钣金基体。与「拉伸 + 薄壁」的差别在于它是独立的特征类型，
+ * 携带钣金专属参数（板厚 / 折弯半径 / K 因子），并作为后续「边线法兰」折弯的基体。
+ * 几何实现直接复用 `engine.ts` 的 `facesOfSketch`（填充草图区域）+ `extrudeFaces`（沿法向拉薄板）。
+ */
+export interface SheetBaseFlangeFeature extends FeatureBase {
+  type: 'sheetBaseFlange';
+  params: {
+    sketchId: FeatureId;
+    /** 板厚（mm，沿草图法向拉伸出薄板） */
+    thickness: number;
+    /** 折弯半径（mm，仅记录 / 供边线法兰继承） */
+    bendRadius?: number;
+    /** K 因子（中性层位置，0~1，仅记录） */
+    kFactor?: number;
+    /** 反向（沿草图法向反方向拉伸） */
+    reverse?: boolean;
+    operation: BooleanOp;
+  };
+}
+
+/**
+ * 钣金 · 边线法兰（SW「Edge Flange」）。
+ *
+ * 语义：在已有钣金基体（或任意实体）的一条**直线边**上折起一面墙（wall），墙厚 = thickness，
+ * 沿边方向长度为整条边，墙高 = length，与基体夹角 = angleDeg（默认 90°），根部以折弯半径 bendRadius
+ * 圆滑过渡。几何实现：沿选中边放样一个「L 形截面」（根部带折弯圆弧），再与基体布尔融合。
+ */
+export interface SheetEdgeFlangeFeature extends FeatureBase {
+  type: 'sheetEdgeFlange';
+  params: {
+    /** 选中的边（世界坐标中点 + 方向，用于几何命名解析） */
+    edge: EdgeRef;
+    /** 法兰长度（墙高，mm） */
+    length: number;
+    /** 折弯角度（度，默认 90°） */
+    angleDeg: number;
+    /** 折弯半径（mm） */
+    bendRadius: number;
+    /** 板厚（mm），默认沿用基体法兰 */
+    thickness: number;
+    /** 反向（折弯到另一侧） */
+    reverse?: boolean;
+    operation: BooleanOp;
+  };
+}
+
 export type Feature =
   | SketchFeature
   | ExtrudeFeature
@@ -535,7 +585,9 @@ export type Feature =
   | SurfaceLoftFeature
   | SurfaceSweepFeature
   | SurfaceTrimFeature
-  | SurfaceSewFeature;
+  | SurfaceSewFeature
+  | SheetBaseFlangeFeature
+  | SheetEdgeFlangeFeature;
 
 export const FEATURE_LABEL: Record<string, string> = {
   sketch: '草图',
@@ -568,6 +620,8 @@ export const FEATURE_LABEL: Record<string, string> = {
   surfaceSweep: '扫描曲面',
   surfaceTrim: '裁剪曲面',
   surfaceSew: '缝合曲面',
+  sheetBaseFlange: '基体法兰',
+  sheetEdgeFlange: '边线法兰',
 };
 
 export const FEATURE_ICON: Record<string, string> = {
@@ -601,6 +655,8 @@ export const FEATURE_ICON: Record<string, string> = {
   surfaceSweep: 'surface',
   surfaceTrim: 'surface',
   surfaceSew: 'surface',
+  sheetBaseFlange: 'sheet',
+  sheetEdgeFlange: 'sheet',
 };
 
 export function isSketch(f: Feature): f is SketchFeature {

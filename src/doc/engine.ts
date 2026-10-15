@@ -41,6 +41,8 @@ import type {
   FeatureId,
   MirrorFeature,
   PlaneRef,
+  SheetBaseFlangeFeature,
+  SheetEdgeFlangeFeature,
   SketchFeature,
   ThinSpec,
 } from './types';
@@ -967,9 +969,149 @@ export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut
       return { shape: current };
     }
 
+    // ============================================================
+    // 钣金
+    // ============================================================
+    case 'sheetBaseFlange': {
+      const p = f.params;
+      if (!(p.thickness > 0)) throw new Error('基体法兰：板厚必须大于 0');
+      const skf = ctx.doc.getFeature(p.sketchId);
+      if (!skf || skf.type !== 'sketch') throw new Error('基体法兰：找不到引用的草图');
+      const pl = planeOf(skf);
+      // 钣金基体 = 把草图轮廓当作展开轮廓，沿草图法向拉伸出**实心薄板**（厚度 = 板厚）。
+      // 等价于「拉伸」一个填充面，只是它是独立的钣金特征类型、携带板厚 / 折弯半径 / K 因子等钣金参数。
+      const faces = facesOfSketch(skf);
+      if (!faces.length) throw new Error('基体法兰：草图没有封闭轮廓');
+      const sign = p.reverse ? -1 : 1;
+      const dir: Vec3 = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
+      const solid = extrudeFaces(faces, dir, Math.abs(p.thickness), false);
+      const op = p.operation;
+      return {
+        shape: applyBoolean(op, current, solid),
+        added: op === 'add' || op === 'new' ? solid : undefined,
+        tool: op === 'cut' ? solid : undefined,
+      };
+    }
+
+    case 'sheetEdgeFlange': {
+      if (!current) throw new Error('边线法兰：请先创建钣金基体（基体法兰）');
+      const p = f.params;
+      if (!(p.length > 0)) throw new Error('边线法兰：法兰长度必须大于 0');
+      if (!(p.thickness > 0)) throw new Error('边线法兰：板厚必须大于 0');
+      const edges = resolveEdges(current, [p.edge]);
+      if (!edges.length) throw new Error('边线法兰：找不到选中的边');
+      const wall = buildEdgeFlange(edges[0], current, p);
+      const op = p.operation;
+      return {
+        shape: applyBoolean(op, current, wall),
+        added: op === 'add' || op === 'new' ? wall : undefined,
+        tool: op === 'cut' ? wall : undefined,
+      };
+    }
+
     default:
       throw new Error(`未知特征类型：${(f as Feature).type}`);
   }
+}
+
+/**
+ * 边线法兰几何：沿选中的**直线边**放样一个「L 形截面」生成带折弯的钣金壁，再交给调用方布尔融合。
+ *
+ * 截面定义在由「边方向 d × 钣金外法向 n」张成的局部坐标系（u = 平面内、指向基体外部；
+ * n = 钣金外法向）。截面是一块厚 T 的弯板：
+ *  - 根部沿 +u 平贴一段（长度 = 折弯半径 R）桥接到边，再以四分之一圆弧折起，
+ *    最后沿 +n 直立 length 高（墙）；
+ *  - 板厚 T 沿截面左法向 ±T/2 偏移，根部与基体薄板重叠 T/2 以保证布尔融合干净。
+ * 默认 angleDeg=90° 即竖直墙；其它角度把整面墙绕边轴旋转 (angleDeg−90°) 实现倾斜。
+ * `reverse` 仅把墙翻到边的另一侧（u → −u）。
+ */
+function buildEdgeFlange(edge: any, base: any, p: SheetEdgeFlangeFeature['params']): any {
+  const einfo = edgeInfos(edge)[0];
+  if (!einfo) throw new Error('边线法兰：边几何解析失败');
+  if (einfo.curveType !== 'line' || !einfo.endpoints) throw new Error('边线法兰：仅支持直线边');
+  const [A, B] = einfo.endpoints;
+  let d = sub3(B, A);
+  const L = len3(d);
+  if (L < 1e-6) throw new Error('边线法兰：边过短');
+  d = norm3(d);
+
+  // 钣金外法向 n：取面积最大的平面面法向，并让其指向远离基体中心的一侧
+  const fis = faceInfos(base);
+  let n: Vec3 = [0, 0, 1];
+  let bestArea = -1;
+  for (const fi of fis) {
+    if (fi.surfaceType === 'plane' && fi.area > bestArea) { bestArea = fi.area; n = fi.normal; }
+  }
+  n = norm3(n);
+  let centroid: Vec3 = [0, 0, 0];
+  try {
+    const mp = S.massProperties(base);
+    if (mp && mp.centroid) centroid = mp.centroid as Vec3;
+  } catch { /* 退化基体 */ }
+  const mid: Vec3 = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2, (A[2] + B[2]) / 2];
+
+  // 平面内、垂直于边、指向基体外部的方向 u
+  let u = norm3(cross3(d, n));
+  if (!isFinite(u[0]) || (u[0] === 0 && u[1] === 0 && u[2] === 0)) u = [1, 0, 0];
+  // 从边中点到基体中心、剔除 n 分量（投影到钣金平面）→ 指向内部；u 取指向外部的一侧
+  let vplane = sub3(mid, centroid);
+  const dn = dot3(vplane, n);
+  vplane = [vplane[0] - dn * n[0], vplane[1] - dn * n[1], vplane[2] - dn * n[2]];
+  if (len3(vplane) < 1e-4) vplane = u;
+  if (dot3(u, vplane) < 0) u = [-u[0], -u[1], -u[2]] as Vec3;
+  // 反向：把墙翻到边的另一侧
+  if (p.reverse) u = [-u[0], -u[1], -u[2]] as Vec3;
+
+  const T = p.thickness;
+  const R = Math.max(p.bendRadius || 0, T / 2); // 内折弯半径不可小于板厚一半，否则自交
+  const H = Math.max(p.length, 1e-3);
+  const m = 14; // 折弯弧 / 墙 的采样数
+
+  // ---- 构造 L 形截面（局部坐标 x=沿u, y=沿n），先外表面正向、再内表面逆向，自动闭合 ----
+  const sec: [number, number][] = [];
+  // seg1（平贴段）：s ∈ [0, R] 沿 +u，外表面 y=+T/2
+  for (let i = 0; i <= m; i++) sec.push([(R * i) / m, T / 2]);
+  // arc 外表面：φ ∈ [0, π/2]，外 = 中 + (T/2)·左法向
+  for (let i = 1; i <= m; i++) {
+    const phi = (Math.PI / 2) * (i / m);
+    sec.push([R + (R - T / 2) * Math.sin(phi), R - (R - T / 2) * Math.cos(phi)]);
+  }
+  // wall 外表面：t ∈ [0, H]，x = 2R − T/2，y = R + t
+  for (let i = 1; i <= m; i++) sec.push([2 * R - T / 2, R + (H * i) / m]);
+  // 顶边：外 → 内
+  sec.push([2 * R + T / 2, R + H]);
+  // wall 内表面：t ∈ [H, 0]
+  for (let i = m - 1; i >= 0; i--) sec.push([2 * R + T / 2, R + (H * i) / m]);
+  // arc 内表面：φ ∈ [π/2, 0]
+  for (let i = m - 1; i >= 0; i--) {
+    const phi = (Math.PI / 2) * (i / m);
+    sec.push([R + (R + T / 2) * Math.sin(phi), R - (R + T / 2) * Math.cos(phi)]);
+  }
+  // seg1 内表面：s ∈ [R, 0]
+  for (let i = m - 1; i >= 0; i--) sec.push([(R * i) / m, -T / 2]);
+
+  // ---- 沿边放样（直线边 → 等截面棱柱）----
+  const stations = 6;
+  const sections: [number, number, number][][] = [];
+  for (let s = 0; s < stations; s++) {
+    const tt = (L * s) / (stations - 1);
+    const o: Vec3 = [A[0] + d[0] * tt, A[1] + d[1] * tt, A[2] + d[2] * tt];
+    sections.push(
+      sec.map(([x, y]) => [
+        o[0] + u[0] * x + n[0] * y,
+        o[1] + u[1] * x + n[1] * y,
+        o[2] + u[2] * x + n[2] * y,
+      ] as [number, number, number])
+    );
+  }
+  let wall = S.loftSections(sections, true, false);
+
+  // 非 90°：绕边轴旋转 (angleDeg−90°)，使墙倾斜
+  const ang = p.angleDeg ?? 90;
+  if (Math.abs(ang - 90) > 0.5) {
+    wall = S.rotateAxis(wall, A, d, (ang - 90) * Math.PI / 180);
+  }
+  return wall;
 }
 
 interface EvalCtx {

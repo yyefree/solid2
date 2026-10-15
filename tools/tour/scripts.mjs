@@ -361,7 +361,92 @@ const fighter = {
   ],
 };
 
-export const SCRIPTS = [classic, flange, bracket, spring, fighter];
+/**
+ * 钣金专题：基体法兰薄板 + 边线法兰折弯墙。
+ * 用 __D.baseFlange / __D.edgeFlange 直接喂特征树（绕开对话框），
+ * 演示 SW「钣金」页签的两类原生特征：展开轮廓拉伸薄板 + 直线上折弯成墙。
+ */
+const sheetmetal = {
+  id: 'sheetmetal',
+  label: '钣金 · 折弯专题',
+  desc: '钣金件：基体法兰薄板 + 多条边线法兰折弯墙，模拟钣金折弯成型',
+  ai: {
+    create: '长100宽60板厚1.5的基体法兰，在两条长边各折起高20的墙',
+    edit: '把板厚改成2',
+    createKw: ['基体法兰', '钣金', '折弯'],
+    transform: '长100宽60板厚1.5的基体法兰，整体放大2倍',
+    bodies: '长100宽60板厚1.5的基体法兰，复制一份沿Z偏移5，删除最后一个实体',
+  },
+  base: { w: 100, h: 60, t: 1.5, holeR: 8 },
+  features: { filletR: 2, chamferD: 1.5, shellT: 2, draftDeg: 5, ribT: 4, ribD: 10 },
+  primitives: [
+    ['box', [20, 20, 20], [-100, -10, 0]],
+    ['cylinder', [10, 30], [-55, -10, 0]],
+    ['sphere', [12], [-15, -10, 0]],
+    ['cone', [12, 6, 30], [30, -10, 0]],
+    ['torus', [14, 4], [80, -10, 0]],
+  ],
+  curve: {
+    spring: { meanDiameter: 30, wireDiameter: 4, pitch: 10, turns: 6 },
+    spiral: { startRadius: 12, pitch: 6, turns: 4, thickness: 2.5, width: 5 },
+  },
+  pattern: {
+    linear: { count: 4, spacing: 25, size: 12, at: [-60, 0, 0] },
+    circular: { count: 4, discR: 40, h: 16, holeR: 6, at: 28 },
+  },
+  scale: 2,
+  param: { name: '板厚', a: 1.5, b: 3, rect: [80, 50] },
+  extras: [
+    {
+      title: '专属场景 · 钣金托架（基体法兰薄板 + 两面边线法兰折弯）',
+      sub: '矩形薄板（100×60×1.5）→ 两条长边各折起高 20 的墙 → 单一钣金件',
+      code: `(async () => {
+        __D.reset();
+        const sid = __D.sketch('front', (h) => {
+          const p = [[0,0],[100,0],[100,60],[0,60]];
+          const ids = p.map(([x,y]) => h.pt(x,y));
+          for (let i = 0; i < 4; i++) h.line(ids[i], ids[(i + 1) % 4]);
+        });
+        __D.baseFlange(sid, { thickness: 1.5, bendRadius: 2, operation: 'new' });
+        await __D.app.rebuild();
+        // 只挑**顶面**的两条长边（沿 X、长度≈100）向上折墙；mid.z==顶面 z 才能排除底面/侧棱的直线边
+        const metas = __D.app.model.mesh.edgeMetas;
+        const topZ = metas.reduce((z, m) => Math.max(z, m ? m.mid[2] : -1e9), -1e9);
+        const longIdx = __D.lineEdges().filter((i) => metas[i].length > 90 && Math.abs(metas[i].mid[2] - topZ) < 0.01);
+        for (const i of longIdx) __D.edgeFlange(i, { length: 20, angleDeg: 90, bendRadius: 2, thickness: 1.5, operation: 'add' });
+        return __D.rebuild();
+      })()`,
+      // 基体 100·60·1.5 = 9000；两面墙各 ≈ 100×（≈37.7 截面）= 3770（含根部平贴段 + 折弯弧 + 20 高墙）→ 总 ≈ 16540
+      holdMs: 3000,
+      expect: { solids: 1, volumeBetween: [15000, 18000] },
+    },
+    {
+      title: '专属场景 · 钣金盖（薄板 + 四边折弯成盒）',
+      sub: '矩形薄板四边各折起高 15 的墙 → 敞口盒体',
+      code: `(async () => {
+        __D.reset();
+        const sid = __D.sketch('front', (h) => {
+          const p = [[0,0],[120,0],[120,80],[0,80]];
+          const ids = p.map(([x,y]) => h.pt(x,y));
+          for (let i = 0; i < 4; i++) h.line(ids[i], ids[(i + 1) % 4]);
+        });
+        __D.baseFlange(sid, { thickness: 1.2, bendRadius: 2, operation: 'new' });
+        await __D.app.rebuild();
+        // 只对**顶面**四条边折墙成盒；避开底面周长与 4 条竖直短棱（长度=板厚，折之即退化自交 → 布尔空转）
+        const metas = __D.app.model.mesh.edgeMetas;
+        const topZ = metas.reduce((z, m) => Math.max(z, m ? m.mid[2] : -1e9), -1e9);
+        const topEdges = __D.lineEdges().filter((i) => Math.abs(metas[i].mid[2] - topZ) < 0.01);
+        for (const i of topEdges) __D.edgeFlange(i, { length: 15, angleDeg: 90, bendRadius: 2, thickness: 1.2, operation: 'add' });
+        return __D.rebuild();
+      })()`,
+      // 底 120·80·1.2 = 11520；四墙沿周长折起（截面含平贴段 + 弧）合计 ≈ 9660（角部重叠略少）→ 总 ≈ 21185
+      holdMs: 3000,
+      expect: { solids: 1, volumeBetween: [19500, 23000] },
+    },
+  ],
+};
+
+export const SCRIPTS = [classic, flange, bracket, spring, fighter, sheetmetal];
 
 /** 按 id 取脚本；未找到返回 null */
 export function scriptById(id) {

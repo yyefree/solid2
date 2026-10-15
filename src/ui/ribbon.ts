@@ -130,6 +130,23 @@ export function buildTabs(): RTab[] {
     },
 
     // ============================================================
+    // 钣金（第二十轮新增）
+    // ============================================================
+    {
+      id: 'sheet',
+      label: '钣金',
+      groups: [
+        {
+          title: '钣金',
+          items: [
+            { id: 'sm.base', label: '基体法兰', icon: 'sheet', big: true, tip: '由草图轮廓拉伸出钣金薄板（板厚 / 折弯半径 / K 因子）', run: (a) => D.sheetBaseFlange(a), enabled: (a) => a.mode !== 'sketch' && a.doc.sketchFeatures().length > 0 },
+            { id: 'sm.edge', label: '边线法兰', icon: 'sheet', big: true, tip: '在选中直线上折起一面墙（墙高 / 折弯角 / 折弯半径）', run: (a) => D.sheetEdgeFlange(a), enabled: (a) => a.mode === 'model' && a.selection.edges.length === 1 },
+          ],
+        },
+      ],
+    },
+
+    // ============================================================
     // 草图
     // ============================================================
     {

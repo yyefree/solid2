@@ -16,7 +16,7 @@
  * 其余情况给出明确 issue，而不是丢一个必定失败的引用给引擎。
  */
 
-import { newId, DEFAULT_PLANE, type SketchPlane } from '../sketch/types';
+import { newId, DEFAULT_PLANE, type PointId, type Sketch, type SketchPlane } from '../sketch/types';
 import type {
   ChamferFeature,
   CircularPatternFeature,
@@ -33,7 +33,9 @@ import type {
   MoveBodyFeature,
   PrimitiveFeature,
   ScaleFeature,
+  SheetBaseFlangeFeature,
   ShellFeature,
+  SketchFeature,
   SpiralFeature,
   SpringFeature,
 } from '../doc/types';
@@ -396,6 +398,65 @@ export function compilePlan(ops: AiOp[], opts: CompileOptions = {}): CompileResu
         const nb: Box = { min: add(lb.min, origin), max: add(lb.max, origin) };
         cur = cur ? { min: [Math.min(cur.min[0], nb.min[0]), Math.min(cur.min[1], nb.min[1]), Math.min(cur.min[2], nb.min[2])], max: [Math.max(cur.max[0], nb.max[0]), Math.max(cur.max[1], nb.max[1]), Math.max(cur.max[2], nb.max[2])] } : nb;
         boxForRefs = op.kind === 'box' ? nb : null;
+        break;
+      }
+
+      case 'sheetMetal': {
+        if (op.mode === 'edge') {
+          issues.push({
+            clause: op.source,
+            message: '边线法兰需要先选中模型中的一条直线边；请选中边后在「钣金」页签点「边线法兰」',
+            level: 'warn',
+          });
+          break;
+        }
+        const L = Math.max(op.length ?? 100, 0.1);
+        const W = Math.max(op.width ?? 60, 0.1);
+        const T = Math.max(op.thickness, 0.01);
+        // 展开轮廓 = 居中矩形（前视基准面），沿法向拉伸出薄板
+        const hl = L / 2;
+        const hw = W / 2;
+        const sketch: Sketch = { entities: [], points: {}, constraints: [] };
+        const ids: PointId[] = ([
+          [-hl, -hw],
+          [hl, -hw],
+          [hl, hw],
+          [-hl, hw],
+        ] as [number, number][]).map(([x, y]) => {
+          const pid = newId('p');
+          sketch.points[pid] = { id: pid, x, y };
+          return pid;
+        });
+        for (let i = 0; i < 4; i++) {
+          const eid = newId('e');
+          sketch.entities.push({ id: eid, kind: 'line', a: ids[i], b: ids[(i + 1) % 4] });
+        }
+        const skf: SketchFeature = {
+          id: newId('f'),
+          type: 'sketch',
+          name: namer('sketch'),
+          params: { plane: 'front', sketch },
+        };
+        features.push(skf);
+        names.push(skf.name);
+        const flange: SheetBaseFlangeFeature = {
+          id: newId('f'),
+          type: 'sheetBaseFlange',
+          name: namer('sheetBaseFlange'),
+          params: {
+            sketchId: skf.id,
+            thickness: T,
+            bendRadius: op.bendRadius && op.bendRadius > 0 ? op.bendRadius : undefined,
+            kFactor: op.kFactor,
+            operation: 'new',
+          },
+        };
+        features.push(flange);
+        names.push(flange.name);
+        lastId = flange.id;
+        const nb: Box = { min: [-hl, -hw, 0], max: [hl, hw, T] };
+        cur = cur ? unionBox(cur, nb) : nb;
+        boxForRefs = null;
         break;
       }
 

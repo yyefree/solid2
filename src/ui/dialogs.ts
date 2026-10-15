@@ -9,7 +9,7 @@ import { notify, promptNumber, modal, tableModal, confirmDialog } from './toast'
 import { formatLength, formatArea, formatVolume } from '../core/units';
 import { el, numberField, selectField, checkField, clear, section } from './dom';
 import { newId } from '../sketch/types';
-import type { ExtrudeFeature, ExtrudeStartCondition, ExtrudeEndCondition, ExtrudeEnd2Condition, ThinType, ThinSpec, RevolveFeature, LoftFeature, SweepFeature, PrimitiveFeature, FilletFeature, ChamferFeature, ShellFeature, LinearPatternFeature, CircularPatternFeature, MirrorFeature, HoleFeature, ReferencePlaneFeature, HoleType, DraftFeature, RibFeature, SpringFeature, SpiralFeature, CoilHandedness, BooleanOp, ScaleFeature, SplitFeature, SplitKeep, MoveBodyFeature, DeleteBodyFeature, CombineFeature, CombineOp } from '../doc/types';
+import type { ExtrudeFeature, ExtrudeStartCondition, ExtrudeEndCondition, ExtrudeEnd2Condition, ThinType, ThinSpec, RevolveFeature, LoftFeature, SweepFeature, PrimitiveFeature, FilletFeature, ChamferFeature, ShellFeature, LinearPatternFeature, CircularPatternFeature, MirrorFeature, HoleFeature, ReferencePlaneFeature, HoleType, DraftFeature, RibFeature, SpringFeature, SpiralFeature, CoilHandedness, BooleanOp, ScaleFeature, SplitFeature, SplitKeep, MoveBodyFeature, DeleteBodyFeature, CombineFeature, CombineOp, SheetBaseFlangeFeature, SheetEdgeFlangeFeature } from '../doc/types';
 import type { SketchPlane } from '../sketch/types';
 import { worldToPlane } from '../sketch/types';
 import { PLANES, makeEdgeRef, makeFaceRef, CadDocument, planeFromFace, offsetPlane, parallelPlane, perpendicularPlane, angledPlane, planeOf, worldFromSketch } from '../doc/model';
@@ -1688,6 +1688,100 @@ export const featureDialogs = {
       actions: [{ label: '关闭', primary: true }],
       width: 620,
       onClose: off,
+    });
+  },
+
+  // ============================================================
+  // 钣金（第二十轮新增）
+  // ============================================================
+  /** 基体法兰（SW「Base Flange」）：把草图轮廓当作展开轮廓，沿草图法向拉伸出薄板 */
+  sheetBaseFlange(app: App): void {
+    const sketches = app.doc.sketchFeatures();
+    if (!sketches.length) { notify.err('没有可用草图'); return; }
+    const sketchId = app.editingSketch?.id ?? sketches[sketches.length - 1].id;
+    const body = el('div', { class: 'col' });
+    const thRow = numberField('板厚', 1, () => {}, { min: 0.01, step: 0.5, unit: 'mm' });
+    const rRow = numberField('折弯半径', 2, () => {}, { min: 0, step: 0.5, unit: 'mm' });
+    const kRow = numberField('K 因子', 0.5, () => {}, { min: 0, max: 1, step: 0.05 });
+    const revRow = checkField('反向', false, () => {});
+    const opRow = selectField('操作', 'new', [
+      { value: 'new', label: '新建实体' },
+      { value: 'add', label: '合并' },
+      { value: 'cut', label: '切除' },
+    ], () => {});
+    const hint = el('div', { class: 'hint' }, '基体法兰：把草图轮廓当作展开轮廓，沿草图法向拉伸出薄板（厚度 = 板厚；草图即钣金展开外形）。');
+    body.append(thRow.row, rRow.row, kRow.row, revRow.row, opRow.row, hint);
+    modal({
+      host: 'pm', title: '基体法兰', body, actions: [
+        { label: '取消' },
+        {
+          label: '确定', primary: true, onClick: () => {
+            const params: SheetBaseFlangeFeature['params'] = {
+              sketchId,
+              thickness: parseFloat(thRow.input.value) || 0,
+              bendRadius: parseFloat(rRow.input.value) || 0,
+              kFactor: parseFloat(kRow.input.value) || 0.5,
+              reverse: revRow.input.checked,
+              operation: opRow.select.value as BooleanOp,
+            };
+            if (!(params.thickness > 0)) { notify.err('板厚必须大于 0'); return false; }
+            const f: SheetBaseFlangeFeature = {
+              id: newId('f'), type: 'sheetBaseFlange', name: app.doc.nextName('sheetBaseFlange'), params,
+            };
+            app.addFeature(f);
+            notify.ok('已添加基体法兰');
+            return true;
+          },
+        },
+      ],
+    });
+  },
+
+  /** 边线法兰（SW「Edge Flange」）：在选中的一条直线边上折起一面墙 */
+  sheetEdgeFlange(app: App): void {
+    const edges = app.selectedEdgeInfos();
+    if (edges.length !== 1) { notify.err('请先在模型中选中一条边'); return; }
+    const edge = edges[0];
+    if (edge.curveType && edge.curveType !== 'line') { notify.err('边线法兰仅支持直线边'); return; }
+    const edgeRef = makeEdgeRef(edge);
+    const body = el('div', { class: 'col' });
+    const lenRow = numberField('法兰长度', 20, () => {}, { min: 0.01, step: 1, unit: 'mm' });
+    const angRow = numberField('折弯角度', 90, () => {}, { min: 1, max: 179, step: 5, unit: '°' });
+    const rRow = numberField('折弯半径', 2, () => {}, { min: 0, step: 0.5, unit: 'mm' });
+    const thRow = numberField('板厚', 1, () => {}, { min: 0.01, step: 0.5, unit: 'mm' });
+    const revRow = checkField('反向（折到另一侧）', false, () => {});
+    const opRow = selectField('操作', 'add', [
+      { value: 'add', label: '合并' },
+      { value: 'new', label: '新建实体' },
+      { value: 'cut', label: '切除' },
+    ], () => {});
+    const hint = el('div', { class: 'hint' }, '边线法兰：在选中直线上折起一面墙（墙高 = 法兰长度），根部以折弯半径圆滑过渡；与基体自动融合。');
+    body.append(lenRow.row, angRow.row, rRow.row, thRow.row, revRow.row, opRow.row, hint);
+    modal({
+      host: 'pm', title: '边线法兰', body, actions: [
+        { label: '取消' },
+        {
+          label: '确定', primary: true, onClick: () => {
+            const params: SheetEdgeFlangeFeature['params'] = {
+              edge: edgeRef,
+              length: parseFloat(lenRow.input.value) || 0,
+              angleDeg: parseFloat(angRow.input.value) || 90,
+              bendRadius: parseFloat(rRow.input.value) || 0,
+              thickness: parseFloat(thRow.input.value) || 0,
+              reverse: revRow.input.checked,
+              operation: opRow.select.value as BooleanOp,
+            };
+            if (!(params.length > 0)) { notify.err('法兰长度必须大于 0'); return false; }
+            if (!(params.thickness > 0)) { notify.err('板厚必须大于 0'); return false; }
+            const f: SheetEdgeFlangeFeature = {
+              id: newId('f'), type: 'sheetEdgeFlange', name: app.doc.nextName('sheetEdgeFlange'), params,
+            };
+            app.addFeature(f);
+            notify.ok('已添加边线法兰');
+            return true;
+          },
+        },
+      ],
     });
   },
 };

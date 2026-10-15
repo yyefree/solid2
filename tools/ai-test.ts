@@ -904,5 +904,54 @@ console.log('\n【24. 多实体编辑：移动/复制 · 删除 · 组合】');
 }
 
 // ============================================================
+console.log('\n【24. 钣金：基体法兰 / 边线法兰 命令识别】');
+{
+  // ---------- 基体法兰 ----------
+  const base1 = op1('长100宽60板厚1.5的基体法兰');
+  check('「基体法兰」→ sheetMetal/base', base1?.kind === 'sheetMetal' && base1.mode === 'base', JSON.stringify(base1));
+  check('基体法兰解析出长/宽/板厚',
+    base1?.kind === 'sheetMetal' && near(base1.length ?? 0, 100) && near(base1.width ?? 0, 60) && near(base1.thickness, 1.5),
+    JSON.stringify(base1));
+
+  const base2 = op1('60x40的钣金');
+  check('「60x40的钣金」→ sheetMetal/base（连乘当展开尺寸）',
+    base2?.kind === 'sheetMetal' && base2.mode === 'base' && near(base2.length ?? 0, 60) && near(base2.width ?? 0, 40),
+    JSON.stringify(base2));
+
+  const base3 = op1('板厚2的钣金');
+  check('缺少展开尺寸的钣金 → 报错（需长/宽）',
+    parseText('板厚2的钣金').issues.some((i) => i.level === 'error' && /展开尺寸/.test(i.message)),
+    JSON.stringify(parseText('板厚2的钣金').issues.map((i) => i.message)));
+
+  // 编译：基体法兰 → 草图 + sheetBaseFlange
+  const c1 = compilePlan(parseText('长100宽60板厚1.5的基体法兰').ops);
+  check('基体法兰编译出 2 个特征（草图 + 基体法兰）', c1.features.length === 2, `n=${c1.features.length}`);
+  check('特征顺序 = sketch,sheetBaseFlange', c1.features.map((f) => f.type).join(',') === 'sketch,sheetBaseFlange', c1.features.map((f) => f.type).join(','));
+  check('草图为前视平面矩形（长100宽60）',
+    c1.features[0].type === 'sketch' && (c1.features[0] as any).params.plane === 'front' &&
+      (c1.features[0] as any).params.sketch.entities.length === 4,
+    JSON.stringify((c1.features[0] as any).params));
+  const fl1 = c1.features[1] as any;
+  check('基体法兰板厚 = 1.5、操作 = new',
+    fl1.params.thickness === 1.5 && fl1.params.operation === 'new', JSON.stringify(fl1.params));
+  check('基体法兰包围盒 = 100×60×1.5 薄板',
+    c1.bbox !== null && near(c1.bbox.max[0] - c1.bbox.min[0], 100) && near(c1.bbox.max[1] - c1.bbox.min[1], 60) &&
+      near(c1.bbox.max[2] - c1.bbox.min[2], 1.5), JSON.stringify(c1.bbox));
+
+  // ---------- 边线法兰 ----------
+  const edge = op1('边线法兰');
+  check('「边线法兰」→ sheetMetal/edge', edge?.kind === 'sheetMetal' && edge.mode === 'edge', JSON.stringify(edge));
+  // 边线法兰无法从纯语言定位边 → 编译给出指引、不产出特征
+  const ce = compilePlan(parseText('边线法兰').ops);
+  check('边线法兰编译给出指引（不产出特征）',
+    ce.issues.some((i) => /选中.*边/.test(i.message)) && ce.features.length === 0,
+    JSON.stringify(ce.issues.map((i) => i.message)));
+
+  // ---------- 回显 ----------
+  check('describeOp 基体法兰', /基体法兰/.test(describeOp(base1 as any)) && /100/.test(describeOp(base1 as any)), describeOp(base1 as any));
+  check('describeOp 边线法兰（需选中边）', describeOp(edge as any) === '边线法兰（需选中边）', describeOp(edge as any));
+}
+
+// ============================================================
 console.log(`\nAI 建模助手：${pass} 通过 / ${fail} 失败（共 ${pass + fail} 项）`);
 process.exit(fail ? 1 : 0);

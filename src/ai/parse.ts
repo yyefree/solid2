@@ -22,6 +22,7 @@ import type {
   AiHoleType,
   AiOp,
   AiPlan,
+  AiSheetMetalOp,
   EdgeScope,
   ModelProvider,
   ParseIssue,
@@ -160,6 +161,11 @@ const OP_WORDS: [string, string][] = [
   ['平移', 'moveBody'],
   ['旋转', 'moveBody'],
   ['复制', 'moveBody'],
+  ['基体法兰', 'sheetMetal'],
+  ['边线法兰', 'sheetMetal'],
+  ['折边法兰', 'sheetMetal'],
+  ['钣金', 'sheetMetal'],
+  ['钣金件', 'sheetMetal'],
 ];
 
 /** 数字角色词（紧贴在数字之前；按长度降序） */
@@ -196,6 +202,16 @@ const ROLE_WORDS: [string, string][] = [
   ['深', 'depth'],
   ['边', 'side'],
   ['r', 'radius'],
+  ['墙高', 'flangeLength'],
+  ['翻边高度', 'flangeLength'],
+  ['折弯高度', 'flangeLength'],
+  ['法兰长度', 'flangeLength'],
+  ['折弯半径', 'bendRadius'],
+  ['折弯圆角', 'bendRadius'],
+  ['折弯角度', 'bendAngle'],
+  ['折弯角', 'bendAngle'],
+  ['k因子', 'kFactor'],
+  ['k系数', 'kFactor'],
 ];
 
 /** 布尔操作关键词 */
@@ -574,6 +590,10 @@ function parseClause(ctx: ClauseCtx): { op?: AiOp; issue?: ParseIssue } {
         op: { kind: 'circularPattern', source: clause, axis: 'z', count, totalAngleDeg: 360 },
       };
     }
+
+    if (opTag === 'sheetMetal') {
+      return parseSheetMetal(clause, hits);
+    }
   }
 
   // ---------- 基本体 ----------
@@ -599,6 +619,55 @@ function parseClause(ctx: ClauseCtx): { op?: AiOp; issue?: ParseIssue } {
   if (!hits.length && MODIFIER_WORDS.some((w) => clause.includes(w))) return {};
 
   return { issue: { clause, message: '没有识别出实体类型（如长方体/圆柱/球/孔/圆角）', level: 'warn' } };
+}
+
+/**
+ * 钣金命令识别。
+ * - 基体法兰（钣金 / 基体法兰）：把「长 × 宽」当作展开轮廓、板厚当作薄板厚度，自包含生成钣金薄板；
+ *   长/宽可经角色词（长/宽/边长）或 `长x宽` 连乘给出，缺一个则按正方形处理。
+ * - 边线法兰（边线法兰 / 折边）：必须在模型中先选中一条直线边，纯自然语言无法定位边，
+ *   故识别后给出明确指引，由用户到「钣金」页签点「边线法兰」完成。
+ */
+function parseSheetMetal(clause: string, hits: NumHit[]): { op?: AiOp; issue?: ParseIssue } {
+  const isEdge = hasAny(clause, ['边线法兰', '折边', '折边法兰']);
+  if (isEdge) {
+    // 边线法兰必须从模型中选中一条边，纯自然语言无法定位 → 识别为意图，编译时给出指引
+    const op: AiSheetMetalOp = { kind: 'sheetMetal', mode: 'edge', source: clause, thickness: 1.5 };
+    return { op };
+  }
+  let thickness = byRole(hits, 'thickness')[0];
+  if (!(thickness > 0)) thickness = 1.5;
+
+  let length = byRole(hits, 'length')[0];
+  let width = byRole(hits, 'width')[0] ?? byRole(hits, 'side')[0];
+  // ⚠️ 只取**未被角色消费**的裸数字当兜底尺寸；角色数字（如「板厚2」）绝不能回流成长/宽。
+  const bare = hits.filter((h) => h.role === null).map((h) => h.value);
+  if (length === undefined && width === undefined) {
+    if (bare.length >= 2) { length = bare[0]; width = bare[1]; }
+    else if (bare.length === 1) { length = bare[0]; width = bare[0]; }
+  } else if (length === undefined && width !== undefined) {
+    length = width;
+  } else if (width === undefined && length !== undefined) {
+    width = length;
+  }
+  if (length === undefined || width === undefined) {
+    return {
+      issue: { clause, message: '基体法兰需要展开尺寸（可写「长100宽60」或「60x40的钣金」）', level: 'error' },
+    };
+  }
+  const bendRadius = byRole(hits, 'bendRadius')[0];
+  const kFactor = byRole(hits, 'kFactor')[0];
+  const op: AiSheetMetalOp = {
+    kind: 'sheetMetal',
+    mode: 'base',
+    source: clause,
+    width,
+    length,
+    thickness,
+  };
+  if (bendRadius !== undefined) op.bendRadius = bendRadius;
+  if (kFactor !== undefined) op.kFactor = kFactor;
+  return { op };
 }
 
 function kindLabel(kind: PrimitiveKind): string {
@@ -1229,6 +1298,10 @@ export function describeOp(op: AiOp): string {
     case 'combine': {
       const name = { add: '并集', subtract: '差集', common: '交集' }[op.operation];
       return `组合全部实体（${name}）`;
+    }
+    case 'sheetMetal': {
+      if (op.mode === 'edge') return '边线法兰（需选中边）';
+      return `基体法兰 展开${fmt([op.length ?? 0])}×${fmt([op.width ?? 0])}·板厚${fmt([op.thickness])}`;
     }
   }
 }

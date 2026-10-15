@@ -169,6 +169,29 @@ export interface AiCombineOp extends AiOpBase {
   operation: 'add' | 'subtract' | 'common';
 }
 
+/** 钣金：基体法兰（展开轮廓拉伸薄板）或边线法兰（选中边折弯成墙） */
+export interface AiSheetMetalOp extends AiOpBase {
+  kind: 'sheetMetal';
+  /** base = 基体法兰（自包含）；edge = 边线法兰（需先在模型中选中一条直线边） */
+  mode: 'base' | 'edge';
+  /** 基体法兰：展开轮廓的宽（草图 v 方向） */
+  width?: number;
+  /** 基体法兰：展开轮廓的长（草图 u 方向） */
+  length?: number;
+  /** 板厚（薄板厚度 / 墙厚） */
+  thickness: number;
+  /** 折弯半径 */
+  bendRadius?: number;
+  /** K 因子（仅记录） */
+  kFactor?: number;
+  /** 边线法兰：墙高（法兰长度） */
+  flangeLength?: number;
+  /** 边线法兰：折弯角度（度，默认 90） */
+  angleDeg?: number;
+  /** 反向（折到另一侧） */
+  reverse?: boolean;
+}
+
 export interface AiFilletOp extends AiOpBase {
   kind: 'fillet';
   radius: number;
@@ -217,7 +240,8 @@ export type AiOp =
   | AiDraftOp
   | AiMoveBodyOp
   | AiDeleteBodyOp
-  | AiCombineOp;
+  | AiCombineOp
+  | AiSheetMetalOp;
 
 /** 解析层问题：某个子句没读懂，或读懂了但缺参数 */
 export interface ParseIssue {
