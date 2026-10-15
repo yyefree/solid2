@@ -72,6 +72,7 @@ export class SketchOverlay {
   private gridLines: THREE.LineSegments;
   private plane: SketchPlane;
   private sketch: Sketch | null = null;
+  private displayMode = false;
   private selectedEntities = new Set<string>();
   private selectedPoints = new Set<string>();
   private hoverEntity: string | null = null;
@@ -154,6 +155,30 @@ export class SketchOverlay {
   setSketch(sketch: Sketch | null): void {
     this.sketch = sketch;
     this.refresh();
+  }
+
+  /**
+   * 显示态（SolidWorks: 退出草图后草图仍以暗色显示在模型空间）。
+   * 隐藏平面底色/网格/点，线条用 ghost 色，不参与悬停与选择高亮。
+   */
+  setDisplayMode(on: boolean): void {
+    if (this.displayMode === on) return;
+    this.displayMode = on;
+    this.planeMesh.visible = !on;
+    this.gridLines.visible = !on;
+    this.pointGroup.visible = !on;
+    this.dimGroup.visible = !on;
+    this.hoverEntity = null;
+    this.hoverPoint = null;
+    this.refresh();
+  }
+
+  get isDisplayMode(): boolean {
+    return this.displayMode;
+  }
+
+  get currentPlane(): SketchPlane {
+    return this.plane;
   }
 
   setSelection(entities: string[], points: string[]): void {
@@ -242,8 +267,8 @@ export class SketchOverlay {
         }
       }
       const geo = new THREE.BufferGeometry().setFromPoints(pts);
-      const selected = this.selectedEntities.has(e.id) || this.hoverEntity === e.id;
-      const mat = sketchMaterial(selected, !!e.construction);
+      const selected = this.displayMode ? false : this.selectedEntities.has(e.id) || this.hoverEntity === e.id;
+      const mat = sketchMaterial(selected, !!e.construction, this.displayMode);
       if (e.construction) {
         const line = new THREE.Line(geo, mat);
         line.computeLineDistances();
@@ -310,11 +335,12 @@ export class SketchOverlay {
     return best;
   }
 
-  hitEntity(local: [number, number], tolWorld: number): HitEntity | null {
+  hitEntity(local: [number, number], tolWorld: number, includePoints = true): HitEntity | null {
     const sk = this.sketch;
     if (!sk) return null;
     let best: HitEntity | null = null;
     for (const e of sk.entities) {
+      if (!includePoints && e.kind === 'point') continue;
       const r = this.distanceToEntity(sk, e, local);
       if (r !== null && r.d <= tolWorld && (!best || r.d < best.d)) {
         best = { entityId: e.id, t: r.t, d: r.d };

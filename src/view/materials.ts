@@ -86,7 +86,11 @@ export function highlightEdgeMaterial(): THREE.LineBasicMaterial {
   return new THREE.LineBasicMaterial({ color: COLORS.selectEdge, linewidth: 2 });
 }
 
-export function sketchMaterial(selected = false, construction = false): THREE.LineBasicMaterial {
+export function sketchMaterial(
+  selected = false,
+  construction = false,
+  display = false
+): THREE.LineBasicMaterial {
   if (selected) return new THREE.LineBasicMaterial({ color: COLORS.sketchSelected, linewidth: 2 });
   if (construction) {
     return new THREE.LineDashedMaterial({
@@ -95,5 +99,7 @@ export function sketchMaterial(selected = false, construction = false): THREE.Li
       gapSize: 1.6,
     });
   }
+  // 模型态显示：草图退出后仍可见，用暗色与激活编辑态区分（SolidWorks 行为）
+  if (display) return new THREE.LineBasicMaterial({ color: COLORS.ghost });
   return new THREE.LineBasicMaterial({ color: COLORS.sketch });
 }

@@ -6,6 +6,7 @@
  */
 import * as THREE from 'three';
 import type { App } from './app';
+import type { SketchFeature } from '../doc/types';
 import { SketchOverlay, type HitEntity, type HitPoint } from '../view/sketchview';
 import { solveSketch } from '../sketch/solver';
 import {
@@ -41,6 +42,8 @@ export type SketchTool =
 export class SketchController {
   private app: App;
   private overlay: SketchOverlay | null = null;
+  /** 模型态下正在显示的草图特征（退出草图后仍可见） */
+  private displayFeature: SketchFeature | null = null;
   tool: SketchTool = 'select';
   /** 已选中的实体 / 点 */
   selEntities = new Set<string>();
@@ -76,6 +79,9 @@ export class SketchController {
     } else {
       this.overlay.setPlane(plane);
     }
+    // 从模型态显示态切回编辑态：恢复平面底色/网格/点
+    this.overlay.setDisplayMode(false);
+    this.displayFeature = null;
     if (!f.params.sketch.entities.length && !f.params.sketch.constraints.length) {
       f.params.sketch = emptySketch();
     }
@@ -106,9 +112,58 @@ export class SketchController {
       this.overlay.dispose();
       this.overlay = null;
     }
+    this.displayFeature = null;
     this.staged = [];
     this.previewLocal = [];
     this.dragging = null;
+  }
+
+  /**
+   * 模型态显示某个草图（SolidWorks: 退出草图后草图保留可见）。
+   * 不移动相机、不接管输入；isActive 仍为 false，交互由模型态逻辑处理。
+   */
+  showDisplay(f: SketchFeature): void {
+    if (this.app.editingSketch) return;
+    const plane = this.app.planeOfSketch(f);
+    if (!this.overlay) {
+      this.overlay = new SketchOverlay(plane);
+      this.app.viewport.scene.add(this.overlay.group);
+    } else {
+      this.overlay.setPlane(plane);
+    }
+    this.displayFeature = f;
+    if (!f.params.sketch.entities.length && !f.params.sketch.constraints.length) {
+      f.params.sketch = emptySketch();
+    }
+    this.overlay.setSketch(f.params.sketch);
+    this.overlay.setSelection([], []);
+    this.overlay.setPreview([]);
+    this.overlay.setDisplayMode(true);
+  }
+
+  /** 模型态下射线命中显示态草图时返回该草图特征（图形区选中草图），不含独立点 */
+  pickDisplay(ray: THREE.Ray, tolWorld: number): SketchFeature | null {
+    if (!this.overlay || !this.displayFeature || this.app.editingSketch) return null;
+    if (!this.overlay.isDisplayMode) return null;
+    const w = this.overlay.intersectPlane(ray);
+    if (!w) return null;
+    const local = this.overlay.toLocal(w);
+    return this.overlay.hitEntity(local, tolWorld, false) ? this.displayFeature : null;
+  }
+
+  /** 当前显示态草图的平面（用于计算拾取容差），无则 null */
+  get displayPlane(): { normal: [number, number, number]; origin: [number, number, number] } | null {
+    if (!this.overlay || !this.overlay.isDisplayMode) return null;
+    return this.overlay.currentPlane;
+  }
+
+  get displaySketch(): SketchFeature | null {
+    return this.displayFeature;
+  }
+
+  /** 非模型态（装配/工程图）隐藏草图显示层 */
+  setDisplayVisible(v: boolean): void {
+    if (this.overlay && !this.app.editingSketch) this.overlay.group.visible = v;
   }
 
   get isActive(): boolean {

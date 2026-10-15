@@ -93,12 +93,21 @@ export const featureDialogs = {
     app.sketch.mirrorSelection();
   },
 
+  /** 默认绑定草图：正在编辑的草图 > 当前选中/退出的草图 > 最后一个草图 */
+  pickSketchId(app: App): string {
+    const sketches = app.doc.sketchFeatures();
+    if (!sketches.length) return '';
+    const a = app.activeSketchFeature;
+    if (a && sketches.some((s) => s.id === a.id)) return a.id;
+    return sketches[sketches.length - 1].id;
+  },
+
   // ---------------- 基于草图 ----------------
   /** 拉伸凸台 / 切除（SW 式：起始条件 + 方向1终止条件 + 方向2） */
   extrude(app: App, operation: 'add' | 'cut'): void {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) { notify.err('没有可用草图'); return; }
-    const sketchId = app.editingSketch?.id ?? sketches[sketches.length - 1].id;
+    const sketchId = app.editingSketch?.id ?? featureDialogs.pickSketchId(app);
 
     const body = el('div', { class: 'col' });
     // 起始条件（SW「从」下拉）
@@ -214,7 +223,7 @@ export const featureDialogs = {
   revolve(app: App): void {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) { notify.err('没有可用草图'); return; }
-    const sketchId = app.editingSketch?.id ?? sketches[sketches.length - 1].id;
+    const sketchId = app.editingSketch?.id ?? featureDialogs.pickSketchId(app);
     const body = el('div', { class: 'col' });
     const angRow = numberField('角度', 360, () => {}, { min: 1, max: 360, step: 15, unit: '°' });
     const thin = thinGroup();
@@ -1035,7 +1044,7 @@ export const featureDialogs = {
   rib(app: App): void {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) { notify.err('没有可用草图'); return; }
-    const sketchId = app.editingSketch?.id ?? sketches[sketches.length - 1].id;
+    const sketchId = app.editingSketch?.id ?? featureDialogs.pickSketchId(app);
     const body = el('div', { class: 'col' });
     const thRow = numberField('厚度', 2, () => {}, { min: 0.1, step: 0.5, unit: 'mm' });
     const dpRow = numberField('深度', 10, () => {}, { min: 0.1, step: 1, unit: 'mm' });
@@ -1698,7 +1707,7 @@ export const featureDialogs = {
   sheetBaseFlange(app: App): void {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) { notify.err('没有可用草图'); return; }
-    const sketchId = app.editingSketch?.id ?? sketches[sketches.length - 1].id;
+    const sketchId = app.editingSketch?.id ?? featureDialogs.pickSketchId(app);
     const body = el('div', { class: 'col' });
     const thRow = numberField('板厚', 1, () => {}, { min: 0.01, step: 0.5, unit: 'mm' });
     const rRow = numberField('折弯半径', 2, () => {}, { min: 0, step: 0.5, unit: 'mm' });

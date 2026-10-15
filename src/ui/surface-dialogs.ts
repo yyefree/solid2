@@ -25,10 +25,13 @@ function sketchOptions(app: App): { value: string; label: string }[] {
   return app.doc.sketchFeatures().map((s, i) => ({ value: s.id, label: `${s.name}（草图 ${i + 1}）` }));
 }
 
-/** 默认草图：正在编辑的草图，否则最后一个草图 */
+/** 默认草图：正在编辑的草图，否则当前选中/退出的草图，最后兜底最后一个草图 */
 function defaultSketchId(app: App): string {
   const sketches = app.doc.sketchFeatures();
-  return app.editingSketch?.id ?? sketches[sketches.length - 1]?.id ?? '';
+  if (app.editingSketch) return app.editingSketch.id;
+  const a = app.activeSketchFeature;
+  if (a && sketches.some((s) => s.id === a.id)) return a.id;
+  return sketches[sketches.length - 1]?.id ?? '';
 }
 
 function openSurfaceExtrude(app: App): void {

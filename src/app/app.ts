@@ -354,6 +354,11 @@ export class App {
   /** 在设计树中选中一个特征（SolidWorks：单击特征即在其「属性管理器」中显示参数） */
   selectFeature(id: string | null): void {
     this.selectedFeatureId = id;
+    // SolidWorks: 模型态点选草图即选中该草图，后续特征默认绑定它
+    if (id && !this.editingSketch) {
+      const f = this.doc.features.find((x) => x.id === id);
+      if (f && f.type === 'sketch') this.activeSketchFeature = f as SketchFeature;
+    }
     this.emit('feature', 'props');
   }
 
@@ -632,8 +637,25 @@ export class App {
       this.viewport.zoomFit(m?.bbox ?? null);
     }
     this.applyModeVisibility();
+    this.refreshSketchDisplay();
     this.viewport.invalidate();
     this.emit('selection');
+  }
+
+  /**
+   * 模型态下保持最后草图可见（SolidWorks: 退出草图后草图仍显示，可据此创建特征）。
+   * 编辑态由 `SketchController.attach()` 全权管理，这里不插手。
+   */
+  refreshSketchDisplay(): void {
+    const ctl = this.sketch;
+    if (this.editingSketch) return;
+    const sk = this.doc.sketchFeatures();
+    const last = sk.length ? sk[sk.length - 1] : null;
+    if (!last) {
+      ctl.detach();
+      return;
+    }
+    ctl.showDisplay(last);
   }
 
   setDisplayStyle(style: DisplayStyle): void {
@@ -868,7 +890,7 @@ export class App {
     const rc = this.viewport.rayFromScreen(x, y);
     const sv = this.shapeView;
     if (!sv) {
-      this.clearSelection();
+      this.selectSketchAt(rc);
       return;
     }
 
@@ -919,7 +941,29 @@ export class App {
         return;
       }
     }
+    // SolidWorks: 模型态点击显示中的草图可以选中它（实体优先，草图兜底）
+    this.selectSketchAt(rc);
+  }
+
+  /** 模型态下点选显示中的草图：选中该草图特征，后续特征默认绑定它 */
+  private selectSketchAt(rc: THREE.Raycaster): void {
+    const plane = this.sketch.displayPlane;
+    const hit = plane ? this.sketch.pickDisplay(rc.ray, this.sketchPickTol(plane.origin)) : null;
+    if (hit) {
+      this.selectFeature(hit.id);
+      this.setStatus('已选择草图', 'ok', hit.name);
+      return;
+    }
     this.clearSelection();
+  }
+
+  /** 屏幕 6px 折算到草图平面处的世界容差 */
+  private sketchPickTol(origin: [number, number, number]): number {
+    const cam = this.viewport.camera as THREE.PerspectiveCamera;
+    const dist = cam.position.distanceTo(new THREE.Vector3(...origin));
+    const h = this.viewport.renderer.domElement.clientHeight || 800;
+    const worldPerPx = (2 * dist * Math.tan(((cam.fov * Math.PI) / 180) / 2)) / h;
+    return Math.max(worldPerPx * 6, 0.4);
   }
 
   // ============================================================
@@ -1211,6 +1255,7 @@ export class App {
     if (this.drawingHost) this.drawingHost.classList.toggle('hidden', mode !== 'drawing');
     this.viewport.setPlanesVisible(this.showPlanes && showModel);
     this.viewport.setGridVisible(this.showGrid && mode !== 'drawing');
+    this.sketch.setDisplayVisible(mode === 'model');
     this.viewport.invalidate();
   }
 
@@ -1470,20 +1515,25 @@ export class App {
     closePropertyManager(); // 草图 PropertyManager 随退出关闭
     const f = this.editingSketch;
     this.editingSketch = null;
-    this.activeSketchFeature = null;
+    this.activeSketchFeature = f; // SolidWorks: 退出后该草图仍是「当前选中」的草图
     this.sketchTool = null;
     this.pendingPoints = [];
-    this.sketch.detach();
     if (revert) {
       const sk = f.params.sketch;
       if (!sk.entities.length && !sk.constraints.length) {
         this.doc.remove(f.id);
+        this.activeSketchFeature = null;
       }
     }
     this.mode = 'model';
     this.rebuild();
     this.applyModeVisibility();
     this.emit('mode', 'change', 'props');
+    this.setStatus(
+      '已退出草图，草图已保留',
+      'ok',
+      this.activeSketchFeature ? `可基于「${this.activeSketchFeature.name}」创建拉伸等特征` : undefined
+    );
   }
 
   setSketchTool(t: SketchTool | null): void {
@@ -1499,11 +1549,16 @@ export class App {
     this.emit('change', 'view');
   }
 
+  /** 草图特征对应的基准面 */
+  planeOfSketch(f: SketchFeature): SketchPlane {
+    if (f.params.plane === 'custom' && f.params.customPlane) return f.params.customPlane;
+    return { front: DEFAULT_PLANE, top: TOP_PLANE, right: RIGHT_PLANE }[f.params.plane as 'front' | 'top' | 'right'] ?? DEFAULT_PLANE;
+  }
+
   get sketchPlane(): SketchPlane {
     const f = this.editingSketch;
     if (!f) return DEFAULT_PLANE;
-    if (f.params.plane === 'custom' && f.params.customPlane) return f.params.customPlane;
-    return { front: DEFAULT_PLANE, top: TOP_PLANE, right: RIGHT_PLANE }[f.params.plane as 'front' | 'top' | 'right'] ?? DEFAULT_PLANE;
+    return this.planeOfSketch(f);
   }
 
   // ============================================================

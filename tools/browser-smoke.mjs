@@ -900,7 +900,18 @@ const lineExtrude = await evaluate(`(async () => {
   for (const [dx, dy] of offs) sk.handleClick(cx + dx, cy + dy, false);
   const s = app.editingSketch.params.sketch;
   const out = { lineCount: s.entities.filter(e => e.kind === 'line').length, ptCount: Object.keys(s.points).length };
+  const skFeatId = app.doc.sketchFeatures().map(f => f.id).pop();
   app.exitSketch(false); await sleep(30);
+  // SolidWorks 手册：退出草图后草图保留可见，可作为后续特征的目标
+  const ov = app.viewport.scene.getObjectByName('sketchOverlay');
+  let ovLines = 0;
+  if (ov) ov.traverse(o => { if (o.type === 'Line') ovLines++; });
+  const pmFill = ov ? ov.getObjectByName('sketchPlaneFill') : null;
+  out.overlayVisible = !!(ov && ov.visible);
+  out.overlayLines = ovLines;
+  out.planeHidden = pmFill ? !pmFill.visible : null;
+  out.activeSketchId = app.activeSketchFeature ? app.activeSketchFeature.id : null;
+  out.sketchFeatId = skFeatId;
   const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.trim() === '特征');
   if (tab) tab.click(); await sleep(60);
   const btn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '拉伸凸台');
@@ -913,12 +924,21 @@ const lineExtrude = await evaluate(`(async () => {
   out.volume = app.model && app.model.stats ? app.model.stats.volume : 0;
   out.err = app.doc.features.map(x => x.error).filter(Boolean).join('; ');
   out.treeHasExtrude = (document.querySelector('.tree') ? document.querySelector('.tree').textContent : '').indexOf('拉伸') >= 0;
+  const ov2 = app.viewport.scene.getObjectByName('sketchOverlay');
+  out.overlayStillVisible = !!(ov2 && ov2.visible);
+  out.extrudeSketchId = app.doc.features.filter(f => f.type === 'extrude').map(f => f.params.sketchId).pop();
   for (const f of [...app.doc.features]) app.doc.remove(f.id);
   await app.rebuild();
   return out;
 })()`);
 check('直线工具画矩形：链式闭合端点共享（4 点）', lineExtrude.lineCount === 4 && lineExtrude.ptCount === 4, `lines=${lineExtrude.lineCount} pts=${lineExtrude.ptCount}`);
 check('新建草图 → 直线轮廓 → 拉伸凸台：1 个实体、入树、无「未封闭」错误', lineExtrude.solids === 1 && lineExtrude.treeHasExtrude && !lineExtrude.err, `solids=${lineExtrude.solids} vol=${(lineExtrude.volume || 0).toFixed(1)} err=${lineExtrude.err || '无'}`);
+check('退出草图后草图保留可见（覆盖层 4 线、平面底色隐藏、当前选中指向它）',
+  lineExtrude.overlayVisible === true && lineExtrude.overlayLines === 4 && lineExtrude.planeHidden === true && lineExtrude.activeSketchId === lineExtrude.sketchFeatId,
+  `visible=${lineExtrude.overlayVisible} lines=${lineExtrude.overlayLines} active=${lineExtrude.activeSketchId}`);
+check('拉伸凸台绑定该草图，且创建特征后草图仍可见（SolidWorks 行为）',
+  lineExtrude.extrudeSketchId === lineExtrude.sketchFeatId && lineExtrude.overlayStillVisible === true,
+  `extrude=${lineExtrude.extrudeSketchId} stillVisible=${lineExtrude.overlayStillVisible}`);
 
 // 槽口（3 次点击闭合）→ 拉伸，回归：绘制预览中 cur 为空时曾对 null 取 [0] 崩溃
 const slotExtrude = await evaluate(`(async () => {
