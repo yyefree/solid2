@@ -383,6 +383,15 @@ export function buildTabs(): RTab[] {
             { id: 'v.origin', label: '原点', icon: 'origin', tip: '显示 / 隐藏原点', run: (a) => a.toggleOrigin?.(!a.showOrigin), active: (a) => a.showOrigin },
           ],
         },
+        {
+          title: '视口布局',
+          items: [
+            { id: 'v.vp1', label: '单视图', icon: 'viewportSingle', big: true, tip: '一个视口（SolidWorks 默认）', run: (a) => a.setViewportLayout('single'), active: (a) => a.viewportLayout === 'single' },
+            { id: 'v.vp2h', label: '水平双视', icon: 'viewportTwoH', tip: '左右分割：前视 + 等轴测', run: (a) => a.setViewportLayout('twoH'), active: (a) => a.viewportLayout === 'twoH' },
+            { id: 'v.vp2v', label: '垂直双视', icon: 'viewportTwoV', tip: '上下分割：俯视 + 等轴测', run: (a) => a.setViewportLayout('twoV'), active: (a) => a.viewportLayout === 'twoV' },
+            { id: 'v.vp4', label: '四视图', icon: 'viewportQuad', big: true, tip: '前视 / 俯视 / 右视 / 等轴测（悬停切换激活格）', run: (a) => a.setViewportLayout('quad'), active: (a) => a.viewportLayout === 'quad' },
+          ],
+        },
       ],
     },
 

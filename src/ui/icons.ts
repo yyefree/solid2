@@ -106,6 +106,16 @@ export const ICONS: Record<string, string> = {
   /** 曲面（曲面特征页签）：一张弯折的曲面片 */
   surface: S(`<path d="M2 11.5c2.4-3 5-4 7.2-3.2s3.4 2.2 4.8 1.2"/><path d="M2 11.5V6.8c2.4-3 5-4 7.2-3.2s3.4 2.2 4.8 1.2v4.7"/><path d="M2 6.8c2.4-3 5-4 7.2-3.2s3.4 2.2 4.8 1.2" stroke-dasharray="1.4 1.2" opacity=".5"/>`),
 
+  // ============ 视口布局（视图 → 显示 → 视口） ============
+  /** 单视图 */
+  viewportSingle: S(`<rect x="2" y="2.5" width="12" height="11" rx=".8"/>`),
+  /** 双视图 · 水平（左右） */
+  viewportTwoH: S(`<rect x="1.8" y="2.5" width="5.2" height="11" rx=".6"/><rect x="8" y="2.5" width="5.2" height="11" rx=".6"/>`),
+  /** 双视图 · 垂直（上下） */
+  viewportTwoV: S(`<rect x="2" y="1.8" width="12" height="5.2" rx=".6"/><rect x="2" y="8" width="12" height="5.2" rx=".6"/>`),
+  /** 四视图 */
+  viewportQuad: S(`<rect x="1.8" y="1.8" width="5.2" height="5.2" rx=".5"/><rect x="8" y="1.8" width="5.2" height="5.2" rx=".5"/><rect x="1.8" y="8" width="5.2" height="5.2" rx=".5"/><rect x="8" y="8" width="5.2" height="5.2" rx=".5"/>`),
+
   // ============ 草图 ============
   sketch: S(`<path d="M2.5 13.5h11"/><path d="M2.5 2.5v11"/><path d="M4.5 10.5 8 5l3.5 5.5z"/><path d="M2.5 2.5h2M13.5 13.5v-2"/>`),
   line: S(`<path d="M2.5 13.5 13.5 2.5"/><circle cx="2.5" cy="13.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="13.5" cy="2.5" r="1.3" fill="currentColor" stroke="none"/>`),

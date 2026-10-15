@@ -22,6 +22,7 @@ import { openViewSettings } from './headsup';
 import { openAiModeling, openAiHelp } from './aipanel';
 import { UNIT_SYSTEMS } from '../core/units';
 import { ribbonController } from './ribbon';
+import { LAYOUT_DEFS } from '../view/viewport';
 
 const D = featureDialogs;
 
@@ -289,6 +290,17 @@ function viewMenu(app: App): PopupItem[] {
         { label: '沿 Y 轴', icon: 'top', checked: app.sectionAxis === 'y', run: () => app.setSection('y') },
         { label: '沿 Z 轴', icon: 'front', checked: app.sectionAxis === 'z', run: () => app.setSection('z') },
       ],
+    },
+    {
+      label: '视口',
+      icon: 'viewportQuad',
+      submenu: LAYOUT_DEFS.map((d) => ({
+        label: d.label,
+        icon:
+          d.id === 'single' ? 'viewportSingle' : d.id === 'twoH' ? 'viewportTwoH' : d.id === 'twoV' ? 'viewportTwoV' : 'viewportQuad',
+        checked: app.viewportLayout === d.id,
+        run: () => app.setViewportLayout(d.id),
+      })),
     },
     { sep: true },
     { label: '整屏显示', icon: 'zoomFit', sc: sc('view.fit'), run: () => app.zoomFit() },

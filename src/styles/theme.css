@@ -803,6 +803,40 @@ select.inp {
   outline: none;
 }
 
+/* 多视口：格子边框 + 左上角视图名标签（SolidWorks 视口布局） */
+.vp-cells {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 12;
+}
+.vp-cell {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+}
+.vp-cell.active {
+  border: 1px solid var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12);
+}
+.vp-cell-label {
+  position: absolute;
+  left: 5px;
+  top: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+.vp-cell.active .vp-cell-label {
+  color: var(--accent-dark);
+  border-color: var(--accent);
+}
+
 /* 视图立方 / 坐标系 */
 .viewcube {
   position: absolute;

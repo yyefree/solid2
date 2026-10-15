@@ -24,7 +24,7 @@ import { download, pickFile, readFileAsArrayBuffer, exportOBJ, exportSTLBinary }
 import { kernel } from '../core/kernel';
 import type { ModelResult, MeshResult, FaceMeta, EdgeMeta, BBox } from '../core/kernel-types';
 import { viewsOfMesh } from '../core/kernel-types';
-import { Viewport, type ViewDir } from '../view/viewport';
+import { Viewport, type ViewDir, LAYOUT_DEFS, type LayoutName } from '../view/viewport';
 import { ShapeView, type DisplayStyle } from '../view/shapeview';
 import { COLORS, previewMaterial } from '../view/materials';
 import { notify, tableModal } from '../ui/toast';
@@ -1718,6 +1718,29 @@ export class App {
 
   toggleProjection(): void {
     this.setProjection(this.projection === 'perspective' ? 'orthographic' : 'perspective');
+  }
+
+  /** 当前视口布局（SolidWorks：视图 → 显示 → 视口） */
+  get viewportLayout(): LayoutName {
+    return this.viewport.layoutName;
+  }
+
+  /** 视口布局数量（1 = 单视图） */
+  get viewportCount(): number {
+    return this.viewport.cellCount;
+  }
+
+  /** 各视口格的视图名（前视/俯视/右视/等轴测） */
+  viewportLabels(): string[] {
+    return this.viewport.cellLabels();
+  }
+
+  /** 切换视口布局：单视图 / 水平双视图 / 垂直双视图 / 四视图 */
+  setViewportLayout(name: LayoutName): void {
+    this.viewport.setLayout(name);
+    const def = LAYOUT_DEFS.find((d) => d.id === this.viewportLayout) ?? LAYOUT_DEFS[0];
+    this.setStatus(`视口布局：${def.label}`, 'ok');
+    this.emit('view');
   }
 
   get sceneName(): string {

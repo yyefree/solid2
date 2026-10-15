@@ -1493,7 +1493,7 @@ ${primLines}
   await isoView(1000);
 
   // ---------- ⑰ 视图 ----------
-  await banner(20, '视图 · 显示样式 / 方向 / 基准面 / 网格', '');
+  await banner(20, '视图 · 显示样式 / 方向 / 基准面 / 网格 / 视口布局', '四视图 / 双视图 · 每格独立相机');
   await act(`__D.reset(); __D.box(50,36,24,[0,0,0]); 1`, 400);
   await act(`__D.rebuild()`, 1100);
   for (const st of ['shadedEdges', 'shaded', 'wireframe', 'hidden', 'transparent']) {
@@ -1507,6 +1507,19 @@ ${primLines}
   await act(`__D.app.toggleGrid(true); 1`, 800);
   await act(`__D.app.toggleGrid(false); __D.app.togglePlanes(false); 1`, 800);
   await hold(300);
+
+  // 多视口布局（SolidWorks：视图 → 显示 → 视口）
+  const vpLabels4 = await act(`__D.app.setViewportLayout('quad'); __D.app.viewportLabels()`, 1700);
+  check('四视图：4 格标签 前视/俯视/右视/等轴测',
+    Array.isArray(vpLabels4) && vpLabels4.length === 4 && ['前视', '俯视', '右视', '等轴测'].every((w) => vpLabels4.includes(w)),
+    (vpLabels4 || []).join(' / '));
+  const activeViewName = await act(`__D.app.viewport.setActiveCell(0); __D.app.viewport.viewName()`, 1200);
+  check('切换激活格到前视：viewName 为前视', activeViewName === '前视', String(activeViewName));
+  const vpLabels2 = await act(`__D.app.setViewportLayout('twoH'); __D.app.viewportLabels()`, 1400);
+  check('水平双视图：2 格（前视 + 等轴测）',
+    Array.isArray(vpLabels2) && vpLabels2.length === 2 && vpLabels2[0] === '前视' && vpLabels2[1] === '等轴测',
+    (vpLabels2 || []).join(' / '));
+  await act(`__D.app.setViewportLayout('single'); __D.app.setView('iso'); 1`, 1200);
 
   // ---------- ⑱ 文件导出 ----------
   await banner(21, '文件 · STEP / STL / OBJ 导出', '真实写出文件到磁盘');

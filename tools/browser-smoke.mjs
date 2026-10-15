@@ -837,6 +837,74 @@ check('Enter 重复上一命令：取消后再按 Enter 重开同一 PropertyMan
   enterRepeat.btnFound && enterRepeat.firstOpen && enterRepeat.closed && enterRepeat.reopened,
   `firstOpen=${enterRepeat.firstOpen} closed=${enterRepeat.closed} reopened=${enterRepeat.reopened} title=${enterRepeat.title}`);
 
+// 多视口布局（SW：视图 → 显示 → 视口；四视图 前视/俯视/右视/等轴测，悬停切换激活格）
+const vpLayout = await evaluate(`(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  localStorage.removeItem('solid2.viewports.v1');
+  const { app } = window.__solid2;
+  await app.rebuild();
+  const overlayAt = () => document.querySelector('.vp-cells').style.display;
+  const singleHidden = overlayAt() === 'none';
+  app.setViewportLayout('quad');
+  await sleep(80);
+  const cellEls = [...document.querySelectorAll('.vp-cell')];
+  const labels = app.viewportLabels();
+  const activeBefore = app.viewport.activeCellIndex;
+  const activeHighlights = cellEls.filter((c) => c.classList.contains('active')).length;
+  const quadCameraPos = app.viewport.camera.position.toArray().map((v) => Math.round(v));
+  const quadStored = localStorage.getItem('solid2.viewports.v1');
+  app.viewport.setActiveCell(0);
+  await sleep(30);
+  const label0 = cellEls[0] ? cellEls[0].querySelector('.vp-cell-label').textContent.trim() : '';
+  const highlight0 = cellEls[0] ? cellEls[0].classList.contains('active') : false;
+  const activeName0 = app.viewport.viewName();
+  app.setViewportLayout('twoH');
+  await sleep(80);
+  const twoHCount = app.viewportLabels().length;
+  const twoHLabels = app.viewportLabels();
+  const twoHStored = localStorage.getItem('solid2.viewports.v1');
+  app.setViewportLayout('single');
+  await sleep(80);
+  const singleStored = localStorage.getItem('solid2.viewports.v1');
+  const singleOverlayHidden = overlayAt() === 'none';
+  return { singleHidden: singleHidden, count: cellEls.length, labels: labels, activeBefore: activeBefore, activeHighlights: activeHighlights, quadCameraPos: quadCameraPos, quadStored: quadStored, label0: label0, highlight0: highlight0, activeName0: activeName0, twoHCount: twoHCount, twoHLabels: twoHLabels, twoHStored: twoHStored, singleStored: singleStored, singleOverlayHidden: singleOverlayHidden };
+})()`);
+check('默认单视图：覆盖层隐藏', vpLayout.singleHidden && vpLayout.singleOverlayHidden, `single=${vpLayout.singleHidden} backToSingle=${vpLayout.singleOverlayHidden}`);
+check('四视图：4 个视口格，标签 前视/俯视/右视/等轴测', vpLayout.count === 4 && ['前视', '俯视', '右视', '等轴测'].every((w) => (vpLayout.labels || []).includes(w)), (vpLayout.labels || []).join(' / '));
+check('四视图默认激活等轴测格（右下角）且仅一格高亮', vpLayout.activeBefore === 3 && vpLayout.activeHighlights === 1, `active=${vpLayout.activeBefore} highlights=${vpLayout.activeHighlights}`);
+check('切换激活格：格子 0 高亮、标签前视、相机为前视朝向',
+  vpLayout.label0 === '前视' && vpLayout.highlight0 && vpLayout.activeName0 === '前视' && vpLayout.quadCameraPos.every((v) => Math.abs(v) > 0),
+  `label0=${vpLayout.label0} highlight=${vpLayout.highlight0} view=${vpLayout.activeName0} cam=[${vpLayout.quadCameraPos}]`);
+check('布局持久化到 localStorage（quad/twoH/single 顺序变化）',
+  vpLayout.quadStored === 'quad' && vpLayout.twoHStored === 'twoH' && vpLayout.singleStored === 'single',
+  `quad=${vpLayout.quadStored} twoH=${vpLayout.twoHStored} single=${vpLayout.singleStored}`);
+check('水平双视图：2 格，默认 前视 + 等轴测', vpLayout.twoHCount === 2 && vpLayout.twoHLabels[0] === '前视' && vpLayout.twoHLabels[1] === '等轴测', (vpLayout.twoHLabels || []).join(' / '));
+
+const vpRibbon = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  await app.rebuild();
+  const tab = [...document.querySelectorAll('.rtab')].find((t) => t.textContent.trim() === '视图');
+  if (tab) tab.click();
+  await new Promise((r) => setTimeout(r, 60));
+  const btns = {};
+  for (const id of ['v.vp1', 'v.vp2h', 'v.vp2v', 'v.vp4']) {
+    const b = document.querySelector('[data-cmd="' + id + '"]');
+    btns[id] = b ? b.textContent.trim() : null;
+  }
+  const active = (id) => {
+    const b = document.querySelector('[data-cmd="' + id + '"]');
+    return b ? b.classList.contains('active') : false;
+  };
+  const singleActive = active('v.vp1');
+  const fourActive = active('v.vp4');
+  return { btns: btns, singleActive: singleActive, fourActive: fourActive, menuHasViewport: true };
+})()`);
+check('「视图」页签含视口布局 4 个按钮（单视图/水平双视/垂直双视/四视图）',
+  vpRibbon.btns && vpRibbon.btns['v.vp1'] === '单视图' && vpRibbon.btns['v.vp4'] === '四视图'
+  && vpRibbon.btns['v.vp2h'] === '水平双视' && vpRibbon.btns['v.vp2v'] === '垂直双视',
+  JSON.stringify(vpRibbon.btns));
+check('单视图布局下「单视图」按钮 active（当前布局高亮）', vpRibbon.singleActive === true && vpRibbon.fourActive === false);
+
 // 拉伸终止条件（SW 式：起始条件 + 方向1 五选项 + 方向2）
 const extrudeCtl = await evaluate(`(async () => {
   const { app } = window.__solid2;

@@ -16,11 +16,62 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { el, clear } from '../ui/dom';
 
 export type ViewDir = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom' | 'iso' | 'isoBack';
 export type ProjectionMode = 'perspective' | 'orthographic';
 export type SceneName = '默认' | '单色灰' | '深色' | '白色';
 export type LightPresetName = '默认' | '明亮' | '柔和' | '顶光' | '背光';
+
+/** 视口布局（SolidWorks：视图 → 显示 → 视口） */
+export type LayoutName = 'single' | 'twoH' | 'twoV' | 'quad';
+
+export interface LayoutDef {
+  id: LayoutName;
+  label: string;
+  /** 每个格子的默认朝向（SW 4 视图默认：前视/上视/右视/等轴测） */
+  dirs: ViewDir[];
+}
+
+/** 布局定义（ribbon 视图页签与视图菜单共用） */
+export const LAYOUT_DEFS: LayoutDef[] = [
+  { id: 'single', label: '单视图', dirs: ['iso'] },
+  { id: 'twoH', label: '双视图 · 水平', dirs: ['front', 'iso'] },
+  { id: 'twoV', label: '双视图 · 垂直', dirs: ['top', 'iso'] },
+  { id: 'quad', label: '四视图', dirs: ['front', 'top', 'right', 'iso'] },
+];
+
+/** 视口格矩形（CSS 像素，左上角原点，y 向下） */
+interface CellRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** 标准视图朝向 → [相机方向, 上方向] */
+export const VIEW_DIRS: Record<ViewDir, { dir: [number, number, number]; up: [number, number, number] }> = {
+  front: { dir: [0, -1, 0], up: [0, 0, 1] },
+  back: { dir: [0, 1, 0], up: [0, 0, 1] },
+  right: { dir: [1, 0, 0], up: [0, 0, 1] },
+  left: { dir: [-1, 0, 0], up: [0, 0, 1] },
+  top: { dir: [0, 0, 1], up: [0, 1, 0] },
+  bottom: { dir: [0, 0, -1], up: [0, 1, 0] },
+  iso: { dir: [1, -1, 0.85], up: [0, 0, 1] },
+  isoBack: { dir: [-1, 1, 0.85], up: [0, 0, 1] },
+};
+
+/** 中国语视图名（视口标签 / 状态栏用） */
+const VIEW_NAMES: Record<ViewDir, string> = {
+  front: '前视',
+  back: '后视',
+  left: '左视',
+  right: '右视',
+  top: '俯视',
+  bottom: '仰视',
+  iso: '等轴测',
+  isoBack: '等轴测（后）',
+};
 
 /** 光源预设名列表（Heads-up「光源」下拉按此渲染） */
 export const LIGHT_PRESET_NAMES: LightPresetName[] = ['默认', '明亮', '柔和', '顶光', '背光'];
@@ -58,6 +109,46 @@ interface ViewSnapshot {
   zoom: number;
 }
 
+/**
+ * 一个视口格（多视口布局时每格独立的一套相机 + 视图目标 + 视图历史）。
+ * 单视图布局下视口里只有一格，全部旧 API 语义不变。
+ */
+export class ViewCell {
+  readonly persp: THREE.PerspectiveCamera;
+  readonly ortho: THREE.OrthographicCamera;
+  mode: ProjectionMode = 'perspective';
+  /** OrbitControls 的目标点对象（直接交给 controls.target，pan/zoom 原地改它） */
+  readonly target = new THREE.Vector3();
+  /** 视图历史（「上一视图」用，每格独立） */
+  viewStack: ViewSnapshot[] = [];
+  suppressHistory = false;
+  /** 最近一次设定的标准朝向（视口标签默认值） */
+  dir: ViewDir = 'iso';
+
+  constructor(aspect: number, position: THREE.Vector3, up: THREE.Vector3, mode: ProjectionMode = 'perspective') {
+    this.mode = mode;
+    this.persp = new THREE.PerspectiveCamera(38, aspect, 0.1, 20000);
+    this.persp.position.copy(position);
+    this.persp.up.copy(up);
+    this.ortho = new THREE.OrthographicCamera(-100, 100, 100, -100, -5000, 20000);
+    this.ortho.position.copy(position);
+    this.ortho.up.copy(up);
+  }
+
+  get camera(): THREE.Camera {
+    return this.mode === 'perspective' ? this.persp : this.ortho;
+  }
+
+  snapshot(): ViewSnapshot {
+    return {
+      position: this.camera.position.clone(),
+      target: this.target.clone(),
+      up: this.camera.up.clone(),
+      zoom: this.persp.zoom,
+    };
+  }
+}
+
 export class Viewport {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -67,20 +158,44 @@ export class Viewport {
   readonly planeGroup: THREE.Group;
   readonly controls: OrbitControls;
 
-  private readonly camPersp: THREE.PerspectiveCamera;
-  private readonly camOrtho: THREE.OrthographicCamera;
-  private mode: ProjectionMode = 'perspective';
+  /** 视口格（≥1 个；多视口布局时每格一套相机） */
+  private cells: ViewCell[] = [];
+  private activeIndex = 0;
+  private layout: LayoutName = 'single';
+
+  /** 激活格（所有旧 API 都作用于它：拾取/标准视图/缩放/剖面…） */
+  get active(): ViewCell {
+    return this.cells[this.activeIndex] ?? this.cells[0];
+  }
+
+  /** 当前激活格下标（多视口布局时有意义） */
+  get activeCellIndex(): number {
+    return this.activeIndex;
+  }
+
+  /** 视口格数量 */
+  get cellCount(): number {
+    return this.cells.length;
+  }
+
+  /** 当前布局 */
+  get layoutName(): LayoutName {
+    return this.layout;
+  }
+
+  /** 每个格子的矩形（CSS 像素，左上角原点）与朝向标签——覆盖层与拾取共用 */
+  private cellRects: CellRect[] = [];
 
   /** 当前激活的相机（透视 / 正投影可切换） */
   get camera(): THREE.Camera {
-    return this.mode === 'perspective' ? this.camPersp : this.camOrtho;
+    return this.active.camera;
   }
   /** 透视相机（缩放、视角计算用） */
   get persp(): THREE.PerspectiveCamera {
-    return this.camPersp;
+    return this.active.persp;
   }
   get projection(): ProjectionMode {
-    return this.mode;
+    return this.active.mode;
   }
 
   private container: HTMLElement;
@@ -89,12 +204,12 @@ export class Viewport {
   private running = false;
   private ro: ResizeObserver | null = null;
 
-  /** 视图历史（「上一视图」用） */
-  private viewStack: ViewSnapshot[] = [];
-  private suppressHistory = false;
-
   /** 剖面视图：全局裁剪平面（null = 关闭） */
   private clipPlane: THREE.Plane | null = null;
+
+  /** 视口覆盖层（多视口时的格子边框 + 左上角视图名标签） */
+  private overlay: HTMLDivElement;
+  private cellEls: HTMLDivElement[] = [];
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -119,15 +234,17 @@ export class Viewport {
     this.scene = new THREE.Scene();
     this.scene.background = makeGradientTexture(['#dfe8f2', '#f2f6fa', '#c9d6e4']);
 
-    this.camPersp = new THREE.PerspectiveCamera(38, this.aspect(), 0.1, 20000);
-    this.camPersp.position.set(120, 90, 150);
-    this.camPersp.up.set(0, 0, 1); // Z 轴朝上（CAD 习惯）
+    // 视口覆盖层：多视口布局时的格子边框 + 视图名标签
+    this.overlay = document.createElement('div');
+    this.overlay.className = 'vp-cells';
+    this.overlay.style.display = 'none';
+    container.appendChild(this.overlay);
 
-    this.camOrtho = new THREE.OrthographicCamera(-100, 100, 100, -100, -5000, 20000);
-    this.camOrtho.position.copy(this.camPersp.position);
-    this.camOrtho.up.copy(this.camPersp.up);
+    // 初始单格（等轴测默认视角），布局从 localStorage 恢复
+    this.applyLayout(Viewport.readStoredLayout() ?? 'single', true);
+    const c0 = this.active;
 
-    this.controls = new OrbitControls(this.camPersp, this.renderer.domElement);
+    this.controls = new OrbitControls(c0.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.14;
     this.controls.screenSpacePanning = true;
@@ -139,9 +256,17 @@ export class Viewport {
       MIDDLE: THREE.MOUSE.ROTATE,
       RIGHT: null as unknown as THREE.MOUSE,
     };
-    this.controls.target.set(0, 0, 0);
+    this.controls.target.copy(c0.target);
     this.controls.addEventListener('change', () => this.invalidate());
     this.controls.addEventListener('end', () => this.rememberView());
+
+    // 多视口：指针悬停即切换激活格（SolidWorks 行为；拖动中不切换，避免视角跳变）
+    this.renderer.domElement.addEventListener('pointermove', (e) => {
+      if (this.cells.length < 2 || e.buttons !== 0) return;
+      const base = this.renderer.domElement.getBoundingClientRect();
+      const i = this.cellIndexAt(e.clientX - base.left, e.clientY - base.top);
+      if (i >= 0) this.setActiveCell(i);
+    });
 
     // 中键 + 修饰键 → 平移 / 缩放（必须在 OrbitControls 之前改写）
     this.renderer.domElement.addEventListener(
@@ -304,11 +429,180 @@ export class Viewport {
     this.gridGroup.visible = v;
   }
 
-  // ---------------- 尺寸 ----------------
-  private aspect(): number {
+  // ---------------- 视口布局 ----------------
+  /** 读持久化布局（SolidWorks 按文档记忆视口布局） */
+  private static readStoredLayout(): LayoutName | null {
+    try {
+      const v = localStorage.getItem('solid2.viewports.v1');
+      if (v && LAYOUT_DEFS.some((d) => d.id === v)) return v as LayoutName;
+    } catch {
+      /* 隐私模式等：忽略 */
+    }
+    return null;
+  }
+
+  /**
+   * 切换视口布局（SolidWorks：视图 → 显示 → 视口）。
+   * 每格拿到一套独立相机（默认朝向 front/top/right/iso），视图历史互不影响。
+   */
+  setLayout(name: LayoutName): void {
+    if (!this.applyLayout(name)) return;
+    try {
+      localStorage.setItem('solid2.viewports.v1', this.layout);
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  /** 应用布局；返回是否有变化。initial=true 时（构造期）不做持久化 */
+  applyLayout(name: LayoutName, initial = false): boolean {
+    const def = LAYOUT_DEFS.find((d) => d.id === name) ?? LAYOUT_DEFS[0];
+    if (this.layout === def.id && this.cells.length === def.dirs.length) return false;
+    const prev = this.cells.length ? this.active : null;
+    const dist = prev ? Math.max(prev.persp.position.distanceTo(prev.target), 120) : 200;
+    const tgt = prev ? prev.target.clone() : new THREE.Vector3(0, 0, 0);
+    const mode = prev ? prev.mode : 'perspective';
+
+    this.layout = def.id;
+    // 先用新格子数算矩形，再建格子：cellAspect() 读的就是这些矩形
+    this.computeCellRects(def.dirs.length);
+    this.cells = def.dirs.map((dir, i) => {
+      const cell = new ViewCell(this.cellAspect(i), dirPosition(dir, tgt, dist), dirUp(dir), mode);
+      cell.target.copy(tgt);
+      cell.dir = dir;
+      return cell;
+    });
+    // SolidWorks：多视口默认激活等轴测格（四视图右下角）；单视图保持当前视角
+    this.activeIndex = def.dirs.length > 1 ? def.dirs.length - 1 : 0;
+    this.bindControls();
+    this.buildOverlay();
+    this.renderOverlay();
+    if (!initial) this.invalidate();
+    return true;
+  }
+
+  /** 切换激活视口格（点击/悬停；SolidWorks 激活格带高亮边框） */
+  setActiveCell(i: number): void {
+    if (i === this.activeIndex || i < 0 || i >= this.cells.length) return;
+    this.activeIndex = i;
+    this.bindControls();
+    this.syncOrthoFrustum();
+    this.controls.update();
+    this.renderOverlay();
+    this.invalidate();
+  }
+
+  /** 各格的朝向标签（视口左上角显示；UI/测试用） */
+  cellLabels(): string[] {
+    return this.cells.map((c) => VIEW_NAMES[c.dir] ?? '等轴测');
+  }
+
+  /** 激活格是否高亮（测试用） */
+  isActiveCell(i: number): boolean {
+    return i === this.activeIndex;
+  }
+
+  private bindControls(): void {
+    const controls = this.controls as OrbitControls | undefined;
+    if (!controls) return;
+    controls.object = this.active.camera;
+    controls.target = this.active.target;
+  }
+
+  /** 按布局切分视口格（CSS 像素，左上角原点） */
+  private computeCellRects(count?: number): void {
     const w = this.container.clientWidth || 800;
     const h = this.container.clientHeight || 600;
-    return w / Math.max(h, 1);
+    const n = count ?? this.cells.length ?? 1;
+    const gap = 3;
+    const half = n === 2 ? (this.layout === 'twoH' ? w / 2 : h / 2) : 0;
+    const rects: CellRect[] = [];
+    if (n <= 1) {
+      rects.push({ x: 0, y: 0, w, h });
+    } else if (n === 2 && this.layout === 'twoH') {
+      rects.push({ x: 0, y: 0, w: half - gap / 2, h });
+      rects.push({ x: half + gap / 2, y: 0, w: w - half - gap / 2, h });
+    } else if (n === 2 && this.layout === 'twoV') {
+      rects.push({ x: 0, y: 0, w, h: half - gap / 2 });
+      rects.push({ x: 0, y: half + gap / 2, w, h: h - half - gap / 2 });
+    } else {
+      const cw = w / 2;
+      const ch = h / 2;
+      rects.push({ x: 0, y: 0, w: cw - gap / 2, h: ch - gap / 2 });
+      rects.push({ x: cw + gap / 2, y: 0, w: w - cw - gap / 2, h: ch - gap / 2 });
+      rects.push({ x: 0, y: ch + gap / 2, w: cw - gap / 2, h: h - ch - gap / 2 });
+      rects.push({ x: cw + gap / 2, y: ch + gap / 2, w: w - cw - gap / 2, h: h - ch - gap / 2 });
+    }
+    this.cellRects = rects;
+  }
+
+  private cellAspect(i: number): number {
+    const r = this.cellRects[i];
+    return r ? r.w / Math.max(r.h, 1) : this.aspect();
+  }
+
+  /** 激活格矩形（CSS 像素，左上角原点） */
+  private activeRect(): CellRect {
+    return (
+      this.cellRects[this.activeIndex] ?? {
+        x: 0,
+        y: 0,
+        w: this.container.clientWidth || 800,
+        h: this.container.clientHeight || 600,
+      }
+    );
+  }
+
+  /** 屏幕（客户区）坐标落在哪个格；单格布局恒返回 0 */
+  private cellIndexAt(x: number, y: number): number {
+    if (this.cellRects.length <= 1) return 0;
+    for (let i = 0; i < this.cellRects.length; i++) {
+      const r = this.cellRects[i];
+      if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return i;
+    }
+    return this.activeIndex;
+  }
+
+  // ---------------- 覆盖层（格子边框 + 视图名） ----------------
+  private buildOverlay(): void {
+    clear(this.overlay);
+    this.cellEls = [];
+    this.overlay.style.display = this.cells.length > 1 ? '' : 'none';
+    for (let i = 0; i < this.cells.length; i++) {
+      const cell = el('div', { class: 'vp-cell', dataset: { cell: String(i) } });
+      cell.appendChild(el('span', { class: 'vp-cell-label', text: VIEW_NAMES[this.cells[i].dir] }));
+      this.overlay.appendChild(cell);
+      this.cellEls.push(cell);
+    }
+  }
+
+  private renderOverlay(): void {
+    if (this.cellEls.length !== this.cells.length) this.buildOverlay();
+    if (this.cells.length <= 1) {
+      this.overlay.style.display = 'none';
+      return;
+    }
+    this.overlay.style.display = '';
+    for (let i = 0; i < this.cells.length; i++) {
+      const r = this.cellRects[i];
+      const node = this.cellEls[i];
+      if (!node) continue;
+      // 激活高亮不依赖矩形（矩形缺失只是位置信息没算出来）
+      node.classList.toggle('active', i === this.activeIndex);
+      if (!r) continue;
+      node.style.left = `${r.x}px`;
+      node.style.top = `${r.y}px`;
+      node.style.width = `${r.w}px`;
+      node.style.height = `${r.h}px`;
+      const label = node.firstElementChild as HTMLElement | null;
+      if (label) label.textContent = this.cellLabels()[i] ?? '';
+    }
+  }
+
+  // ---------------- 尺寸 ----------------
+  private aspect(): number {
+    const r = this.activeRect();
+    return r.w / Math.max(r.h, 1);
   }
 
   resize(): void {
@@ -316,9 +610,14 @@ export class Viewport {
     const h = this.container.clientHeight;
     if (!w || !h) return;
     this.renderer.setSize(w, h, false);
-    this.camPersp.aspect = w / h;
-    this.camPersp.updateProjectionMatrix();
+    this.computeCellRects();
+    for (let i = 0; i < this.cells.length; i++) {
+      const a = this.cellAspect(i);
+      this.cells[i].persp.aspect = a;
+      this.cells[i].persp.updateProjectionMatrix();
+    }
     this.syncOrthoFrustum();
+    this.renderOverlay();
     this.invalidate();
   }
 
@@ -337,7 +636,7 @@ export class Viewport {
       const damping = this.controls.enableDamping;
       if (damping) this.controls.update();
       if (this.needsRender || damping) {
-        this.renderer.render(this.scene, this.camera);
+        this.renderAll();
         this.needsRender = false;
       }
     };
@@ -349,6 +648,32 @@ export class Viewport {
     cancelAnimationFrame(this.rafId);
   }
 
+  /** 渲染全部视口格（单格 = 整幅；多格 = scissor 分格渲染同一场景） */
+  private renderAll(): void {
+    if (this.cells.length <= 1) {
+      this.renderer.render(this.scene, this.active.camera);
+      return;
+    }
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    if (!w || !h) return;
+    this.renderer.setScissorTest(true);
+    this.renderer.autoClear = false;
+    this.renderer.clear();
+    for (let i = 0; i < this.cells.length; i++) {
+      const r = this.cellRects[i];
+      if (!r) continue;
+      const gy = h - r.y - r.h; // WebGL 视口原点在左下
+      this.renderer.setViewport(r.x, gy, r.w, r.h);
+      this.renderer.setScissor(r.x, gy, r.w, r.h);
+      this.renderer.render(this.scene, this.cells[i].camera);
+    }
+    this.renderer.autoClear = true;
+    this.renderer.setScissorTest(false);
+    this.renderer.setViewport(0, 0, w, h);
+    this.renderer.setScissor(0, 0, w, h);
+  }
+
   dispose(): void {
     this.stop();
     this.ro?.disconnect();
@@ -356,16 +681,18 @@ export class Viewport {
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
+    this.overlay.remove();
   }
 
   // ---------------- 显示模式 / 布景 / 剖面 ----------------
-  /** 透视 / 正投影（SolidWorks「显示模式」） */
+  /** 透视 / 正投影（SolidWorks「显示模式」，多视口时只作用于激活格） */
   setProjection(mode: ProjectionMode): void {
-    if (this.mode === mode) return;
-    const pos = this.camera.position.clone();
-    const up = this.camera.up.clone();
-    this.mode = mode;
-    const cam = this.camera;
+    const c = this.active;
+    if (c.mode === mode) return;
+    const pos = c.camera.position.clone();
+    const up = c.camera.up.clone();
+    c.mode = mode;
+    const cam = c.camera;
     cam.position.copy(pos);
     cam.up.copy(up);
     if (mode === 'orthographic') this.syncOrthoFrustum();
@@ -374,12 +701,13 @@ export class Viewport {
     this.invalidate();
   }
 
-  /** 正投影视锥随当前相机距离与视口尺寸自适应，观感与透视一致 */
+  /** 正投影视锥随当前相机距离与激活格视口尺寸自适应，观感与透视一致 */
   private syncOrthoFrustum(): void {
-    const dist = this.camPersp.position.distanceTo(this.controls.target) || 200;
-    const h = 2 * Math.tan((this.camPersp.fov * Math.PI) / 360) * dist;
+    const c = this.active;
+    const dist = c.persp.position.distanceTo(this.controls.target) || 200;
+    const h = 2 * Math.tan((c.persp.fov * Math.PI) / 360) * dist;
     const w = h * this.aspect();
-    const cam = this.camOrtho;
+    const cam = c.ortho;
     cam.left = -w / 2;
     cam.right = w / 2;
     cam.top = h / 2;
@@ -430,26 +758,22 @@ export class Viewport {
     return !!this.clipPlane;
   }
 
-  // ---------------- 视图历史 ----------------
+  // ---------------- 视图历史（每格独立） ----------------
   /** 记录一次视图（相机停止运动后自动调用） */
   private rememberView(): void {
-    if (this.suppressHistory) return;
-    const snap = this.snapshotView();
-    const last = this.viewStack[this.viewStack.length - 1];
+    const c = this.active;
+    if (c.suppressHistory) return;
+    const snap = c.snapshot();
+    const last = c.viewStack[c.viewStack.length - 1];
     if (last && last.position.distanceToSquared(snap.position) < 1e-6 && last.target.distanceToSquared(snap.target) < 1e-6) {
       return;
     }
-    this.viewStack.push(snap);
-    if (this.viewStack.length > 30) this.viewStack.shift();
+    c.viewStack.push(snap);
+    if (c.viewStack.length > 30) c.viewStack.shift();
   }
 
   private snapshotView(): ViewSnapshot {
-    return {
-      position: this.camera.position.clone(),
-      target: this.controls.target.clone(),
-      up: this.camera.up.clone(),
-      zoom: this.camPersp.zoom,
-    };
+    return this.active.snapshot();
   }
 
   /** 相机快照（纯数据，可跨文档保存；多文档切换用） */
@@ -466,75 +790,71 @@ export class Viewport {
   /** 恢复相机快照（null = 不动） */
   restoreCamera(s: { position: [number, number, number]; target: [number, number, number]; up: [number, number, number]; zoom: number } | null): void {
     if (!s) return;
+    const c = this.active;
     const p = new THREE.Vector3(...s.position);
     const t = new THREE.Vector3(...s.target);
     const u = new THREE.Vector3(...s.up);
-    this.camPersp.position.copy(p);
-    this.camOrtho.position.copy(p);
+    c.persp.position.copy(p);
+    c.ortho.position.copy(p);
     this.controls.target.copy(t);
-    this.camPersp.up.copy(u);
-    this.camOrtho.up.copy(u);
-    this.camPersp.zoom = s.zoom;
-    this.camOrtho.zoom = s.zoom;
-    this.camPersp.updateProjectionMatrix();
-    this.camOrtho.updateProjectionMatrix();
+    c.target.copy(t);
+    c.persp.up.copy(u);
+    c.ortho.up.copy(u);
+    c.persp.zoom = s.zoom;
+    c.ortho.zoom = s.zoom;
+    c.persp.updateProjectionMatrix();
+    c.ortho.updateProjectionMatrix();
     this.controls.update();
     this.invalidate();
   }
 
   get hasPrevView(): boolean {
-    return this.viewStack.length > 1;
+    return this.active.viewStack.length > 1;
   }
 
-  /** 上一视图（SolidWorks 视图工具栏） */
+  /** 上一视图（SolidWorks 视图工具栏，只回退当前激活格） */
   prevView(): boolean {
-    if (this.viewStack.length < 2) return false;
-    this.viewStack.pop(); // 当前视图
-    const v = this.viewStack[this.viewStack.length - 1];
-    this.suppressHistory = true;
-    this.camPersp.position.copy(v.position);
-    this.camOrtho.position.copy(v.position);
+    const c = this.active;
+    if (c.viewStack.length < 2) return false;
+    c.viewStack.pop(); // 当前视图
+    const v = c.viewStack[c.viewStack.length - 1];
+    c.suppressHistory = true;
+    c.persp.position.copy(v.position);
+    c.ortho.position.copy(v.position);
     this.controls.target.copy(v.target);
-    this.camPersp.up.copy(v.up);
-    this.camOrtho.up.copy(v.up);
-    this.camPersp.zoom = v.zoom;
-    this.camPersp.updateProjectionMatrix();
+    c.target.copy(v.target);
+    c.persp.up.copy(v.up);
+    c.ortho.up.copy(v.up);
+    c.persp.zoom = v.zoom;
+    c.persp.updateProjectionMatrix();
     this.syncOrthoFrustum();
     this.controls.update();
-    this.suppressHistory = false;
+    c.suppressHistory = false;
     this.invalidate();
     return true;
   }
 
   // ---------------- 视图朝向 ----------------
   setView(dir: ViewDir, animate = true): void {
-    const dist = this.camera.position.distanceTo(this.controls.target) || 200;
+    const c = this.active;
+    c.dir = dir;
+    const dist = c.camera.position.distanceTo(this.controls.target) || 200;
     const target = this.controls.target.clone();
-    const dirs: Record<ViewDir, THREE.Vector3> = {
-      front: new THREE.Vector3(0, -1, 0),
-      back: new THREE.Vector3(0, 1, 0),
-      right: new THREE.Vector3(1, 0, 0),
-      left: new THREE.Vector3(-1, 0, 0),
-      top: new THREE.Vector3(0, 0, 1),
-      bottom: new THREE.Vector3(0, 0, -1),
-      iso: new THREE.Vector3(1, -1, 0.85).normalize(),
-      isoBack: new THREE.Vector3(-1, 1, 0.85).normalize(),
-    };
-    const d = dirs[dir] ?? dirs.iso;
+    const d = new THREE.Vector3(...(VIEW_DIRS[dir]?.dir ?? VIEW_DIRS.iso.dir)).normalize();
     const pos = target.clone().addScaledVector(d, dist);
-
-    // 上方向：俯视/仰视时用 Y 轴，否则用 Z 轴
-    const up = Math.abs(d.z) > 0.98 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
+    const up = new THREE.Vector3(...(VIEW_DIRS[dir]?.up ?? VIEW_DIRS.iso.up));
 
     if (!animate) {
-      this.camPersp.up.copy(up);
-      this.camPersp.position.copy(pos);
-      this.camOrtho.up.copy(up);
-      this.camOrtho.position.copy(pos);
+      c.persp.up.copy(up);
+      c.persp.position.copy(pos);
+      c.ortho.up.copy(up);
+      c.ortho.position.copy(pos);
       this.controls.target.copy(target);
+      c.target.copy(target);
       this.syncOrthoFrustum();
       this.controls.update();
       this.rememberView();
+      this.renderOverlay();
       this.invalidate();
       return;
     }
@@ -554,8 +874,9 @@ export class Viewport {
   private animToken = 0;
   private animateCamera(pos: THREE.Vector3, target: THREE.Vector3, up: THREE.Vector3): void {
     const token = ++this.animToken;
-    const from = this.camera.position.clone();
-    const fromUp = this.camera.up.clone();
+    const c = this.active;
+    const from = c.camera.position.clone();
+    const fromUp = c.camera.up.clone();
     const fromTarget = this.controls.target.clone();
     const t0 = performance.now();
     const dur = 300;
@@ -564,16 +885,20 @@ export class Viewport {
       const t = Math.min(1, (performance.now() - t0) / dur);
       const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
       const p = new THREE.Vector3().lerpVectors(from, pos, e);
-      this.camPersp.position.copy(p);
-      this.camOrtho.position.copy(p);
+      c.persp.position.copy(p);
+      c.ortho.position.copy(p);
       this.controls.target.lerpVectors(fromTarget, target, e);
+      c.target.copy(this.controls.target);
       const u = fromUp.clone().lerp(up, e).normalize();
-      this.camPersp.up.copy(u);
-      this.camOrtho.up.copy(u);
-      this.camera.lookAt(this.controls.target);
+      c.persp.up.copy(u);
+      c.ortho.up.copy(u);
+      c.camera.lookAt(this.controls.target);
       this.invalidate();
       if (t < 1) requestAnimationFrame(step);
-      else this.rememberView();
+      else {
+        this.rememberView();
+        this.renderOverlay();
+      }
     };
     step();
   }
@@ -592,7 +917,7 @@ export class Viewport {
       Math.max(b.max[2] - b.min[2], 1e-3)
     );
     const radius = size.length() / 2;
-    const fov = (this.camPersp.fov * Math.PI) / 180;
+    const fov = (this.persp.fov * Math.PI) / 180;
     const dist = (radius / Math.sin(fov / 2)) * 1.35;
 
     const dir = this.camera.position.clone().sub(this.controls.target);
@@ -604,30 +929,37 @@ export class Viewport {
 
   /** 按系数缩放（>1 拉近，<1 推远） */
   zoomBy(factor: number): void {
-    const offset = this.camera.position.clone().sub(this.controls.target);
+    const c = this.active;
+    const offset = c.camera.position.clone().sub(this.controls.target);
     const dist = offset.length();
     const next = THREE.MathUtils.clamp(dist / factor, this.controls.minDistance, this.controls.maxDistance);
     const pos = this.controls.target.clone().addScaledVector(offset.normalize(), next);
-    this.camPersp.position.copy(pos);
-    this.camOrtho.position.copy(pos);
+    c.persp.position.copy(pos);
+    c.ortho.position.copy(pos);
     this.syncOrthoFrustum();
     this.controls.update();
     this.rememberView();
     this.invalidate();
   }
 
-  /** 缩放至区域：把屏幕矩形框内的内容放大铺满视口 */
+  /** 缩放至区域：把屏幕矩形框内的内容放大铺满（当前激活格）视口 */
   zoomArea(rect: { x: number; y: number; w: number; h: number }): void {
-    const el = this.renderer.domElement;
-    const W = el.clientWidth || 1;
-    const H = el.clientHeight || 1;
+    const r = this.activeRect();
+    const W = r.w || 1;
+    const H = r.h || 1;
     if (rect.w < 6 || rect.h < 6) return;
 
     const viewDir = new THREE.Vector3().subVectors(this.controls.target, this.camera.position).normalize();
     const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(viewDir, this.controls.target);
+    const rc = new THREE.Raycaster();
 
+    // rect 是画布相对坐标；多视口时换算成激活格内的 NDC 再射线
     const corner = (sx: number, sy: number): THREE.Vector3 | null => {
-      const rc = this.rayFromScreen(rect.x + sx, rect.y + sy);
+      const ndc = new THREE.Vector2(
+        ((rect.x + sx - r.x) / Math.max(W, 1)) * 2 - 1,
+        -((rect.y + sy - r.y) / Math.max(H, 1)) * 2 + 1
+      );
+      rc.setFromCamera(ndc, this.camera);
       const hit = new THREE.Vector3();
       return rc.ray.intersectPlane(plane, hit) ? hit : null;
     };
@@ -649,7 +981,7 @@ export class Viewport {
       halfW = Math.max(halfW, Math.abs(d.dot(right)));
       halfH = Math.max(halfH, Math.abs(d.dot(up)));
     }
-    const fov = (this.camPersp.fov * Math.PI) / 180;
+    const fov = (this.persp.fov * Math.PI) / 180;
     const distH = halfH / Math.tan(fov / 2);
     const distW = halfW / (Math.tan(fov / 2) * (W / H));
     const dist = Math.max(distH, distW) * 1.06;
@@ -679,9 +1011,10 @@ export class Viewport {
       }
     }
     const pos = this.controls.target.clone().add(offset);
-    this.camPersp.position.copy(pos);
-    this.camOrtho.position.copy(pos);
-    this.camera.lookAt(this.controls.target);
+    const c = this.active;
+    c.persp.position.copy(pos);
+    c.ortho.position.copy(pos);
+    c.camera.lookAt(this.controls.target);
     this.syncOrthoFrustum();
     this.controls.update();
     this.rememberView();
@@ -691,7 +1024,7 @@ export class Viewport {
   /** 平移视图（Ctrl+方向键用），比例 = 屏幕宽度的 10% */
   panView(dxScreenFrac: number, dyScreenFrac: number): void {
     const dist = this.camera.position.distanceTo(this.controls.target);
-    const h = 2 * Math.tan((this.camPersp.fov * Math.PI) / 360) * dist;
+    const h = 2 * Math.tan((this.persp.fov * Math.PI) / 360) * dist;
     const w = h * this.aspect();
     const viewDir = new THREE.Vector3().subVectors(this.controls.target, this.camera.position).normalize();
     const right = new THREE.Vector3().crossVectors(viewDir, this.camera.up).normalize();
@@ -700,32 +1033,35 @@ export class Viewport {
       .addScaledVector(right, -dxScreenFrac * w)
       .addScaledVector(up, dyScreenFrac * h);
     this.controls.target.add(delta);
-    this.camPersp.position.add(delta);
-    this.camOrtho.position.add(delta);
+    const c = this.active;
+    c.target.copy(this.controls.target);
+    c.persp.position.add(delta);
+    c.ortho.position.add(delta);
     this.controls.update();
     this.rememberView();
     this.invalidate();
   }
 
-  /** 屏幕坐标 → 世界射线 */
+  /** 屏幕（客户区）坐标 → 世界射线（按激活格矩形换算 NDC，多视口拾取才正确） */
   rayFromScreen(x: number, y: number): THREE.Raycaster {
-    const rect = this.renderer.domElement.getBoundingClientRect();
+    const base = this.renderer.domElement.getBoundingClientRect();
+    const r = this.activeRect();
     const ndc = new THREE.Vector2(
-      ((x - rect.left) / rect.width) * 2 - 1,
-      -((y - rect.top) / rect.height) * 2 + 1
+      ((x - base.left - r.x) / Math.max(r.w, 1)) * 2 - 1,
+      -((y - base.top - r.y) / Math.max(r.h, 1)) * 2 + 1
     );
     const rc = new THREE.Raycaster();
-    rc.setFromCamera(ndc, this.camera);
+    rc.setFromCamera(ndc, this.active.camera);
     return rc;
   }
 
-  /** 世界坐标 → 屏幕像素 */
+  /** 世界坐标 → 画布像素（覆盖层/标注定位用；多视口时位于激活格内） */
   worldToScreen(p: [number, number, number]): { x: number; y: number } {
-    const v = new THREE.Vector3(p[0], p[1], p[2]).project(this.camera);
-    const rect = this.renderer.domElement.getBoundingClientRect();
+    const v = new THREE.Vector3(p[0], p[1], p[2]).project(this.active.camera);
+    const r = this.activeRect();
     return {
-      x: ((v.x + 1) / 2) * rect.width,
-      y: ((-v.y + 1) / 2) * rect.height,
+      x: r.x + ((v.x + 1) / 2) * r.w,
+      y: r.y + ((-v.y + 1) / 2) * r.h,
     };
   }
 
@@ -737,8 +1073,8 @@ export class Viewport {
   /** 一个像素对应多少世界单位（用于拾取容差） */
   pixelSizeAt(p: [number, number, number]): number {
     const dist = this.camera.position.distanceTo(new THREE.Vector3(p[0], p[1], p[2]));
-    const h = 2 * Math.tan((this.camPersp.fov * Math.PI) / 360) * dist;
-    return h / this.renderer.domElement.clientHeight;
+    const h = 2 * Math.tan((this.persp.fov * Math.PI) / 360) * dist;
+    return h / Math.max(this.activeRect().h, 1);
   }
 
   /** 相机朝向的粗略名称（状态栏显示用） */
@@ -754,11 +1090,22 @@ export class Viewport {
     return d.z > 0 ? '俯视' : '仰视';
   }
 
-  /** 截图（data URL） */
+  /** 截图（data URL，多视口时整幅画布） */
   snapshot(): string {
-    this.renderer.render(this.scene, this.camera);
+    this.renderAll();
     return this.renderer.domElement.toDataURL('image/png');
   }
+}
+
+/** 标准朝向 → 相机位置（target + 方向 × 距离） */
+function dirPosition(dir: ViewDir, target: THREE.Vector3, dist: number): THREE.Vector3 {
+  const d = new THREE.Vector3(...(VIEW_DIRS[dir]?.dir ?? VIEW_DIRS.iso.dir)).normalize();
+  return target.clone().addScaledVector(d, dist);
+}
+
+/** 标准朝向 → 上方向 */
+function dirUp(dir: ViewDir): THREE.Vector3 {
+  return new THREE.Vector3(...(VIEW_DIRS[dir]?.up ?? VIEW_DIRS.iso.up));
 }
 
 /** 生成竖向渐变贴图，用作 scene.background（SolidWorks 式布景） */
