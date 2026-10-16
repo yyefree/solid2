@@ -73,6 +73,8 @@ export class SketchOverlay {
   private plane: SketchPlane;
   private sketch: Sketch | null = null;
   private displayMode = false;
+  /** 显示态下整条草图是否呈现「选中」高亮（SolidWorks: 退出草图后该草图被选中） */
+  private displaySelected = false;
   private selectedEntities = new Set<string>();
   private selectedPoints = new Set<string>();
   private hoverEntity: string | null = null;
@@ -177,6 +179,20 @@ export class SketchOverlay {
     return this.displayMode;
   }
 
+  /**
+   * 显示态下整条草图是否呈现「选中」高亮（SolidWorks: 退出草图后草图处于选中状态，
+   * 图形区以高亮色显示，提示可直接据此创建特征）。仅显示态生效，编辑态不受影响。
+   */
+  setDisplaySelected(on: boolean): void {
+    if (this.displaySelected === on) return;
+    this.displaySelected = on;
+    if (this.displayMode) this.refresh();
+  }
+
+  get isDisplaySelected(): boolean {
+    return this.displaySelected;
+  }
+
   get currentPlane(): SketchPlane {
     return this.plane;
   }
@@ -267,7 +283,9 @@ export class SketchOverlay {
         }
       }
       const geo = new THREE.BufferGeometry().setFromPoints(pts);
-      const selected = this.displayMode ? false : this.selectedEntities.has(e.id) || this.hoverEntity === e.id;
+      const selected = this.displayMode
+        ? this.displaySelected
+        : this.selectedEntities.has(e.id) || this.hoverEntity === e.id;
       const mat = sketchMaterial(selected, !!e.construction, this.displayMode);
       if (e.construction) {
         const line = new THREE.Line(geo, mat);

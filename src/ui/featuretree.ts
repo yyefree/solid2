@@ -63,7 +63,8 @@ export function buildFeatureTree(app: App, host: HTMLElement): void {
     const feats = app.doc.features;
     for (const f of feats) {
       const isSketch = f.type === 'sketch';
-      const isActive = app.editingSketch?.id === f.id;
+      // 编辑中的草图 / 当前选中的特征都高亮（退出草图后该草图被选中，应显示为选中态）
+      const isActive = app.editingSketch?.id === f.id || app.selectedFeatureId === f.id;
       const node = el(
         'div',
         {

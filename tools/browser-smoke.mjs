@@ -1021,6 +1021,10 @@ const escExit = await evaluate(`(async () => {
   await sleep(120);
   out.esc2Mode = app.mode;
   out.esc2Overlay = overlayInfo();
+  // 退出后草图应处于「选中」态：selectedFeatureId 指向该草图 + 图形区高亮 + 树节点高亮
+  out.esc2SelectedEqSketch = app.selectedFeatureId === (app.doc.sketchFeatures().at(-1)?.id ?? null);
+  out.esc2DisplaySel = app.sketch.isDisplaySelected === true;
+  out.esc2TreeSel = (() => { const n = document.querySelector('.tnode.feat.sel'); return !!n && n.dataset.id === app.selectedFeatureId; })();
   out.esc2Extrude = await extrudeOk();
 
   // Enter：直接退出草图（确认角 ✓ 的键盘等价物）
@@ -1030,6 +1034,8 @@ const escExit = await evaluate(`(async () => {
   await sleep(120);
   out.enterMode = app.mode;
   out.enterOverlay = overlayInfo();
+  out.enterSelectedEqSketch = app.selectedFeatureId === (app.doc.sketchFeatures().at(-1)?.id ?? null);
+  out.enterDisplaySel = app.sketch.isDisplaySelected === true;
   out.enterExtrude = await extrudeOk();
 
   await clearAll();
@@ -1044,6 +1050,12 @@ check('Esc 退出后草图保留可见且可拉伸成型',
 check('Enter 退出草图（确认角 ✓ 键盘等价物）后草图可见且可拉伸',
   escExit.enterMode === 'model' && escExit.enterOverlay.visible === true && escExit.enterOverlay.lines === 4 && escExit.enterExtrude.solids === 1,
   `mode=${escExit.enterMode} lines=${escExit.enterOverlay.lines} solids=${escExit.enterExtrude.solids}`);
+check('Esc 退出后草图处于选中态（selectedFeatureId + 图形区高亮 + 树节点高亮）',
+  escExit.esc2SelectedEqSketch === true && escExit.esc2DisplaySel === true && escExit.esc2TreeSel === true,
+  `sel=${escExit.esc2SelectedEqSketch}/${escExit.esc2DisplaySel}/${escExit.esc2TreeSel}`);
+check('Enter 退出后草图处于选中态（selectedFeatureId + 图形区高亮）',
+  escExit.enterSelectedEqSketch === true && escExit.enterDisplaySel === true,
+  `sel=${escExit.enterSelectedEqSketch}/${escExit.enterDisplaySel}`);
 
 // Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
 const enterRepeat = await evaluate(`(async () => {

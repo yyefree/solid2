@@ -166,6 +166,16 @@ export class SketchController {
     if (this.overlay && !this.app.editingSketch) this.overlay.group.visible = v;
   }
 
+  /** 显示态草图是否呈现「选中」高亮（退出草图后置 true，选中其它特征时置 false） */
+  setDisplaySelected(on: boolean): void {
+    if (this.app.editingSketch) return;
+    this.overlay?.setDisplaySelected(on);
+  }
+
+  get isDisplaySelected(): boolean {
+    return !!this.overlay?.isDisplaySelected;
+  }
+
   get isActive(): boolean {
     return !!this.overlay && !!this.app.editingSketch;
   }

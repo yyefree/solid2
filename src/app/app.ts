@@ -359,6 +359,10 @@ export class App {
       const f = this.doc.features.find((x) => x.id === id);
       if (f && f.type === 'sketch') this.activeSketchFeature = f as SketchFeature;
     }
+    // 图形区显示态草图的高亮跟随特征选中（选中的正是显示中的草图 → 高亮，否则取消）
+    if (!this.editingSketch) {
+      this.sketch.setDisplaySelected(!!id && id === this.sketch.displaySketch?.id);
+    }
     this.emit('feature', 'props');
   }
 
@@ -656,6 +660,8 @@ export class App {
       return;
     }
     ctl.showDisplay(last);
+    // 该草图是「当前选中」的特征时，图形区以选中高亮显示（SolidWorks: 退出后草图被选中）
+    ctl.setDisplaySelected(last.id === this.selectedFeatureId);
   }
 
   setDisplayStyle(style: DisplayStyle): void {
@@ -1515,24 +1521,28 @@ export class App {
     closePropertyManager(); // 草图 PropertyManager 随退出关闭
     const f = this.editingSketch;
     this.editingSketch = null;
-    this.activeSketchFeature = f; // SolidWorks: 退出后该草图仍是「当前选中」的草图
     this.sketchTool = null;
     this.pendingPoints = [];
+    let kept = true;
     if (revert) {
       const sk = f.params.sketch;
       if (!sk.entities.length && !sk.constraints.length) {
         this.doc.remove(f.id);
-        this.activeSketchFeature = null;
+        kept = false;
       }
     }
     this.mode = 'model';
+    // SolidWorks: 退出后该草图处于「选中」状态——树高亮 + 图形区高亮 + 属性管理器显示，
+    // 可直接继续创建拉伸等特征。空草图被丢弃时不选中任何特征。
+    this.activeSketchFeature = kept ? f : null;
+    this.selectedFeatureId = kept ? f.id : null;
     this.rebuild();
     this.applyModeVisibility();
-    this.emit('mode', 'change', 'props');
+    this.emit('mode', 'change', 'props', 'feature');
     this.setStatus(
       '已退出草图，草图已保留',
       'ok',
-      this.activeSketchFeature ? `可基于「${this.activeSketchFeature.name}」创建拉伸等特征` : undefined
+      this.activeSketchFeature ? `已选中「${this.activeSketchFeature.name}」，可继续创建拉伸等特征` : undefined
     );
   }
 
