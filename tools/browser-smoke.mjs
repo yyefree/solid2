@@ -2601,6 +2601,47 @@ check('过期（被取代）的异步重建结果被丢弃，不用旧模型覆�
   staleRebuild.solids === 1 && staleRebuild.afterStale === 1,
   `solids=${staleRebuild.solids} afterStale=${staleRebuild.afterStale}`);
 
+// 快捷栏（S）：反复开关**不应累积** document 上的监听器。
+// 用 CDP 的 DOMDebugger.getEventListeners 精确计数——比行为断言更直接。
+// 修复前 closeShortcutBar 只移除 DOM 不摘 away 监听器，且残留监听器在 bar 为 null 时
+// 直接 return、永远摘不掉 → 每次「S 开 / S 关」都泄漏一个。
+{
+  const docMousedownCount = async () => {
+    const r = await send('Runtime.evaluate', { expression: 'document', returnByValue: false });
+    const l = await send('DOMDebugger.getEventListeners', { objectId: r.result.objectId });
+    return (l.listeners ?? []).filter((x) => x.type === 'mousedown').length;
+  };
+  const sbar = (fn) => evaluate(
+    `(async () => { const S = await import('/src/ui/shortcutbar.ts'); S.${fn}(window.__solid2.app); })()`
+  );
+  const closeSbar = () => evaluate(
+    `(async () => { const S = await import('/src/ui/shortcutbar.ts'); S.closeShortcutBar(); })()`
+  );
+
+  // 先派发一次 mousedown 清掉前面测试遗留的 document 监听器（它们会自清），
+  // 否则基线不为 0、且会被下面同一次派发一起清掉，导致计数断言失真。
+  await evaluate('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))', { awaitPromise: false });
+  await sleep(80);
+  await closeSbar(); await sleep(80);
+  const base = await docMousedownCount();
+
+  await sbar('openShortcutBar'); await sleep(80);
+  const barShown = await evaluate('!!document.querySelector(".sbar")', { awaitPromise: false });
+  const opened = await docMousedownCount();
+
+  for (let i = 0; i < 5; i++) { await sbar('openShortcutBar'); await sleep(50); }
+  const afterReopen = await docMousedownCount();
+
+  await evaluate('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))', { awaitPromise: false });
+  await sleep(80);
+  const barGone = await evaluate('!document.querySelector(".sbar")', { awaitPromise: false });
+  const afterAway = await docMousedownCount();
+
+  check('快捷栏反复开关不累积 document 监听器（closeShortcutBar 摘除 away）',
+    barShown === true && barGone === true && opened === base + 1 && afterReopen === base + 1 && afterAway === base,
+    `base=${base} opened=${opened} reopen5=${afterReopen} afterAway=${afterAway} shown=${barShown} gone=${barGone}`);
+}
+
 if (process.env.SMOKE_SHOT) {
   try {
     const r = await send('Page.captureScreenshot', { format: 'png' });

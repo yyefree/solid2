@@ -102,6 +102,8 @@ function gestureCommandsFor(app: App): BarCmd[] {
 // 快捷方式栏（S）
 // ============================================================
 let bar: HTMLElement | null = null;
+/** 快捷栏的「点击外部关闭」监听器——必须随关闭一起摘除，否则会随每次打开累积（泄漏）。 */
+let barAway: ((e: MouseEvent) => void) | null = null;
 let barCount = 4;
 let lastPointer = { x: 200, y: 200 };
 
@@ -155,17 +157,25 @@ export function openShortcutBar(app: App, at?: { x: number; y: number }): void {
   app.setStatus(`快捷方式栏：${barCount} 个常用命令（S 关闭 / 点右下角切换 4·8）`, 'busy');
 
   setTimeout(() => {
+    if (!bar) return; // 10ms 内已被关闭（如连按 S）→ 不再注册监听器
     const away = (e: MouseEvent) => {
       if (!bar) return;
       if (bar.contains(e.target as Node)) return;
-      closeShortcutBar();
-      document.removeEventListener('mousedown', away, true);
+      closeShortcutBar(); // 内部会摘掉本监听器
     };
+    barAway = away;
     document.addEventListener('mousedown', away, true);
   }, 10);
 }
 
 export function closeShortcutBar(): void {
+  // ⚠️ 必须摘掉「点击外部关闭」监听器：它挂在 document 上，不会随 bar 一起销毁。
+  //    若只在 away 自身触发时摘除，则「按 S 关闭 / 重开」等路径会累积监听器；
+  //    且残留监听器在 bar 已为 null 时直接 return，**永远摘不掉**（真实泄漏）。
+  if (barAway) {
+    document.removeEventListener('mousedown', barAway, true);
+    barAway = null;
+  }
   bar?.remove();
   bar = null;
 }
