@@ -34,6 +34,7 @@ const SUITES = [
   { name: '拉伸终止条件/薄壁特征', file: 'tools/extrude-test.ts' },
   { name: '薄壁特征（旋转/扫描）', file: 'tools/thin-test.ts' },
   { name: '热键层（解析/覆盖存储）', file: 'tools/hotkeys-test.ts' },
+  { name: '草图编辑历史（撤销/重做栈）', file: 'tools/sketch-history-test.ts' },
 ];
 
 let failed = 0;

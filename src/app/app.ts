@@ -331,10 +331,13 @@ export class App {
   }
 
   get canUndo(): boolean {
+    // 草图编辑态：可撤销性由草图内部历史决定（见 SketchController.canUndo）
+    if (this.mode === 'sketch' && this.editingSketch) return this.sketch.canUndo;
     return this.undoStack.length > 0;
   }
 
   get canRedo(): boolean {
+    if (this.mode === 'sketch' && this.editingSketch) return this.sketch.canRedo;
     return this.redoStack.length > 0;
   }
 
@@ -445,7 +448,29 @@ export class App {
     this.redoStack.length = 0;
   }
 
+  /**
+   * 清理指向「已不存在特征」的 UI 状态（悬空引用）。
+   *
+   * 撤销 / 重做 / 整体替换特征列表后必须调用：`selectedFeatureId` 或
+   * `activeSketchFeature` 若指向已被删除的特征，会让设计树高亮、属性面板、
+   * 以及后续特征对话框的默认草图与文档不一致。与 `removeFeature` 同一类问题
+   * ——设了状态就要想清楚何时清除。
+   */
+  private pruneFeatureUiState(): void {
+    const exists = (id: string | null): boolean => !!id && !!this.doc.getFeature(id);
+    if (this.activeSketchFeature && !exists(this.activeSketchFeature.id)) this.activeSketchFeature = null;
+    if (this.selectedFeatureId && !exists(this.selectedFeatureId)) this.applyFeatureSelection(null);
+  }
+
   undo(): void {
+    // 草图编辑态：撤销的是**草图内部**操作（SolidWorks 语义），不能走文档级撤销——
+    // 文档级撤销会整体替换 doc，而 editingSketch 仍指向旧 doc 的特征对象，导致
+    // 草图编辑器与文档脱节（画线后 Ctrl+Z 毫无反应，模型却回退了）。
+    if (this.mode === 'sketch' && this.editingSketch) {
+      if (this.sketch.undo()) this.setStatus('已撤销草图操作', 'ok');
+      else notify.info('没有可撤销的草图操作');
+      return;
+    }
     const prev = this.undoStack.pop();
     if (!prev) {
       notify.info('没有可撤销的操作');
@@ -455,12 +480,18 @@ export class App {
     this.suppressUndo = true;
     this.doc = CadDocument.fromJSON(JSON.parse(prev));
     this.activeDoc().doc = this.doc;
+    this.pruneFeatureUiState();
     this.rebuild();
     this.suppressUndo = false;
     notify.info('已撤销');
   }
 
   redo(): void {
+    if (this.mode === 'sketch' && this.editingSketch) {
+      if (this.sketch.redo()) this.setStatus('已重做草图操作', 'ok');
+      else notify.info('没有可重做的草图操作');
+      return;
+    }
     const next = this.redoStack.pop();
     if (!next) {
       notify.info('没有可重做的操作');
@@ -470,6 +501,7 @@ export class App {
     this.suppressUndo = true;
     this.doc = CadDocument.fromJSON(JSON.parse(next));
     this.activeDoc().doc = this.doc;
+    this.pruneFeatureUiState();
     this.rebuild();
     this.suppressUndo = false;
     notify.info('已重做');
@@ -1988,6 +2020,7 @@ export class App {
     this.pushUndo();
     if (opts.replace !== false) this.doc = new CadDocument();
     for (const f of features) this.doc.add(f);
+    this.pruneFeatureUiState();
     this.rebuild({ fit: opts.fit ?? true });
     this.syncActiveEntry();
     this.emit('tree', 'props');
@@ -2003,6 +2036,7 @@ export class App {
     const keep = this.doc.features;
     keep.length = 0;
     for (const f of features) keep.push(f);
+    this.pruneFeatureUiState();
     this.rebuild({ fit: opts.fit ?? true });
     this.emit('tree', 'props', 'params');
   }

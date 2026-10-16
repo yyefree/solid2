@@ -19,9 +19,11 @@ import {
   type SkConstraint,
   type SkEntity,
   type SkLine,
+  type SkPoint,
   type Sketch,
 } from '../sketch/types';
 import { bsplineInterpolate, bsplinePolyline } from '../sketch/curve';
+import { SketchHistory, snapshotSketch } from '../sketch/history';
 import { notify, promptNumber } from '../ui/toast';
 import { COLORS } from '../view/materials';
 
@@ -62,8 +64,83 @@ export class SketchController {
   private snapHint: string | null = null;
   private polygonSides = 6;
 
+  // ---- 草图编辑历史（快照式，仅供草图态 Ctrl+Z / Ctrl+Y 使用）----
+  //
+  // SolidWorks 语义：草图编辑态按 Ctrl+Z 撤销的是**草图内部**的画线 / 约束 / 删除等
+  // 操作，而不是文档级的特征增删。此前 edit.undo 是 global scope，草图态按 Ctrl+Z 会
+  // 触发文档级 `App.undo()`——它整体替换 doc，而 `editingSketch` 仍指向旧 doc 的特征
+  // 对象 → 草图编辑器与文档脱节（画线后按 Ctrl+Z 毫无反应，模型却回退了）。
+  // 快照栈是纯逻辑，见 ../sketch/history（Node 可单测）。
+  private history = new SketchHistory();
+  /** 恢复快照期间抑制历史记录（restore 自身会触发 solve → commitHistory） */
+  private restoring = false;
+
   constructor(app: App) {
     this.app = app;
+  }
+
+  // ------------------------------------------------------------
+  // 草图编辑历史
+  // ------------------------------------------------------------
+  /** 进入草图时调用：重置历史并压入初始快照（作为撤销的下界） */
+  resetHistory(): void {
+    const sk = this.sketch;
+    if (sk) this.history.reset(snapshotSketch(sk));
+  }
+
+  /**
+   * 记录一个历史点。在所有草图变更方法的共同出口 `solve()` 末尾调用，
+   * 一处覆盖画线 / 约束 / 删除 / 拖拽等全部变更；与栈顶相同则跳过（空操作不占历史）。
+   */
+  private commitHistory(): void {
+    if (this.restoring) return;
+    const sk = this.sketch;
+    if (sk) this.history.commit(snapshotSketch(sk));
+  }
+
+  /** 用快照覆盖当前草图数据，并清理已失效的选择 */
+  private restoreSnapshot(snap: string): void {
+    const sk = this.sketch;
+    if (!sk) return;
+    const d = JSON.parse(snap) as { e: SkEntity[]; p: [string, SkPoint][]; c: SkConstraint[] };
+    sk.entities = d.e;
+    sk.points = Object.fromEntries(d.p);
+    sk.constraints = d.c;
+    const entIds = new Set(sk.entities.map((x) => x.id));
+    const ptIds = new Set(Object.keys(sk.points));
+    for (const id of [...this.selEntities]) if (!entIds.has(id)) this.selEntities.delete(id);
+    for (const id of [...this.selPoints]) if (!ptIds.has(id)) this.selPoints.delete(id);
+    this.staged = [];
+    this.stagedSnaps = [];
+    this.restoring = true;
+    this.solve();
+    this.restoring = false;
+    void this.app.rebuild();
+    this.app.emit('props', 'change');
+  }
+
+  /** 撤销一步草图操作；无更多历史时返回 false */
+  undo(): boolean {
+    const snap = this.history.undo();
+    if (snap === null) return false;
+    this.restoreSnapshot(snap);
+    return true;
+  }
+
+  /** 重做一步草图操作；无更多历史时返回 false */
+  redo(): boolean {
+    const snap = this.history.redo();
+    if (snap === null) return false;
+    this.restoreSnapshot(snap);
+    return true;
+  }
+
+  get canUndo(): boolean {
+    return this.history.canUndo;
+  }
+
+  get canRedo(): boolean {
+    return this.history.canRedo;
   }
 
   // ------------------------------------------------------------
@@ -105,6 +182,7 @@ export class SketchController {
     this.app.viewport.controls.target.copy(target);
     this.app.viewport.controls.update();
     this.app.viewport.invalidate();
+    this.resetHistory(); // 进入草图：历史以当前草图状态为下界
   }
 
   detach(): void {
@@ -116,6 +194,8 @@ export class SketchController {
     this.staged = [];
     this.previewLocal = [];
     this.dragging = null;
+    this.history.clear();
+    this.restoring = false;
   }
 
   /**
@@ -1020,6 +1100,9 @@ export class SketchController {
       `自由度 ${st.dof} · 残差 ${st.residual.toExponential(1)} · ${st.iterations} 次迭代`
     );
     this.refresh();
+    // 草图变更的统一出口：所有画线 / 约束 / 删除 / 拖拽最终都走到这里，
+    // 因此历史记录只需挂这一处（无变化时 commitHistory 内部自动跳过）。
+    this.commitHistory();
   }
 
   addRelation(type: SkConstraint['type'], value?: number): void {

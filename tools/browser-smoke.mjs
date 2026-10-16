@@ -1158,6 +1158,23 @@ const sketchSel = await evaluate(`(async () => {
   }
   clickCanvas(cx - 60, cy - 40); clickCanvas(cx + 60, cy + 40);
   await sleep(80);
+  // 草图态撤销/重做：Ctrl+Z 必须撤销草图**内部**操作（画线），而不是文档级撤销。
+  // 此前 edit.undo 是 global scope，草图态按 Ctrl+Z 会触发 App.undo()——整体替换 doc
+  // 而 editingSketch 仍指向旧 doc 的特征对象，草图编辑器与文档脱节。
+  {
+    const skOf = () => app.editingSketch?.params.sketch;
+    out.afterDraw_ents = skOf()?.entities.length ?? 0;
+    const featBefore = app.doc.features.length;
+    const stackBefore = app.undoStack.length;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+    await sleep(180);
+    out.afterUndo_ents = skOf()?.entities.length ?? 0;
+    out.undo_featSame = app.doc.features.length === featBefore;
+    out.undo_stackSame = app.undoStack.length === stackBefore;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
+    await sleep(180);
+    out.afterRedo_ents = skOf()?.entities.length ?? 0;
+  }
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   await sleep(300); await app.rebuild(); await sleep(80);
   const skId = app.doc.sketchFeatures().at(-1)?.id ?? null;
@@ -1221,6 +1238,10 @@ check('草图态确认角（✓/✗）真正可见（.show + opacity 1 + 可点�
 check('草图提示浮层不出现「有文案却不可见」',
   sketchSel.hudOk === true,
   `hint=${sketchSel.hudHint} ${sketchSel.hudInfo}`);
+check('草图态 Ctrl+Z / Ctrl+Y 撤销、重做草图内部操作（不触发文档级撤销）',
+  sketchSel.afterDraw_ents === 4 && sketchSel.afterUndo_ents === 0 && sketchSel.afterRedo_ents === 4 &&
+    sketchSel.undo_featSame === true && sketchSel.undo_stackSame === true,
+  `draw=${sketchSel.afterDraw_ents} undo=${sketchSel.afterUndo_ents} redo=${sketchSel.afterRedo_ents} featSame=${sketchSel.undo_featSame} stackSame=${sketchSel.undo_stackSame}`);
 check('丝带自动切换：进草图→「草图」页签，退草图→「特征」页签（SW CommandManager 行为）',
   sketchSel.inSketch_ribbonTab === '草图' && sketchSel.afterExit_ribbonTab === '特征',
   `in=${sketchSel.inSketch_ribbonTab} out=${sketchSel.afterExit_ribbonTab}`);
