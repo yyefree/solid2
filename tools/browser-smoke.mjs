@@ -2564,6 +2564,43 @@ check('工程图宿主（.drawing-wrap，同一个 .hidden 类）在工程图态
     modeTab.wrapInModel.hidden === true,
   `drawing=${JSON.stringify(modeTab.wrapInDrawing)} model=${JSON.stringify(modeTab.wrapInModel)}`);
 
+// 异步重建的并发保护：rebuild() 等待几何内核期间，若又发起了重建（连续操作 / 切换文档），
+// 先发起但后返回的旧结果**必须被丢弃**，否则会用旧模型覆盖新状态（切文档时表现为串模型）。
+// 由于内核 Worker 串行处理、按序返回，「最后一次」在终态上总是胜出——所以这里直接推高
+// 重建代号，精确验证「过期结果不写入」这一语义（不依赖时序，避免 flaky）。
+const staleRebuild = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const T = await import('/src/sketch/types.ts');
+  const { newId } = T;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const mkRect = () => {
+    const s = T.emptySketch();
+    const ids = [[0,0],[20,0],[20,20],[0,20]].map(function (p) { const id = newId('p'); s.points[id] = { id: id, x: p[0], y: p[1] }; return id; });
+    for (let i = 0; i < 4; i++) s.entities.push({ id: newId('e'), kind: 'line', a: ids[i], b: ids[(i + 1) % 4] });
+    return s;
+  };
+  const clearAll = async () => { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); await sleep(60); };
+  await clearAll();
+  const sid = newId('f');
+  app.addFeature({ id: sid, type: 'sketch', name: '草图1', params: { plane: 'front', sketch: mkRect() } }, { rebuild: false });
+  app.addFeature({ id: newId('f'), type: 'extrude', name: '拉伸1', params: { sketchId: sid, distance: 20, operation: 'new' } }, { rebuild: false });
+  await app.rebuild(); await sleep(80);
+  const solids = app.model?.stats?.solids ?? -1;
+
+  // 文档变空后发起一次重建，随即把代号推高（模拟期间又发生新重建 / 切换了文档）
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  const inflight = app.rebuild();
+  app.rebuildToken = 999;
+  await inflight; await sleep(80);
+  const afterStale = app.model?.stats?.solids ?? -1; // 必须仍是 1：过期结果被丢弃
+
+  await clearAll();
+  return { solids, afterStale };
+})()`);
+check('过期（被取代）的异步重建结果被丢弃，不用旧模型覆盖新状态',
+  staleRebuild.solids === 1 && staleRebuild.afterStale === 1,
+  `solids=${staleRebuild.solids} afterStale=${staleRebuild.afterStale}`);
+
 if (process.env.SMOKE_SHOT) {
   try {
     const r = await send('Page.captureScreenshot', { format: 'png' });

@@ -155,6 +155,13 @@ export class App {
   private redoStack: string[] = [];
   private maxUndo = 60;
   private suppressUndo = false;
+  /**
+   * 重建代号：用于丢弃**过期**的异步重建结果。
+   * `rebuild()` 等待几何内核（worker）期间，用户可能再次触发重建，或切换文档
+   * （`activateEntry` 也会重建）。若不加代号，先发起但后返回的旧结果会覆盖新状态——
+   * 典型症状是「切到文档 B 却显示文档 A 的模型」。
+   */
+  private rebuildToken = 0;
 
   // ---- 多文档（SolidWorks 文档标签栏）----
   /** 已打开的文档（第一个是初始零件） */
@@ -625,18 +632,24 @@ export class App {
   // ============================================================
   /** 重建模型并刷新视图（异步，几何在内核 Worker 里算） */
   async rebuild(options: { fit?: boolean; keepSelection?: boolean } = {}): Promise<void> {
+    // 并发保护：捕获发起时的代号与所属文档条目，返回后若已过期则丢弃（见 rebuildToken 注释）
+    const token = ++this.rebuildToken;
+    const entry = this.activeDoc();
+    const doc = this.doc;
     this.setStatus('正在重建…', 'busy');
     try {
       const model = await kernel.rebuild(this.resolvedFeatures());
+      // 期间又发起了重建（连续操作 / 切换了文档）→ 本次结果已过期，丢弃
+      if (token !== this.rebuildToken) return;
       this.model = model;
       this.importedModel = null; // 参数化模型优先于导入体
-      this.activeDoc().model = model; // 多文档：重建结果跟随当前条目，切回无需再算
-      this.doc.rebuildCount++;
+      entry.model = model; // 多文档：重建结果跟随**发起时**的条目（切回无需再算）
+      doc.rebuildCount++;
       // 把内核侧的错误回写到特征（供 UI 标红）
       const errMap = new Map(model.errors.map((e) => [e.id, e.message]));
       // 表达式错误优先展示（更贴近用户输入）
       for (const fi of this.lastResolve?.featureIssues ?? []) errMap.set(fi.id, fi.message);
-      for (const f of this.doc.features) f.error = errMap.get(f.id);
+      for (const f of doc.features) f.error = errMap.get(f.id);
       this.syncView(options.fit ?? false);
       const errs = model.errors;
       if (errs.length) {
@@ -652,6 +665,7 @@ export class App {
       }
       this.emit('change', 'tree', 'props', 'params');
     } catch (e) {
+      if (token !== this.rebuildToken) return; // 过期失败同样忽略（避免误报旧文档的错误）
       this.setStatus(`重建失败：${(e as Error).message}`, 'err');
       notify.err(`重建失败：${(e as Error).message}`);
     }
