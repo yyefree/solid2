@@ -118,7 +118,19 @@ async function boot() {
     // ---------- 挂载 UI ----------
     buildMenubar(app, menubarEl);
     buildStdToolbar(app, stdToolbarEl);
-    renderRibbon(app, ribbonTabsEl, ribbonPanelEl);
+    const ribbon = renderRibbon(app, ribbonTabsEl, ribbonPanelEl);
+
+    // SolidWorks 行为：进入草图自动切到「草图」页签，退出草图回到「特征」页签
+    // ——这样「画草图 → 退出 → 拉伸」不必手动翻页签就能直接点到特征命令。
+    let lastMode: string = app.mode;
+    app.on('mode', () => {
+      const m = app.mode;
+      if (m === lastMode) return;
+      const prev = lastMode;
+      lastMode = m;
+      if (m === 'sketch') ribbon.setTab('sketch');
+      else if (prev === 'sketch') ribbon.setTab('features');
+    });
     buildFeatureTree(app, leftBodyTree);
     buildPropertyPanel(app, ppHost);
     buildConfigPanel(app, leftBodyCfg);

@@ -62,7 +62,8 @@ function openInPropertyManager(opts: ModalOptions): (() => void) | null {
   const close = () => {
     box.remove();
     document.removeEventListener('keydown', esc, true);
-    pmHost!.style.display = 'none';
+    pmHost!.classList.add('hidden'); // .hidden 是 display:none !important，必须靠类切换
+    pmHost!.style.display = '';
     ppHost!.style.display = '';
     if (closeCurrent === close) closeCurrent = null;
     opts.onClose?.();
@@ -98,6 +99,8 @@ function openInPropertyManager(opts: ModalOptions): (() => void) | null {
   pmHost.appendChild(box);
   activateTab?.();
   ppHost.style.display = 'none';
+  // ⚠️ `.hidden` 是 `display:none !important`，只清内联 style 覆盖不了——必须移除类才可见。
+  pmHost.classList.remove('hidden');
   pmHost.style.display = '';
   document.addEventListener('keydown', esc, true);
   closeCurrent = close;

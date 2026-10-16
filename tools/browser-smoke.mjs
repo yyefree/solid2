@@ -1083,6 +1083,8 @@ const sketchSel = await evaluate(`(async () => {
   await clearAll();
   await tab('草图');
   const b = rbn('草图绘制'); if (b) b.click(); await sleep(80);
+  // 进入草图：丝带应自动切到「草图」页签（SW CommandManager 行为）
+  out.inSketch_ribbonTab = document.querySelector('.rtab.active')?.textContent.trim() ?? null;
   const rb = rbn('矩形'); if (rb) rb.click(); await sleep(40);
   clickCanvas(cx - 60, cy - 40); clickCanvas(cx + 60, cy + 40);
   await sleep(80);
@@ -1092,6 +1094,8 @@ const sketchSel = await evaluate(`(async () => {
   out.afterExit_selected = app.selectedFeatureId === skId;
   out.afterExit_sel = app.sketch.isDisplaySelected === true;
   out.afterExit_orange = overlayColors()[0] === '#ff8a1f';
+  // 退出草图：丝带应自动回到「特征」页签，才能直接点「拉伸凸台」
+  out.afterExit_ribbonTab = document.querySelector('.rtab.active')?.textContent.trim() ?? null;
 
   clickCanvas(r.left + 15, r.top + 15); // 点空白
   await sleep(80);
@@ -1104,6 +1108,20 @@ const sketchSel = await evaluate(`(async () => {
   await tab('特征');
   const eb = rbn('拉伸凸台'); if (eb) eb.click();
   for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  // ⚠️ PropertyManager 必须真正「可见」：曾因 .pm-host 常驻 .hidden（display:none !important）
+  //    导致对话框渲染进 DOM 却看不见，「确定」按钮点不到（DOM 断言却全绿）。
+  {
+    const host = document.querySelector('.pm-host');
+    const box = document.querySelector('.pm');
+    const hr = host?.getBoundingClientRect();
+    const cs = host ? getComputedStyle(host) : null;
+    out.pmHostVisible = !!host && !!box && hr.width > 0 && hr.height > 0 && cs.display !== 'none';
+    out.pmHostBox = Math.round(hr?.width ?? 0) + 'x' + Math.round(hr?.height ?? 0) + '/' + (cs?.display ?? '?');
+    const okBtn = [...document.querySelectorAll('.pm-foot .btn')].find(x => x.textContent.trim() === '确定');
+    const or = okBtn?.getBoundingClientRect();
+    out.pmOkClickable = !!okBtn && or.width > 0 && or.height > 0;
+    out.pmTitleText = document.querySelector('.pm-head .pm-title')?.textContent ?? null;
+  }
   const ok = [...document.querySelectorAll('.pm-foot .btn')].find(x => x.textContent.trim() === '确定');
   if (ok) ok.click(); await sleep(250); await app.rebuild(); await sleep(80);
   out.extrude_solids = app.model?.stats?.solids ?? 0;
@@ -1122,6 +1140,12 @@ check('退出草图后草图选中；点空白取消、点草图重选（选中�
   sketchSel.afterExit_selected === true && sketchSel.afterExit_sel === true && sketchSel.afterExit_orange === true &&
     sketchSel.empty_cleared === true && sketchSel.reselect === true,
   `exit=${sketchSel.afterExit_selected}/${sketchSel.afterExit_sel}/${sketchSel.afterExit_orange} empty=${sketchSel.empty_cleared} reselect=${sketchSel.reselect}`);
+check('特征对话框（PropertyManager）在左面板真正可见、「确定」可点击',
+  sketchSel.pmHostVisible === true && sketchSel.pmOkClickable === true && sketchSel.pmTitleText === '拉伸凸台',
+  `host=${sketchSel.pmHostBox} ok=${sketchSel.pmOkClickable} title=${sketchSel.pmTitleText}`);
+check('丝带自动切换：进草图→「草图」页签，退草图→「特征」页签（SW CommandManager 行为）',
+  sketchSel.inSketch_ribbonTab === '草图' && sketchSel.afterExit_ribbonTab === '特征',
+  `in=${sketchSel.inSketch_ribbonTab} out=${sketchSel.afterExit_ribbonTab}`);
 check('拉伸后新特征选中、草图取消高亮；点面清除特征选中',
   sketchSel.extrude_solids === 1 && sketchSel.afterExtrude_selIsFeature === true &&
     sketchSel.afterExtrude_sketchNotSelected === true && sketchSel.afterExtrude_ghost === true && sketchSel.face_clearsFeature === true,
