@@ -359,6 +359,49 @@ const ctxLabels = await evaluate(`(() => {
 })()`);
 check('图形区右键菜单含「更多命令…」飞出', ctxLabels.includes('更多命令…'), ctxLabels.join(' / '));
 
+// 浮层可见性：下拉菜单 / 图形区右键菜单 / 页签右键 popup 必须「真正可见」。
+// 只查 `querySelector('.dropdown')` 存在性会漏掉 display:none / 0 尺寸 / opacity:0
+// 整类「挂在 DOM 上但用户看不见」的 bug（PropertyManager 那次就是这么躲过 213 条断言的）。
+const overlayVis = await evaluate(`(() => {
+  const measure = (el) => {
+    if (!el) return { ok: false, w: 0, h: 0, why: 'missing' };
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return {
+      ok: r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden' &&
+        parseFloat(cs.opacity) > 0.01 && cs.pointerEvents !== 'none',
+      w: Math.round(r.width), h: Math.round(r.height),
+      why: cs.display + '/' + cs.opacity + '/' + cs.pointerEvents,
+    };
+  };
+  const out = {};
+
+  // 1) 菜单栏「视图」下拉
+  const mi = [...document.querySelectorAll('.menubar .menu-item')].find((m) => m.textContent.indexOf('视图') >= 0);
+  if (mi) mi.click();
+  out.menuDropdown = measure(document.querySelector('.dropdown'));
+  document.querySelectorAll('.dropdown').forEach((d) => d.remove());
+
+  // 2) 图形区右键上下文菜单
+  const cv = document.querySelector('.viewport canvas');
+  cv.dispatchEvent(new MouseEvent('contextmenu', { clientX: 420, clientY: 320, bubbles: true }));
+  out.ctxMenu = measure(document.querySelector('.dropdown.ctx-menu'));
+  document.querySelectorAll('.dropdown').forEach((d) => d.remove());
+
+  // 3) Ribbon 页签右键 popup
+  const tab = [...document.querySelectorAll('.rtab')].find((t) => t.textContent.trim() === '特征');
+  if (tab) tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+  out.tabPopup = measure(document.querySelector('.dropdown'));
+  document.querySelectorAll('.dropdown').forEach((d) => d.remove());
+
+  return out;
+})()`);
+check('下拉菜单 / 图形区右键菜单 / 页签 popup 均「真正可见」（尺寸非 0 且 display/opacity/pointer-events 正常）',
+  overlayVis.menuDropdown.ok === true && overlayVis.ctxMenu.ok === true && overlayVis.tabPopup.ok === true,
+  `menu=${overlayVis.menuDropdown.w}x${overlayVis.menuDropdown.h}(${overlayVis.menuDropdown.why}) ` +
+    `ctx=${overlayVis.ctxMenu.w}x${overlayVis.ctxMenu.h}(${overlayVis.ctxMenu.why}) ` +
+    `popup=${overlayVis.tabPopup.w}x${overlayVis.tabPopup.h}(${overlayVis.tabPopup.why})`);
+
 // 点开「参数表」确认它在 PropertyManager（左面板「属性管理器」页签）内嵌渲染，
 // 不再是居中模态框——这正是 SolidWorks  PropertyManager 的交互形态。
 // 注意：Ribbon 点击会先 await 内核就绪，所以这里必须等内核加载完再做（放在 B 段之后）
@@ -1085,7 +1128,34 @@ const sketchSel = await evaluate(`(async () => {
   const b = rbn('草图绘制'); if (b) b.click(); await sleep(80);
   // 进入草图：丝带应自动切到「草图」页签（SW CommandManager 行为）
   out.inSketch_ribbonTab = document.querySelector('.rtab.active')?.textContent.trim() ?? null;
+  // 确认角（✓/✗）默认 opacity:0 + pointer-events:none，只有加 .show 才可见 ——
+  // 必须断言「真正可见」，只查 querySelector 存在性会漏掉整类「在 DOM 里但看不见」的 bug。
+  // ⚠️ .conf-corner 有 opacity 0.12s 过渡：先等过渡走完再量，否则会读到中间值（0.69）。
+  for (let i = 0; i < 30; i++) {
+    const cc0 = document.querySelector('.conf-host .conf-corner');
+    if (cc0 && parseFloat(getComputedStyle(cc0).opacity) > 0.99) break;
+    await sleep(20);
+  }
+  {
+    const cc = document.querySelector('.conf-host .conf-corner');
+    const cs = cc ? getComputedStyle(cc) : null;
+    const cr = cc ? cc.getBoundingClientRect() : null;
+    out.inSketch_confShown = !!cc && cc.classList.contains('show');
+    out.inSketch_confVisible = !!cc && parseFloat(cs.opacity) > 0.9 && cs.pointerEvents !== 'none' && cr.width > 0 && cr.height > 0;
+    out.inSketch_confInfo = cc
+      ? 'show=' + cc.classList.contains('show') + ' opacity=' + cs.opacity + ' pe=' + cs.pointerEvents + ' ' + Math.round(cr.width) + 'x' + Math.round(cr.height)
+      : 'missing';
+  }
   const rb = rbn('矩形'); if (rb) rb.click(); await sleep(40);
+  // 草图提示浮层：有提示文案时必须是可见的（不能「有文字但 opacity:0」）
+  {
+    const hint = app.sketch.hintText ? app.sketch.hintText() : '';
+    const hud = document.querySelector('.sketch-hud');
+    const hs = hud ? getComputedStyle(hud) : null;
+    out.hudHint = (hint || '').slice(0, 20);
+    out.hudOk = !hint ? true : !!hud && hud.classList.contains('show') && parseFloat(hs.opacity) > 0.9;
+    out.hudInfo = hud ? 'show=' + hud.classList.contains('show') + ' opacity=' + hs.opacity : 'missing';
+  }
   clickCanvas(cx - 60, cy - 40); clickCanvas(cx + 60, cy + 40);
   await sleep(80);
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -1094,6 +1164,8 @@ const sketchSel = await evaluate(`(async () => {
   out.afterExit_selected = app.selectedFeatureId === skId;
   out.afterExit_sel = app.sketch.isDisplaySelected === true;
   out.afterExit_orange = overlayColors()[0] === '#ff8a1f';
+  // 退出草图且无选择 → 确认角应隐藏（不残留可见）
+  out.afterExit_confHidden = document.querySelector('.conf-host .conf-corner')?.classList.contains('show') === false;
   // 退出草图：丝带应自动回到「特征」页签，才能直接点「拉伸凸台」
   out.afterExit_ribbonTab = document.querySelector('.rtab.active')?.textContent.trim() ?? null;
 
@@ -1143,6 +1215,12 @@ check('退出草图后草图选中；点空白取消、点草图重选（选中�
 check('特征对话框（PropertyManager）在左面板真正可见、「确定」可点击',
   sketchSel.pmHostVisible === true && sketchSel.pmOkClickable === true && sketchSel.pmTitleText === '拉伸凸台',
   `host=${sketchSel.pmHostBox} ok=${sketchSel.pmOkClickable} title=${sketchSel.pmTitleText}`);
+check('草图态确认角（✓/✗）真正可见（.show + opacity 1 + 可点击，非仅存在于 DOM）',
+  sketchSel.inSketch_confShown === true && sketchSel.inSketch_confVisible === true && sketchSel.afterExit_confHidden === true,
+  `in=${sketchSel.inSketch_confInfo} outHidden=${sketchSel.afterExit_confHidden}`);
+check('草图提示浮层不出现「有文案却不可见」',
+  sketchSel.hudOk === true,
+  `hint=${sketchSel.hudHint} ${sketchSel.hudInfo}`);
 check('丝带自动切换：进草图→「草图」页签，退草图→「特征」页签（SW CommandManager 行为）',
   sketchSel.inSketch_ribbonTab === '草图' && sketchSel.afterExit_ribbonTab === '特征',
   `in=${sketchSel.inSketch_ribbonTab} out=${sketchSel.afterExit_ribbonTab}`);
@@ -1150,6 +1228,49 @@ check('拉伸后新特征选中、草图取消高亮；点面清除特征选中'
   sketchSel.extrude_solids === 1 && sketchSel.afterExtrude_selIsFeature === true &&
     sketchSel.afterExtrude_sketchNotSelected === true && sketchSel.afterExtrude_ghost === true && sketchSel.face_clearsFeature === true,
   `solids=${sketchSel.extrude_solids} feat=${sketchSel.afterExtrude_selIsFeature} ghost=${sketchSel.afterExtrude_ghost} faceClears=${sketchSel.face_clearsFeature}`);
+
+// 删除特征后 UI 状态必须同步清除——与「选中态粘住」同一类：设了状态就要管好何时清。
+// （activeSketchFeature 悬空会让后续特征对话框的默认草图指向已删草图；selectedFeatureId 悬空
+//   会让设计树高亮 / 属性面板与文档不一致。）
+const removeCleanup = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const cv = document.querySelector('canvas');
+  const r = cv.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const clickCanvas = (x, y) => {
+    const o = { clientX: x, clientY: y, button: 0, bubbles: true, pointerId: 1 };
+    cv.dispatchEvent(new PointerEvent('pointerdown', { ...o, buttons: 1 }));
+    cv.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0 }));
+  };
+  const rbn = (label) => [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === label);
+  const tab = async (n) => { const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.trim() === n); if (t) t.click(); await sleep(60); };
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild(); await sleep(50);
+
+  await tab('草图');
+  const b = rbn('草图绘制'); if (b) b.click(); await sleep(80);
+  const rb = rbn('矩形'); if (rb) rb.click(); await sleep(40);
+  clickCanvas(cx - 60, cy - 40); clickCanvas(cx + 60, cy + 40);
+  await sleep(80);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await sleep(300); await app.rebuild(); await sleep(80);
+
+  const skId = app.doc.sketchFeatures().at(-1)?.id ?? null;
+  out.beforeSel = app.selectedFeatureId === skId;
+  out.beforeActive = app.activeSketchFeature?.id === skId;
+  app.removeFeature(skId);
+  await sleep(200);
+  out.afterSel = app.selectedFeatureId;
+  out.afterActive = app.activeSketchFeature;
+  out.left = app.doc.features.length;
+  return out;
+})()`);
+check('删除特征后 selectedFeatureId / activeSketchFeature 不留悬空引用',
+  removeCleanup.beforeSel === true && removeCleanup.beforeActive === true &&
+    removeCleanup.afterSel === null && removeCleanup.afterActive === null && removeCleanup.left === 0,
+  `before=${removeCleanup.beforeSel}/${removeCleanup.beforeActive} after=${removeCleanup.afterSel}/${removeCleanup.afterActive} left=${removeCleanup.left}`);
 
 // Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
 const enterRepeat = await evaluate(`(async () => {
@@ -2388,6 +2509,39 @@ check('AI「整体沿Z移动50」→ 体积不变 96000，包围盒上移',
     !!ai.extraMove.bbox && near(ai.extraMove.bbox.min[0], 90, 0.5),
     ai.extraMove.bbox ? JSON.stringify(ai.extraMove.bbox.min) : 'null');
 }
+
+// 丝带页签随模式自动切换（装配体 / 工程图 / 回到零件）——SW CommandManager 行为。
+// 放在最后：会真实切换文档模式（生成装配体组件 / 工程图视图），不影响前面基于零件模型的断言。
+const modeTab = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const active = () => document.querySelector('.rtab.active')?.textContent.trim() ?? null;
+  // 工程图宿主用的是同一个 .hidden 类（display:none !important）——正好顺带回归它的显隐。
+  // ⚠️ 注入串里不能写反引号（含注释）：会提前闭合外层模板串，且语法仍合法（静默出错）。
+  const wrap = () => {
+    const w = document.querySelector('.drawing-wrap');
+    if (!w) return { missing: true };
+    const r = w.getBoundingClientRect();
+    return { hidden: w.classList.contains('hidden'), w: Math.round(r.width), h: Math.round(r.height) };
+  };
+  const out = {};
+  app.setMode('assembly'); await sleep(250);
+  out.assembly = active();
+  app.setMode('drawing'); await sleep(500);
+  out.drawing = active();
+  out.wrapInDrawing = wrap();
+  app.setMode('model'); await sleep(250);
+  out.back = active();
+  out.wrapInModel = wrap();
+  return out;
+})()`);
+check('丝带随模式自动切换：装配体→「装配体」、工程图→「工程图」、回零件→「特征」',
+  modeTab.assembly === '装配体' && modeTab.drawing === '工程图' && modeTab.back === '特征',
+  `assembly=${modeTab.assembly} drawing=${modeTab.drawing} back=${modeTab.back}`);
+check('工程图宿主（.drawing-wrap，同一个 .hidden 类）在工程图态真正可见、回零件态隐藏',
+  modeTab.wrapInDrawing.hidden === false && modeTab.wrapInDrawing.w > 0 && modeTab.wrapInDrawing.h > 0 &&
+    modeTab.wrapInModel.hidden === true,
+  `drawing=${JSON.stringify(modeTab.wrapInDrawing)} model=${JSON.stringify(modeTab.wrapInModel)}`);
 
 if (process.env.SMOKE_SHOT) {
   try {

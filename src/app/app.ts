@@ -2014,7 +2014,16 @@ export class App {
 
   removeFeature(id: FeatureId): void {
     this.pushUndo();
+    // ⚠️ 删除后必须清掉指向该特征的 UI 状态，否则留下悬空引用：
+    //    - activeSketchFeature 悬空 → 后续特征对话框默认草图会指向已删草图
+    //      （pickSketchId / defaultSketchId 虽有存在性兜底，但状态本身是错的）；
+    //    - selectedFeatureId 悬空 → 设计树高亮 / 属性面板与文档不一致。
+    // 与「退出草图后选中态」同一类问题：设了状态就要想清楚何时清除。
+    const wasActiveSketch = this.activeSketchFeature?.id === id;
+    const wasSelected = this.selectedFeatureId === id;
     this.doc.remove(id);
+    if (wasActiveSketch) this.activeSketchFeature = null;
+    if (wasSelected) this.applyFeatureSelection(null);
     this.rebuild();
   }
 

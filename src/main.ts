@@ -120,16 +120,23 @@ async function boot() {
     buildStdToolbar(app, stdToolbarEl);
     const ribbon = renderRibbon(app, ribbonTabsEl, ribbonPanelEl);
 
-    // SolidWorks 行为：进入草图自动切到「草图」页签，退出草图回到「特征」页签
-    // ——这样「画草图 → 退出 → 拉伸」不必手动翻页签就能直接点到特征命令。
+    // SolidWorks CommandManager 行为：模式与页签联动——进入某模式自动切到对应页签，
+    // 退回模型态则回到「特征」页签。这样「画草图 → 退出 → 拉伸」、打开装配体 / 工程图，
+    // 都不必手动翻页签就能直接点到该模式下的命令。
+    // （此前页签纯手动：`setTab` 除本处外无任何外部调用点。）
+    const MODE_TAB: Record<string, string> = {
+      sketch: 'sketch',
+      assembly: 'assembly',
+      drawing: 'drawing',
+    };
     let lastMode: string = app.mode;
     app.on('mode', () => {
       const m = app.mode;
-      if (m === lastMode) return;
+      if (m === lastMode) return; // emit('mode') 也会在非模式变化时触发，按实际变化去重
       const prev = lastMode;
       lastMode = m;
-      if (m === 'sketch') ribbon.setTab('sketch');
-      else if (prev === 'sketch') ribbon.setTab('features');
+      const target = MODE_TAB[m] ?? (MODE_TAB[prev] ? 'features' : null);
+      if (target) ribbon.setTab(target);
     });
     buildFeatureTree(app, leftBodyTree);
     buildPropertyPanel(app, ppHost);

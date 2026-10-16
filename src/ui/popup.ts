@@ -34,7 +34,12 @@ export interface PopupOptions {
   onClose?: () => void;
 }
 
-let openCount = 0;
+/**
+ * 当前所有打开中的弹出菜单的关闭函数（`openCount` 的替代，同时能真正清理监听器）。
+ * ⚠️ 关闭**必须**走各自的 close()——它负责摘掉 document 上的 away/onKey 捕获监听器。
+ * 直接 `box.remove()` 会留下悬空监听器（状态泄漏）。
+ */
+const openClosers = new Set<() => void>();
 
 /** 打开一个弹出菜单，返回关闭函数 */export function openPopup(items: PopupItem[], x: number, y: number, opts: PopupOptions = {}): () => void {
   const box = el('div', { class: `dropdown ${opts.cls ?? ''}`.trim() });
@@ -42,7 +47,6 @@ let openCount = 0;
   renderInto(box, items, () => close());
 
   document.body.appendChild(box);
-  openCount++;
 
   // 位置修正：不越出窗口
   const r = box.getBoundingClientRect();
@@ -55,7 +59,7 @@ let openCount = 0;
   const close = () => {
     if (closed) return;
     closed = true;
-    openCount--;
+    openClosers.delete(close);
     box.remove();
     document.removeEventListener('mousedown', away, true);
     document.removeEventListener('keydown', onKey, true);
@@ -80,15 +84,17 @@ let openCount = 0;
     document.addEventListener('keydown', onKey, true);
   }, 0);
 
+  openClosers.add(close);
   return close;
 }
 
 export function popupOpen(): boolean {
-  return !!document.querySelector('.dropdown');
+  return openClosers.size > 0;
 }
 
+/** 关闭所有弹出菜单（走各自的 close，避免监听器泄漏） */
 export function closeAllPopups(): void {
-  document.querySelectorAll('.dropdown').forEach((d) => d.remove());
+  for (const close of [...openClosers]) close();
 }
 
 /** 把菜单项渲染进给定容器（上下文菜单要自己在顶部插一条快捷方式栏时用） */
@@ -108,6 +114,7 @@ export function openContextMenu(
   const close = () => {
     if (closed) return;
     closed = true;
+    openClosers.delete(close);
     box.remove();
     document.removeEventListener('mousedown', away, true);
     document.removeEventListener('keydown', onKey, true);
@@ -158,6 +165,7 @@ export function openContextMenu(
     document.addEventListener('mousedown', away, true);
     document.addEventListener('keydown', onKey, true);
   }, 0);
+  openClosers.add(close);
   return close;
 }
 
