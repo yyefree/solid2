@@ -97,6 +97,12 @@ const linPat = S.linearPattern(S.primitives.box(5, 5, 5), [1, 0, 0], 10, 4);
 check('线性阵列体积', near(S.volume(linPat), 500), `= ${S.volume(linPat).toFixed(2)}`);
 const cirPat = S.circularPattern(S.primitives.box(2, 2, 2), [0, 0, 0], [0, 0, 1], 4, Math.PI * 2);
 check('圆周阵列体积', near(S.volume(cirPat), 32, 0.5), `= ${S.volume(cirPat).toFixed(2)}`);
+// 不合并（merge=false）必须返回含**全部**实例的复合体，而不是只返回第一个实例。
+// 回归：旧实现 return instances[0] 会静默丢掉其余 count-1 个实例（只剩 1 个实体）。
+const linPatSep = S.linearPattern(S.primitives.box(5, 5, 5), [1, 0, 0], 10, 4, false);
+check('线性阵列(不合并)含全部 4 个实例', S.solids(linPatSep).length === 4, `= ${S.solids(linPatSep).length} 实体`);
+const cirPatSep = S.circularPattern(S.primitives.box(2, 2, 2), [0, 0, 0], [0, 0, 1], 4, Math.PI * 2, false);
+check('圆周阵列(不合并)含全部 4 个实例', S.solids(cirPatSep).length === 4, `= ${S.solids(cirPatSep).length} 实体`);
 const mirrored = S.mirrorPlane(S.primitives.box(10, 10, 10), [0, 0, 0], [1, 0, 0]);
 const mProps = S.massProperties(mirrored);
 check('镜像后质心 X 反向', near(mProps.centroid[0], -5, 0.1), `x = ${mProps.centroid[0].toFixed(2)}`);

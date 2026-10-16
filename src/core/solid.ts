@@ -823,7 +823,9 @@ export function linearPattern(
   for (let i = 0; i < count; i++) {
     instances.push(translate(shape, dir[0] * spacing * i, dir[1] * spacing * i, dir[2] * spacing * i));
   }
-  return merge ? fuseAll(instances) : instances[0];
+  // merge=true 求并为一个实体；merge=false 不融合，返回含全部实例的复合体（不能只返回
+  // instances[0]，否则除原始实例外其余 count-1 个实例全部丢失）。
+  return merge ? fuseAll(instances) : compoundOf(instances);
 }
 
 export function circularPattern(
@@ -839,7 +841,8 @@ export function circularPattern(
   for (let i = 0; i < count; i++) {
     instances.push(rotateAxis(shape, origin, axis, step * i));
   }
-  return merge ? fuseAll(instances) : instances[0];
+  // 见 linearPattern：merge=false 必须返回含全部实例的复合体，不能只返回 instances[0]。
+  return merge ? fuseAll(instances) : compoundOf(instances);
 }
 
 /** 返回阵列产生的全部实例（不合并） */
