@@ -1057,6 +1057,76 @@ check('Enter 退出后草图处于选中态（selectedFeatureId + 图形区高�
   escExit.enterSelectedEqSketch === true && escExit.enterDisplaySel === true,
   `sel=${escExit.enterSelectedEqSketch}/${escExit.enterDisplaySel}`);
 
+// 选中态是「可切换」的：点空白取消、点草图重选、建特征后转移到新特征、点面清除特征选中
+const sketchSel = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const cv = document.querySelector('canvas');
+  const r = cv.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const rbn = (label) => [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === label);
+  const clickCanvas = (x, y) => {
+    const o = { clientX: x, clientY: y, button: 0, bubbles: true, pointerId: 1 };
+    cv.dispatchEvent(new PointerEvent('pointerdown', { ...o, buttons: 1 }));
+    cv.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0 }));
+  };
+  const tab = async (n) => { const t = [...document.querySelectorAll('.rtab')].find(x => x.textContent.trim() === n); if (t) t.click(); await sleep(60); };
+  const clearAll = async () => { for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild(); await sleep(50); };
+  const overlayColors = () => {
+    const o = app.viewport.scene.getObjectByName('sketchOverlay');
+    if (!o) return [];
+    const c = []; o.traverse(x => { if (x.type === 'Line' && x.material) c.push('#' + x.material.color.getHexString()); });
+    return c;
+  };
+
+  await clearAll();
+  await tab('草图');
+  const b = rbn('草图绘制'); if (b) b.click(); await sleep(80);
+  const rb = rbn('矩形'); if (rb) rb.click(); await sleep(40);
+  clickCanvas(cx - 60, cy - 40); clickCanvas(cx + 60, cy + 40);
+  await sleep(80);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await sleep(300); await app.rebuild(); await sleep(80);
+  const skId = app.doc.sketchFeatures().at(-1)?.id ?? null;
+  out.afterExit_selected = app.selectedFeatureId === skId;
+  out.afterExit_sel = app.sketch.isDisplaySelected === true;
+  out.afterExit_orange = overlayColors()[0] === '#ff8a1f';
+
+  clickCanvas(r.left + 15, r.top + 15); // 点空白
+  await sleep(80);
+  out.empty_cleared = app.selectedFeatureId === null && app.sketch.isDisplaySelected === false;
+
+  clickCanvas(cx - 60, cy - 40); // 点草图棱边
+  await sleep(80);
+  out.reselect = app.selectedFeatureId === skId && app.sketch.isDisplaySelected === true;
+
+  await tab('特征');
+  const eb = rbn('拉伸凸台'); if (eb) eb.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  const ok = [...document.querySelectorAll('.pm-foot .btn')].find(x => x.textContent.trim() === '确定');
+  if (ok) ok.click(); await sleep(250); await app.rebuild(); await sleep(80);
+  out.extrude_solids = app.model?.stats?.solids ?? 0;
+  out.afterExtrude_selIsFeature = app.selectedFeatureId === (app.doc.features.at(-1)?.id ?? null) && app.doc.features.at(-1)?.type === 'extrude';
+  out.afterExtrude_sketchNotSelected = app.sketch.isDisplaySelected === false;
+  out.afterExtrude_ghost = overlayColors()[0] === '#8fa0b3';
+
+  clickCanvas(cx, cy); // 点模型面
+  await sleep(80);
+  out.face_clearsFeature = app.selection.faces.length === 1 && app.selectedFeatureId === null;
+
+  await clearAll();
+  return out;
+})()`);
+check('退出草图后草图选中；点空白取消、点草图重选（选中态可切换）',
+  sketchSel.afterExit_selected === true && sketchSel.afterExit_sel === true && sketchSel.afterExit_orange === true &&
+    sketchSel.empty_cleared === true && sketchSel.reselect === true,
+  `exit=${sketchSel.afterExit_selected}/${sketchSel.afterExit_sel}/${sketchSel.afterExit_orange} empty=${sketchSel.empty_cleared} reselect=${sketchSel.reselect}`);
+check('拉伸后新特征选中、草图取消高亮；点面清除特征选中',
+  sketchSel.extrude_solids === 1 && sketchSel.afterExtrude_selIsFeature === true &&
+    sketchSel.afterExtrude_sketchNotSelected === true && sketchSel.afterExtrude_ghost === true && sketchSel.face_clearsFeature === true,
+  `solids=${sketchSel.extrude_solids} feat=${sketchSel.afterExtrude_selIsFeature} ghost=${sketchSel.afterExtrude_ghost} faceClears=${sketchSel.face_clearsFeature}`);
+
 // Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
 const enterRepeat = await evaluate(`(async () => {
   const { app } = window.__solid2;

@@ -353,17 +353,26 @@ export class App {
 
   /** 在设计树中选中一个特征（SolidWorks：单击特征即在其「属性管理器」中显示参数） */
   selectFeature(id: string | null): void {
-    this.selectedFeatureId = id;
+    this.applyFeatureSelection(id);
     // SolidWorks: 模型态点选草图即选中该草图，后续特征默认绑定它
     if (id && !this.editingSketch) {
       const f = this.doc.features.find((x) => x.id === id);
       if (f && f.type === 'sketch') this.activeSketchFeature = f as SketchFeature;
     }
-    // 图形区显示态草图的高亮跟随特征选中（选中的正是显示中的草图 → 高亮，否则取消）
+    this.emit('feature', 'props');
+  }
+
+  /**
+   * 设置「当前选中特征」并同步图形区显示态草图的高亮。
+   *
+   * SolidWorks：特征选择与几何（面/边/点）选择互斥——选中特征即取消几何选择，反之亦然。
+   * 退出草图后该草图即为当前选中特征（高亮显示）；此后点选面/边或点空白处都应取消它。
+   */
+  private applyFeatureSelection(id: string | null): void {
+    this.selectedFeatureId = id;
     if (!this.editingSketch) {
       this.sketch.setDisplaySelected(!!id && id === this.sketch.displaySketch?.id);
     }
-    this.emit('feature', 'props');
   }
 
   /** 设置选择过滤器（SolidWorks 状态栏 Filter） */
@@ -676,6 +685,7 @@ export class App {
   // ============================================================
   clearSelection(): void {
     this.selection = { faces: [], edges: [], vertices: [], bodies: [] };
+    this.applyFeatureSelection(null); // 取消特征选中（含退出草图后残留的草图高亮）
     this.refreshHighlight();
     this.emit('selection', 'props');
   }
@@ -690,6 +700,7 @@ export class App {
     } else {
       this.selection.faces = [index];
     }
+    this.applyFeatureSelection(null); // 选几何即取消特征选中（含草图高亮）
     this.refreshHighlight();
     this.emit('selection', 'props');
   }
@@ -704,6 +715,7 @@ export class App {
     } else {
       this.selection.edges = [index];
     }
+    this.applyFeatureSelection(null); // 选几何即取消特征选中（含草图高亮）
     this.refreshHighlight();
     this.emit('selection', 'props');
   }
@@ -722,6 +734,7 @@ export class App {
     } else {
       this.selection.vertices = [index];
     }
+    this.applyFeatureSelection(null); // 选几何即取消特征选中（含草图高亮）
     this.refreshHighlight();
     this.emit('selection', 'props');
   }
@@ -1184,6 +1197,7 @@ export class App {
     } else {
       this.selection.bodies = [index];
     }
+    this.applyFeatureSelection(null); // 选几何即取消特征选中（含草图高亮）
     this.refreshHighlight();
     this.emit('selection', 'props');
   }
@@ -1959,6 +1973,8 @@ export class App {
   addFeature(f: Feature, opts: { rebuild?: boolean } = {}): void {
     this.pushUndo();
     this.doc.add(f);
+    // SolidWorks: 新建的特征成为当前选中特征（据此创建时，被消耗的草图不再保持高亮）
+    if (f.type !== 'sketch') this.applyFeatureSelection(f.id);
     if (opts.rebuild !== false) this.rebuild();
     else this.emit('tree');
   }
