@@ -2078,6 +2078,10 @@ export class App {
   updateFeatureParams(id: FeatureId, patch: Record<string, any>): void {
     const f = this.doc.getFeature(id);
     if (!f) return;
+    // 与 setParam / setFeatureExpression 一致：编辑特征参数必须入撤销栈。
+    // 否则「改尺寸 → Ctrl+Z」不会回到旧值，而是弹掉更早的一次无关操作
+    // （属性面板的 numberField 只在 change/blur 提交，不会逐键触发，故安全）。
+    this.pushUndo();
     Object.assign(f.params as any, patch);
     this.rebuild();
   }

@@ -1293,6 +1293,39 @@ check('删除特征后 selectedFeatureId / activeSketchFeature 不留悬空引�
     removeCleanup.afterSel === null && removeCleanup.afterActive === null && removeCleanup.left === 0,
   `before=${removeCleanup.beforeSel}/${removeCleanup.beforeActive} after=${removeCleanup.afterSel}/${removeCleanup.afterActive} left=${removeCleanup.left}`);
 
+// 特征参数编辑必须入撤销栈（SolidWorks：改尺寸后 Ctrl+Z 回到旧值）
+// 曾经的缺陷：updateFeatureParams 不压撤销栈 → Ctrl+Z 弹掉更早的无关操作。
+const paramUndo = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const M = await import('/src/doc/model.ts');
+  const T = await import('/src/sketch/types.ts');
+  const out = {};
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild(); await sleep(50);
+  const sk = T.emptySketch();
+  const pts = [[0,0],[20,0],[20,20],[0,20]].map(([x,y]) => { const id = T.newId('p'); sk.points[id] = { id, x, y }; return id; });
+  for (let i = 0; i < 4; i++) sk.entities.push({ id: T.newId('e'), kind: 'line', a: pts[i], b: pts[(i+1)%4] });
+  const skf = M.newSketchFeature('front', sk);
+  app.addFeature(skf, { rebuild: false });
+  const exId = T.newId('f');
+  app.addFeature({ id: exId, type: 'extrude', name: '拉伸1', params: { sketchId: skf.id, distance: 10, operation: 'new' } }, { rebuild: false });
+  await app.rebuild(); await sleep(60);
+  out.v10 = app.model.stats.volume;
+  app.updateFeatureParams(exId, { distance: 20 });
+  await sleep(120);
+  out.v20 = app.model.stats.volume;
+  app.undo();
+  await sleep(150);
+  out.afterUndo = app.model.stats.volume;
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild(); await sleep(40);
+  return out;
+})()`);
+check('特征参数编辑可撤销（改深度 10→20 后 Ctrl+Z 回到 4000）',
+  Math.abs(paramUndo.v10 - 4000) < 1 && Math.abs(paramUndo.v20 - 8000) < 1 && Math.abs(paramUndo.afterUndo - 4000) < 1,
+  `v10=${(paramUndo.v10||0).toFixed(0)} v20=${(paramUndo.v20||0).toFixed(0)} undo=${(paramUndo.afterUndo||0).toFixed(0)}`);
+
 // Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
 const enterRepeat = await evaluate(`(async () => {
   const { app } = window.__solid2;

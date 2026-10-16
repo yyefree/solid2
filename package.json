@@ -55,6 +55,7 @@
     "test:shape": "node tools/run-ts.mjs tools/sketch-shape-test.ts",
     "test:kernel": "node tools/run-ts.mjs tools/kernel-test.ts",
     "test:browser": "node tools/browser-smoke.mjs",
+    "test:manual": "node tools/sw-manual-test.mjs",
     "desktop": "electron desktop/main.cjs",
     "desktop:build": "node desktop/build-desktop.mjs",
     "desktop:verify": "node tools/desktop-verify.mjs",
