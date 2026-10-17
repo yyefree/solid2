@@ -11,9 +11,9 @@
  * ⚠️ 本文件 import 了 opencascade 的全部耦合（solid / mesh / topo / io / engine）。
  */
 /// <reference lib="webworker" />
-import { loadKernel } from './oc-loader';
-import * as S from './solid';
-import { exportSTEP, importSTEP } from './io';
+import { loadKernel } from '../core/oc-loader';
+import * as S from '../core/solid';
+import { exportSTEP, importSTEP } from '../core/io';
 import { faceInfos, featureEdgeInfos } from '../doc/topo';
 import { rebuildFeatures, buildMeshResult } from '../doc/engine';
 import type {
@@ -30,8 +30,8 @@ import type {
   ImportResult,
   GeometryCheckResult,
   AssemblyComponent,
-} from './kernel-types';
-import { viewsOfMesh } from './kernel-types';
+} from '../core/kernel-types';
+import { viewsOfMesh } from '../core/kernel-types';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 

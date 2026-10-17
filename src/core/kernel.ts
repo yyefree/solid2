@@ -2,7 +2,8 @@
  * 几何内核客户端（主线程）。
  *
  * 这是对"方案1：Web Worker 内核卸载"的门面：所有需要 OpenCASCADE 的操作都经此
- * 转发给 `kernel.worker.ts`，主线程只拿到可序列化的纯数据（MeshResult 等），
+ * 转发给 `app/kernel.worker.ts`（Worker 属应用级适配器，故置于 `app/`，可引用 `doc/`），
+ * 主线程只拿到可序列化的纯数据（MeshResult 等），
  * 因此主线程永不卡顿、内核崩溃也被隔离在 Worker 里。
  *
  * 用法：
@@ -46,7 +47,7 @@ class KernelClient {
   private _initError: string | null = null;
 
   constructor() {
-    this.worker = new Worker(new URL('./kernel.worker.ts', import.meta.url), { type: 'module' });
+    this.worker = new Worker(new URL('../app/kernel.worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent) => this.onMessage(e.data as WorkerOutMsg);
     this.worker.onerror = (e) => {
       this._initError = e.message || 'Worker 运行错误';
