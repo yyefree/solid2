@@ -56,7 +56,7 @@ export function buildTabs(): RTab[] {
         {
           title: '标准',
           items: [
-            { id: 'p.new', label: '新建', icon: 'new', big: true, tip: '新建零件（Ctrl+N）', run: (a) => a.newProject() },
+            { id: 'p.new', label: '新建', icon: 'new', big: true, tip: '新建零件（Ctrl+N）', run: (a) => a.newDocument('model') },
             { id: 'p.open', label: '打开', icon: 'open', big: true, tip: '打开 Solid2 项目（Ctrl+O）', run: (a) => a.openProject() },
             { id: 'p.save', label: '保存', icon: 'save', big: true, tip: '保存项目为 JSON（Ctrl+S）', run: (a) => a.saveProject() },
             { id: 'p.undo', label: '撤销', icon: 'undo', tip: '撤销（Ctrl+Z）', run: (a) => a.undo(), enabled: (a) => a.canUndo },

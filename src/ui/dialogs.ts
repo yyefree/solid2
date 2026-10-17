@@ -1490,17 +1490,6 @@ export const featureDialogs = {
     }
   },
 
-  // ---------------- 文件 ----------------
-  newProject(app: App): void {
-    confirmDialog('新建项目', '确定要清空当前文档吗？未保存的数据将丢失。', () => {
-      app.pushUndo();
-      app.doc = new CadDocument();
-      app.assembly = null;
-      app.drawing = null;
-      app.rebuild({ fit: true });
-      notify.ok('新项目已创建');
-    });
-  },
   // ---------------- 参数化（参考 FreeCAD Expressions） ----------------
   /** 参数表：全局命名参数 + 表达式，一处改动驱动整棵特征树 */
   parameterTable(app: App): void {

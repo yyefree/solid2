@@ -18,7 +18,7 @@ interface StdBtn {
 }
 
 const BUTTONS: (StdBtn | 'sep')[] = [
-  { id: 'new', label: '新建', ic: 'new', tip: '新建 (Ctrl+N)', run: (a) => a.newProject() },
+  { id: 'new', label: '新建', ic: 'new', tip: '新建 (Ctrl+N)', run: (a) => a.newDocument('model') },
   { id: 'open', label: '打开', ic: 'open', tip: '打开 (Ctrl+O)', run: (a) => a.openProject() },
   { id: 'save', label: '保存', ic: 'save', tip: '保存 (Ctrl+S)', run: (a) => a.saveProject() },
   { id: 'print', label: '打印', ic: 'print', tip: '打印 (Ctrl+P)', run: (a) => a.printView() },

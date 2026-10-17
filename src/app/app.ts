@@ -337,6 +337,16 @@ export class App {
     }
   }
 
+  /**
+   * 关闭**当前**文档（窗口 > 关闭文档）。
+   *
+   * 此前菜单项误接到 `newProject()`（清空当前文档内容），多标签下会丢数据；
+   * 关闭文档与清空文档是两回事，这里委托给 `closeDocument`（含「至少保留一个」保护）。
+   */
+  closeActiveDocument(): void {
+    this.closeDocument(this.activeDocId);
+  }
+
   /** 把当前 doc/model/undo 栈写回当前条目（切换前调用） */
   private syncActiveEntry(): void {
     const e = this.activeDoc();
@@ -496,11 +506,36 @@ export class App {
   // ============================================================
   // 文档与视图
   // ============================================================
-  pushUndo(): void {
+  /**
+   * 压入撤销栈（**私有**）。
+   *
+   * 外部（尤其 UI 层）不得直接调用——此前 `ui/dialogs.ts` 就调过它，导致压栈责任
+   * 分散在十几个入口 + UI 层，漏掉一处就会出现「改尺寸 → Ctrl+Z 弹掉更早的无关操作」。
+   * 外部修改文档一律走 `mutate()`。
+   */
+  private pushUndo(): void {
     if (this.suppressUndo) return;
     this.undoStack.push(JSON.stringify(this.doc.toJSON()));
     if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
     this.redoStack.length = 0;
+  }
+
+  /**
+   * 统一的「写文档」入口：压撤销栈 → 执行改动 → 重建 →（可选）广播事件。
+   *
+   * 把所有会改文档的操作收敛到这里，「压栈」不再依赖调用点自觉：
+   * `mutate(() => this.doc.setParam(...), { emit: ['params'] })`
+   *
+   * @param fn         具体的文档改动（在压栈之后、重建之前执行）
+   * @param opts.fit   重建后是否适配视图
+   * @param opts.emit  重建后广播的事件（重建本身已广播 change/tree/props/params）
+   * @param opts.rebuild 传 `false` 跳过重建（调用方自行处理后续）
+   */
+  mutate(fn: () => void, opts: { fit?: boolean; emit?: AppEvent[]; rebuild?: boolean } = {}): void {
+    this.pushUndo();
+    fn();
+    if (opts.rebuild !== false) this.rebuild({ fit: opts.fit });
+    if (opts.emit?.length) this.emit(...opts.emit);
   }
 
   /**
@@ -595,17 +630,11 @@ export class App {
   }
 
   setParam(name: string, expr: string, comment?: string): void {
-    this.pushUndo();
-    this.doc.setParam(name.trim(), expr, comment);
-    this.rebuild();
-    this.emit('params');
+    this.mutate(() => this.doc.setParam(name.trim(), expr, comment), { emit: ['params'] });
   }
 
   removeParam(name: string): void {
-    this.pushUndo();
-    this.doc.removeParam(name);
-    this.rebuild();
-    this.emit('params');
+    this.mutate(() => this.doc.removeParam(name), { emit: ['params'] });
   }
 
   /** 列出某个特征的数值参数（供表达式对话框选择） */
@@ -641,20 +670,19 @@ export class App {
       this.removeFeatureExpression(id, path);
       return;
     }
-    this.pushUndo();
-    f.expressions = { ...(f.expressions ?? {}), [path]: text };
-    this.rebuild();
-    this.emit('params', 'props');
+    this.mutate(() => {
+      f.expressions = { ...(f.expressions ?? {}), [path]: text };
+    }, { emit: ['params', 'props'] });
   }
 
   removeFeatureExpression(id: FeatureId, path: string): void {
     const f = this.doc.getFeature(id);
     if (!f?.expressions) return;
-    this.pushUndo();
-    delete f.expressions[path];
-    if (!Object.keys(f.expressions).length) delete f.expressions;
-    this.rebuild();
-    this.emit('params', 'props');
+    const exprs = f.expressions;
+    this.mutate(() => {
+      delete exprs[path];
+      if (!Object.keys(exprs).length) delete f.expressions;
+    }, { emit: ['params', 'props'] });
   }
 
   /** 预览一条表达式（不改动文档） */
@@ -678,7 +706,7 @@ export class App {
   // 重建（内核 Worker）
   // ============================================================
   /** 重建模型并刷新视图（异步，几何在内核 Worker 里算） */
-  async rebuild(options: { fit?: boolean; keepSelection?: boolean } = {}): Promise<void> {
+  async rebuild(options: { fit?: boolean } = {}): Promise<void> {
     // 并发保护：捕获发起时的代号与所属文档条目，返回后若已过期则丢弃（见 rebuildToken 注释）
     const token = ++this.rebuildToken;
     const entry = this.activeDoc();
@@ -1565,6 +1593,8 @@ export class App {
   // 草图
   // ============================================================
   startSketch(plane: PlaneRef | SketchPlane): void {
+    // 这里保持手写 pushUndo（不走 mutate）：`doc.nextName` 会**递增名称计数器**，
+    // 必须发生在压栈之后，否则撤销后计数器不回退。顺序敏感，故不套用 mutate。
     this.pushUndo();
     const f = newSketchFeature(typeof plane === 'string' ? plane : 'custom');
     if (typeof plane !== 'string') f.params.customPlane = plane;
@@ -1700,11 +1730,11 @@ export class App {
     try {
       const text = await file.text();
       const data = JSON.parse(text);
-      this.pushUndo();
-      this.doc = CadDocument.fromJSON(data);
-      this.assembly = null;
-      this.drawing = null;
-      this.rebuild({ fit: true });
+      this.mutate(() => {
+        this.doc = CadDocument.fromJSON(data);
+        this.assembly = null;
+        this.drawing = null;
+      }, { fit: true });
       this.syncActiveEntry();
       notify.ok(`已打开：${file.name}`);
     } catch (e) {
@@ -1941,17 +1971,22 @@ export class App {
     }
   }
 
-  /** 新建文档（SolidWorks: Ctrl+N） */
+  /**
+   * 清空当前文档并新建（SolidWorks Ctrl+N 的「清空」语义）。
+   *
+   * ⚠️ UI 的「新建」入口统一走 `newDocument('model')`（**新开标签页**，见 menubar /
+   * ribbon / stdtoolbar）；本方法只用于「清空当前文档内容」，与 `newDocument` 不同。
+   */
   newProject(): void {
-    this.pushUndo();
-    this.doc = new CadDocument();
-    this.model = null;
-    this.importedModel = null;
-    this.assembly = null;
-    this.drawing = null;
-    this.mode = 'model';
-    this.sel.reset(); // 新建文档：选中态整体重置（特征/几何/草图）
-    this.rebuild({ fit: true });
+    this.mutate(() => {
+      this.doc = new CadDocument();
+      this.model = null;
+      this.importedModel = null;
+      this.assembly = null;
+      this.drawing = null;
+      this.mode = 'model';
+      this.sel.reset(); // 新建文档：选中态整体重置（特征/几何/草图）
+    }, { fit: true });
     this.syncActiveEntry();
     this.emit('tree', 'props', 'params', 'mode');
     notify.ok('已新建零件');
@@ -2025,12 +2060,11 @@ export class App {
   }
 
   addFeature(f: Feature, opts: { rebuild?: boolean } = {}): void {
-    this.pushUndo();
-    this.doc.add(f);
-    // SolidWorks: 新建的特征成为当前选中特征（据此创建时，被消耗的草图不再保持高亮）
-    if (f.type !== 'sketch') this.applyFeatureSelection(f.id);
-    if (opts.rebuild !== false) this.rebuild();
-    else this.emit('tree');
+    this.mutate(() => {
+      this.doc.add(f);
+      // SolidWorks: 新建的特征成为当前选中特征（据此创建时，被消耗的草图不再保持高亮）
+      if (f.type !== 'sketch') this.applyFeatureSelection(f.id);
+    }, { rebuild: opts.rebuild !== false, emit: opts.rebuild === false ? ['tree'] : undefined });
   }
 
   /**
@@ -2039,11 +2073,11 @@ export class App {
    */
   loadFeatures(features: Feature[], opts: { replace?: boolean; fit?: boolean } = {}): void {
     if (!features.length) return;
-    this.pushUndo();
-    if (opts.replace !== false) this.doc = new CadDocument();
-    for (const f of features) this.doc.add(f);
-    this.pruneFeatureUiState();
-    this.rebuild({ fit: opts.fit ?? true });
+    this.mutate(() => {
+      if (opts.replace !== false) this.doc = new CadDocument();
+      for (const f of features) this.doc.add(f);
+      this.pruneFeatureUiState();
+    }, { fit: opts.fit ?? true });
     this.syncActiveEntry();
     this.emit('tree', 'props');
   }
@@ -2054,13 +2088,12 @@ export class App {
    * （AI 编辑不该把用户定义好的参数表达式冲掉）。
    */
   setFeatures(features: Feature[], opts: { fit?: boolean } = {}): void {
-    this.pushUndo();
-    const keep = this.doc.features;
-    keep.length = 0;
-    for (const f of features) keep.push(f);
-    this.pruneFeatureUiState();
-    this.rebuild({ fit: opts.fit ?? true });
-    this.emit('tree', 'props', 'params');
+    this.mutate(() => {
+      const keep = this.doc.features;
+      keep.length = 0;
+      for (const f of features) keep.push(f);
+      this.pruneFeatureUiState();
+    }, { fit: opts.fit ?? true, emit: ['tree', 'props', 'params'] });
   }
 
   /** 当前模型的可序列化包围盒（AI 编辑追加特征时的落位基准） */
@@ -2069,14 +2102,14 @@ export class App {
   }
 
   removeFeature(id: FeatureId): void {
-    this.pushUndo();
-    this.doc.remove(id);
-    // 删除后统一剪除指向已删特征的 UI 状态（特征选中 / 当前草图），
-    // 否则会留悬空引用：activeSketchFeature 悬空 → 后续特征对话框默认草图指向已删草图；
-    // selectedFeatureId 悬空 → 设计树高亮 / 属性面板与文档不一致。
-    // 不变量由 SelectionStore.prune 保证，无需在此逐字段判断。
-    this.pruneFeatureUiState();
-    this.rebuild();
+    this.mutate(() => {
+      this.doc.remove(id);
+      // 删除后统一剪除指向已删特征的 UI 状态（特征选中 / 当前草图），
+      // 否则会留悬空引用：activeSketchFeature 悬空 → 后续特征对话框默认草图指向已删草图；
+      // selectedFeatureId 悬空 → 设计树高亮 / 属性面板与文档不一致。
+      // 不变量由 SelectionStore.prune 保证，无需在此逐字段判断。
+      this.pruneFeatureUiState();
+    });
   }
 
   updateFeatureParams(id: FeatureId, patch: Record<string, any>): void {
@@ -2085,9 +2118,7 @@ export class App {
     // 与 setParam / setFeatureExpression 一致：编辑特征参数必须入撤销栈。
     // 否则「改尺寸 → Ctrl+Z」不会回到旧值，而是弹掉更早的一次无关操作
     // （属性面板的 numberField 只在 change/blur 提交，不会逐键触发，故安全）。
-    this.pushUndo();
-    Object.assign(f.params as any, patch);
-    this.rebuild();
+    this.mutate(() => Object.assign(f.params as any, patch));
   }
 
   // ============================================================

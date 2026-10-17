@@ -2486,8 +2486,34 @@ const multiDoc = await evaluate(`(async () => {
   const vAfterClose = app.model?.stats.volume ?? 0;
   app.activateDocument(app.documents[0].id);
   await new Promise((r) => setTimeout(r, 400));
-  return { tabsBefore, hasAdd, tabsAfter, v1, v2, v1back, featBack, undoBack, tabsClosed, vAfterClose };
+
+  // 「新建」入口（ribbon）必须新开标签页，而非清空当前文档内容——
+  // 此前 ribbon/menubar 的「新建」误接 newProject（清空当前文档），点一下当前模型就没了。
+  const featTab2 = [...document.querySelectorAll('.rtab')].find(t => t.textContent.trim() === '特征');
+  if (featTab2) featTab2.click();
+  await new Promise((r) => setTimeout(r, 120));
+  const newBtn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '新建');
+  const tabsBeforeNew = tabs();
+  if (newBtn) newBtn.click();
+  await new Promise((r) => setTimeout(r, 450));
+  const tabsAfterNew = tabs();
+  // 切回原文档，确认内容未被「新建」清空
+  app.activateDocument(app.documents[0].id);
+  await new Promise((r) => setTimeout(r, 350));
+  const keptVol = app.model?.stats.volume ?? 0;
+  // 「关闭文档」= 关闭当前标签（此前误接 newProject）
+  app.closeActiveDocument();
+  await new Promise((r) => setTimeout(r, 450));
+  const tabsAfterCloseActive = tabs();
+
+  return { tabsBefore, hasAdd, tabsAfter, v1, v2, v1back, featBack, undoBack, tabsClosed, vAfterClose,
+           tabsBeforeNew, tabsAfterNew, keptVol, tabsAfterCloseActive };
 })()`);
+check('「新建」入口新开标签页（不清空当前文档内容）',
+  multiDoc.tabsBeforeNew === 1 && multiDoc.tabsAfterNew === 2 && Math.abs((multiDoc.keptVol || 0) - 8000) < 1,
+  `tabs ${multiDoc.tabsBeforeNew}→${multiDoc.tabsAfterNew} kept=${(multiDoc.keptVol || 0).toFixed(0)}`);
+check('「关闭文档」关闭当前标签（此前误接 newProject 会清空内容）',
+  multiDoc.tabsAfterCloseActive === 1, `tabs=${multiDoc.tabsAfterCloseActive}`);
 check('文档标签栏初始 1 个标签 + 「+」新建按钮', multiDoc.tabsBefore === 1 && multiDoc.hasAdd, JSON.stringify(multiDoc));
 check('新建文档 → 标签栏 2 个', multiDoc.tabsAfter === 2, `tabs=${multiDoc.tabsAfter}`);
 check('文档间切换几何互不串（20³ ↔ 30³）', near(multiDoc.v1, 8000, 1) && near(multiDoc.v2, 27000, 1) && near(multiDoc.v1back, 8000, 1), JSON.stringify(multiDoc));

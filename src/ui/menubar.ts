@@ -164,7 +164,7 @@ export function buildMenubar(app: App, host: HTMLElement): void {
 // ============================================================
 function fileMenu(app: App): PopupItem[] {
   return [
-    { label: '新建', icon: 'new', sc: sc('file.new'), run: () => app.newProject() },
+    { label: '新建', icon: 'new', sc: sc('file.new'), run: () => app.newDocument('model') },
     { label: '打开…', icon: 'open', sc: sc('file.open'), run: () => app.openProject() },
     { label: '保存', icon: 'save', sc: sc('file.save'), run: () => app.saveProject() },
     { label: '另存为…', icon: 'saveAs', run: () => app.saveProject() },
@@ -509,7 +509,7 @@ function windowMenu(app: App): PopupItem[] {
     { label: '工程图', icon: 'drawing', checked: app.mode === 'drawing', run: () => app.setMode('drawing') },
     { sep: true },
     { label: '切换文档', icon: 'window', sc: sc('window.cycle'), run: () => app.cycleDocument() },
-    { label: '关闭文档', icon: 'closeDoc', run: () => app.newProject() },
+    { label: '关闭文档', icon: 'closeDoc', run: () => app.closeActiveDocument() },
     { sep: true },
     { label: '新建窗口', icon: 'window', disabled: true },
     { label: '层叠', icon: 'window', disabled: true },
