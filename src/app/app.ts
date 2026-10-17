@@ -157,9 +157,21 @@ export class App {
     return f && f.type === 'sketch' ? (f as SketchFeature) : null;
   }
 
-  /** 几何选择（面/边/点/实体的 mesh 下标）。只读语义：写请走 selectFace/selectEdge/… */
+  /**
+   * 几何选择（面/边/点/实体的 mesh 下标）。只读语义：写请走 selectFace/selectEdge/…。
+   *
+   * ⚠️ 返回**拷贝**而非 `SelectionStore` 的内部对象引用——否则调用方
+   * `app.selection.faces.push(...)` 会绕过互斥不变量直接污染选中态真源。
+   * 所有现有调用点均为读（`.length` / `.map` / `.forEach`），拷贝无误。
+   */
   get selection(): Selection {
-    return this.sel.geometry;
+    const g = this.sel.geometry;
+    return {
+      faces: [...g.faces],
+      edges: [...g.edges],
+      vertices: [...g.vertices],
+      bodies: [...g.bodies],
+    };
   }
   /** 选择过滤器（SolidWorks 状态栏 / 快捷键 F5）—— 'all' 不过滤（默认，行为不变） */
   get selectionFilter(): SelectionFilter {
@@ -340,7 +352,7 @@ export class App {
   /**
    * 关闭**当前**文档（窗口 > 关闭文档）。
    *
-   * 此前菜单项误接到 `newProject()`（清空当前文档内容），多标签下会丢数据；
+   * 此前该菜单项曾误接「清空当前文档」语义（多标签下会丢数据）；
    * 关闭文档与清空文档是两回事，这里委托给 `closeDocument`（含「至少保留一个」保护）。
    */
   closeActiveDocument(): void {
@@ -551,7 +563,7 @@ export class App {
     if (this.sel.prune(exists)) this.syncSketchDisplaySelection();
   }
 
-  undo(): void {
+  async undo(): Promise<void> {
     // 草图编辑态：撤销的是**草图内部**操作（SolidWorks 语义），不能走文档级撤销——
     // 文档级撤销会整体替换 doc，而 editingSketch 仍指向旧 doc 的特征对象，导致
     // 草图编辑器与文档脱节（画线后 Ctrl+Z 毫无反应，模型却回退了）。
@@ -566,16 +578,21 @@ export class App {
       return;
     }
     this.redoStack.push(JSON.stringify(this.doc.toJSON()));
+    // suppressUndo 在「文档替换 + 异步重建」全程保持 true，用 try/finally 保证复位，
+    // 避免全局布尔在 await 异步 rebuild 之前被提前清零（此前为脆弱写法）。
     this.suppressUndo = true;
-    this.doc = CadDocument.fromJSON(JSON.parse(prev));
-    this.activeDoc().doc = this.doc;
-    this.pruneFeatureUiState();
-    this.rebuild();
-    this.suppressUndo = false;
+    try {
+      this.doc = CadDocument.fromJSON(JSON.parse(prev));
+      this.activeDoc().doc = this.doc;
+      this.pruneFeatureUiState();
+      await this.rebuild();
+    } finally {
+      this.suppressUndo = false;
+    }
     notify.info('已撤销');
   }
 
-  redo(): void {
+  async redo(): Promise<void> {
     if (this.mode === 'sketch' && this.editingSketch) {
       if (this.sketch.redo()) this.setStatus('已重做草图操作', 'ok');
       else notify.info('没有可重做的草图操作');
@@ -588,11 +605,14 @@ export class App {
     }
     this.undoStack.push(JSON.stringify(this.doc.toJSON()));
     this.suppressUndo = true;
-    this.doc = CadDocument.fromJSON(JSON.parse(next));
-    this.activeDoc().doc = this.doc;
-    this.pruneFeatureUiState();
-    this.rebuild();
-    this.suppressUndo = false;
+    try {
+      this.doc = CadDocument.fromJSON(JSON.parse(next));
+      this.activeDoc().doc = this.doc;
+      this.pruneFeatureUiState();
+      await this.rebuild();
+    } finally {
+      this.suppressUndo = false;
+    }
     notify.info('已重做');
   }
 
@@ -1969,27 +1989,6 @@ export class App {
     if (this.dimMode) {
       this.toggleDimensionMode();
     }
-  }
-
-  /**
-   * 清空当前文档并新建（SolidWorks Ctrl+N 的「清空」语义）。
-   *
-   * ⚠️ UI 的「新建」入口统一走 `newDocument('model')`（**新开标签页**，见 menubar /
-   * ribbon / stdtoolbar）；本方法只用于「清空当前文档内容」，与 `newDocument` 不同。
-   */
-  newProject(): void {
-    this.mutate(() => {
-      this.doc = new CadDocument();
-      this.model = null;
-      this.importedModel = null;
-      this.assembly = null;
-      this.drawing = null;
-      this.mode = 'model';
-      this.sel.reset(); // 新建文档：选中态整体重置（特征/几何/草图）
-    }, { fit: true });
-    this.syncActiveEntry();
-    this.emit('tree', 'props', 'params', 'mode');
-    notify.ok('已新建零件');
   }
 
   /** 重建并刷新视图（SolidWorks: Ctrl+B） */

@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { el, clear } from '../ui/dom';
+import { el, clear } from '../dom';
 
 export type ViewDir = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom' | 'iso' | 'isoBack';
 export type ProjectionMode = 'perspective' | 'orthographic';

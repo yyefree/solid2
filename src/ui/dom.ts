@@ -3,38 +3,8 @@
  * 手写足够，且没有构建体积与响应式系统的额外开销。
  */
 
-type Attrs = Record<string, any>;
-
-export function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  attrs?: Attrs,
-  ...children: (Node | string | null | undefined | false)[]
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v === null || v === undefined || v === false) continue;
-      if (k === 'class' || k === 'className') node.className = String(v);
-      else if (k === 'html') node.innerHTML = String(v);
-      else if (k === 'text') node.textContent = String(v);
-      else if (k === 'style' && typeof v === 'object') Object.assign(node.style, v);
-      else if (k.startsWith('on') && typeof v === 'function') {
-        node.addEventListener(k.slice(2).toLowerCase(), v as EventListener);
-      } else if (k === 'dataset' && typeof v === 'object') {
-        Object.assign(node.dataset, v);
-      } else if (k in node) {
-        (node as any)[k] = v;
-      } else {
-        node.setAttribute(k, String(v));
-      }
-    }
-  }
-  for (const c of children) {
-    if (c === null || c === undefined || c === false) continue;
-    node.append(typeof c === 'string' ? document.createTextNode(c) : c);
-  }
-  return node;
-}
+import { el, clear, Attrs } from '../dom';
+export { el, clear };
 
 export function svgEl(tag: string, attrs?: Attrs, ...children: (Node | string)[]): SVGElement {
   const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -46,10 +16,6 @@ export function svgEl(tag: string, attrs?: Attrs, ...children: (Node | string)[]
   }
   for (const c of children) node.append(typeof c === 'string' ? document.createTextNode(c) : c);
   return node;
-}
-
-export function clear(node: HTMLElement): void {
-  while (node.firstChild) node.removeChild(node.firstChild);
 }
 
 export function qs<T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document): T {
