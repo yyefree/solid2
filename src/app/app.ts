@@ -28,7 +28,8 @@ import { SelectionStore, type GeomKind, type SelectionFilter } from './selection
 import { UndoManager, type MutateOpts } from './undo-manager';
 import { ParamService } from './param-service';
 import { FileService } from './file-service';
-import { Assembly, mateRefLabel, type MateRef, type Component } from './assembly';
+import { PickService } from './pick-service';
+import { Assembly, mateRefLabel, type MateRef } from './assembly';
 import { Drawing, generateStandardViews, type ViewKind } from './drawing';
 import { openSectionProperties } from '../ui/sectionprops-dialog';
 import type { AppApi } from './app-api';
@@ -194,10 +195,21 @@ export class App implements AppApi {
   /** 上一次标注的边（`viewId:runIdx`），用于 Shift+点击标注两条边间距 */
   private lastDimRun: string | null = null;
 
-  /** 装配体可视化拾取：已选中的配合参考（最多 2 个，用于创建配合） */
-  assemblyPicks: MateRef[] = [];
-  /** 拾取参考的 3D 标记（球 + 轴向线段），加在视口根节点 */
-  private assemblyPickGroup: THREE.Group | null = null;
+  /**
+   * 装配体可视化拾取：已选中的配合参考（最多 2 个，用于创建配合）。
+   * 存储在 `PickService`（src/app/pick-service.ts）——App 只做 getter/setter 委托。
+   * ⚠️ 写入经 setter 走 `assignPicks`（置空/置一，**不带 emit**）；要广播
+   * change/props 的「清空」路径是 `clearAssemblyPicks()` 方法，两者语义不同。
+   */
+  get assemblyPicks(): MateRef[] {
+    return this.pickSvc.picks;
+  }
+  set assemblyPicks(refs: MateRef[]) {
+    this.pickSvc.assignPicks(refs);
+  }
+
+  // ---- 拾取交互（实现在 src/app/pick-service.ts）----
+  private readonly pickSvc: PickService;
 
   // ---- 撤销（按当前文档隔离，实现在 src/app/undo-manager.ts）----
   private readonly undoMgr: UndoManager;
@@ -251,6 +263,45 @@ export class App implements AppApi {
 
     this.sketch = new SketchController(this);
     this.onCanvasClick = (x, y, additive) => this.sketch.handleClick(x, y, additive);
+
+    // 拾取交互服务：视口射线/画布矩形、草图编辑态回调、选择落地（SelectionStore
+    // 互斥不变量 + 高亮/显示层/事件副作用）等宿主能力全部经闭包注入
+    this.pickSvc = new PickService({
+      shapeView: () => this.shapeView,
+      rayFromScreen: (x, y) => this.viewport.rayFromScreen(x, y),
+      worldToScreen: (p) => this.viewport.worldToScreen(p),
+      canvasRect: () => {
+        const d = this.viewport.renderer.domElement;
+        const r = d.getBoundingClientRect();
+        return { left: r.left, top: r.top, width: r.width, height: r.height, clientHeight: d.clientHeight };
+      },
+      camera: () => this.viewport.camera,
+      sceneRoot: () => this.viewport.root,
+      invalidate: () => this.viewport.invalidate(),
+      assembly: () => this.assembly,
+      mode: () => this.mode,
+      selectionFilter: () => this.selectionFilter,
+      faceBodyIndex: (fi) => {
+        const m = this.currentModel();
+        return m?.mesh.faceMetas[fi]?.bodyIndex ?? -1;
+      },
+      mateRefLabel: (ref) => mateRefLabel(ref),
+      applyGeomSelection: (kind, index, additive) => this.applyGeomSelection(kind, index, additive),
+      clearSelection: () => this.clearSelection(),
+      refreshHighlight: () => this.refreshHighlight(),
+      syncSketchDisplaySelection: () => this.syncSketchDisplaySelection(),
+      selectFeature: (id) => this.selectFeature(id),
+      setStatus: (text, kind, detail) => this.setStatus(text, kind, detail),
+      emit: (...evts) => this.emit(...evts),
+      sketchDisplayPlane: () => this.sketch.displayPlane,
+      sketchPickDisplay: (ray, tol) => this.sketch.pickDisplay(ray, tol),
+      sketchHandleDown: (x, y) => this.sketch.handleDown(x, y),
+      sketchHandleMove: (x, y) => this.sketch.handleMove(x, y),
+      sketchHandleUp: () => this.sketch.handleUp(),
+      sketchFinishBSpline: () => this.sketch.finishBSpline(),
+      isSketchMode: () => this.mode === 'sketch',
+      onCanvasClickHook: (x, y, additive) => this.onCanvasClick?.(x, y, additive) ?? false,
+    });
 
     // 撤销管理器：宿主回调均为闭包（构造时 this.doc 等字段已初始化）
     this.undoMgr = new UndoManager({
@@ -320,7 +371,8 @@ export class App implements AppApi {
     });
 
     this.viewport.start();
-    this.bindPointer();
+    // 指针事件绑定在 PickService（宿主回调注入；见构造函数 pickSvc）
+    this.pickSvc.bindPointer(this.viewport.renderer.domElement);
     // 键盘热键由 ../app/hotkeys 统一注册（SolidWorks 键位表）
 
     // 初始文档（零件1）
@@ -805,21 +857,23 @@ export class App implements AppApi {
     this.emit('selection', 'props');
   }
 
+  /** 选中一个面（委托 PickService；落地路径见 applyGeomSelection） */
   selectFace(index: number, additive = false): void {
-    this.applyGeomSelection('face', index, additive);
+    this.pickSvc.selectFace(index, additive);
   }
 
+  /** 选中一条边 */
   selectEdge(index: number, additive = false): void {
-    this.applyGeomSelection('edge', index, additive);
+    this.pickSvc.selectEdge(index, additive);
   }
 
   /** 选中一个网格顶点（选择过滤器为「顶点」时专用） */
   selectVertex(index: number, additive = false): void {
-    this.applyGeomSelection('vertex', index, additive);
+    this.pickSvc.selectVertex(index, additive);
   }
 
   /**
-   * 几何选择的唯一落地路径（4 个 selectXxx 共用）。
+   * 几何选择的唯一落地路径（selectXxx 经 PickService 回调到这里）。
    *
    * 过滤器拒绝时 `SelectionStore.selectGeom` 返回 `false`，此处直接返回、不做任何改动。
    * 接受时互斥不变量已由 store 保证（清空特征选择），这里只补副作用：
@@ -832,36 +886,9 @@ export class App implements AppApi {
     this.emit('selection', 'props');
   }
 
-  /**
-   * 顶点拾取：屏幕空间就近原则。
-   * 把网格每个顶点投影到 NDC 再换算成像素，取与点击位置距离最近且在 8px 内的顶点。
-   * 顶点数一般数千，全遍历在点击这种低频事件上可接受。
-   */
+  /** 顶点拾取（屏幕空间就近原则，8px 内；委托 PickService） */
   pickVertex(x: number, y: number): number | null {
-    const sv = this.shapeView;
-    if (!sv) return null;
-    const pos = sv.mesh.geometry.getAttribute('position');
-    if (!pos) return null;
-    const rect = this.viewport.renderer.domElement.getBoundingClientRect();
-    const cam = this.viewport.camera;
-    cam.updateMatrixWorld();
-    const v = new THREE.Vector3();
-    let best = -1;
-    let bestD = 8 * 8;
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos as THREE.BufferAttribute, i).project(cam);
-      if (v.z < -1 || v.z > 1) continue;
-      const sx = ((v.x + 1) / 2) * rect.width;
-      const sy = ((1 - v.y) / 2) * rect.height;
-      const dx = sx - x;
-      const dy = sy - y;
-      const d = dx * dx + dy * dy;
-      if (d < bestD) {
-        bestD = d;
-        best = i;
-      }
-    }
-    return best >= 0 ? best : null;
+    return this.pickSvc.pickVertex(x, y);
   }
 
   refreshHighlight(): void {
@@ -946,340 +973,27 @@ export class App implements AppApi {
   }
 
   // ============================================================
-  // 指针交互
+  // 指针交互（事件绑定 / 点击分发 / 拾取全部在 src/app/pick-service.ts）
   // ============================================================
-  private pointerDownAt: { x: number; y: number; button: number } | null = null;
-  private sketchDragging = false;
-
-  private bindPointer(): void {
-    const dom = this.viewport.renderer.domElement;
-    dom.addEventListener('pointerdown', (e) => {
-      this.pointerDownAt = { x: e.clientX, y: e.clientY, button: e.button };
-      if (e.button === 0) this.sketchDragging = this.sketch.handleDown(e.clientX, e.clientY);
-    });
-    dom.addEventListener('pointermove', (e) => {
-      this.sketch.handleMove(e.clientX, e.clientY);
-    });
-    dom.addEventListener('pointerup', (e) => {
-      if (this.sketchDragging) {
-        this.sketchDragging = false;
-        this.sketch.handleUp();
-        this.pointerDownAt = null;
-        return;
-      }
-      if (!this.pointerDownAt) return;
-      const moved = Math.hypot(e.clientX - this.pointerDownAt.x, e.clientY - this.pointerDownAt.y);
-      const btn = this.pointerDownAt.button;
-      this.pointerDownAt = null;
-      if (moved > 4) return;
-      if (btn !== 0) return;
-      this.handleClick(e.clientX, e.clientY, e.shiftKey || e.ctrlKey);
-    });
-    dom.addEventListener('pointerleave', () => {
-      this.sketch.handleMove(-1e6, -1e6);
-    });
-    // 双击结束「连续点击」类工具（B 样条）
-    dom.addEventListener('dblclick', () => {
-      if (this.mode === 'sketch') this.sketch.finishBSpline();
-    });
-  }
-
+  /** 外部画布点击钩子：草图态消费点击（返回 true 已处理）。由 PickService 经宿主回调读取。 */
   onCanvasClick: ((x: number, y: number, additive: boolean) => boolean) | null = null;
 
-  private handleClick(x: number, y: number, additive: boolean): void {
-    if (this.onCanvasClick && this.onCanvasClick(x, y, additive)) return;
-    if (this.mode === 'assembly') {
-      this.pickAssembly(x, y, additive);
-      return;
-    }
-    if (this.mode !== 'model') return;
-
-    const rc = this.viewport.rayFromScreen(x, y);
-    const sv = this.shapeView;
-    if (!sv) {
-      this.selectSketchAt(rc);
-      return;
-    }
-
-    // 过滤为「顶点」时只拾取顶点（就近原则，8px 内）
-    if (this.selectionFilter === 'vertex') {
-      const vi = this.pickVertex(x, y);
-      if (vi !== null) {
-        this.selectVertex(vi, additive);
-        this.setStatus('已选择顶点', 'ok');
-      } else {
-        this.clearSelection();
-      }
-      return;
-    }
-
-    // 过滤为「实体」时：命中的面反查 bodyIndex，选中整个实体（装配体语义）
-    if (this.selectionFilter === 'body') {
-      const hits = rc.intersectObject(sv.mesh, false);
-      let picked = -1;
-      if (hits.length && hits[0].faceIndex !== undefined) {
-        const fi = sv.faceIndexFromTriangle(hits[0].faceIndex);
-        if (fi >= 0) picked = this.bodyIndexOfFace(fi);
-      }
-      if (picked >= 0) {
-        this.selectBody(picked, additive);
-        this.setStatus('已选择实体', 'ok', `实体 ${picked + 1}`);
-      } else {
-        this.clearSelection();
-      }
-      return;
-    }
-
-    const edgeHit = this.pickEdge(rc, x, y);
-    if (edgeHit !== null) {
-      this.selectEdge(edgeHit, additive);
-      const meta = sv.edgeMetas[edgeHit];
-      this.setStatus('已选择边', 'ok', meta ? `长度 ${meta.length.toFixed(2)} mm` : undefined);
-      return;
-    }
-
-    const hits = rc.intersectObject(sv.mesh, false);
-    if (hits.length && hits[0].faceIndex !== undefined) {
-      const fi = sv.faceIndexFromTriangle(hits[0].faceIndex);
-      if (fi >= 0) {
-        this.selectFace(fi, additive);
-        const meta = sv.faceMetas[fi];
-        this.setStatus('已选择面', 'ok', meta ? `面积 ${meta.area.toFixed(2)} mm²` : undefined);
-        return;
-      }
-    }
-    // SolidWorks: 模型态点击显示中的草图可以选中它（实体优先，草图兜底）
-    this.selectSketchAt(rc);
-  }
-
-  /** 模型态下点选显示中的草图：选中该草图特征，后续特征默认绑定它 */
-  private selectSketchAt(rc: THREE.Raycaster): void {
-    const plane = this.sketch.displayPlane;
-    const hit = plane ? this.sketch.pickDisplay(rc.ray, this.sketchPickTol(plane.origin)) : null;
-    if (hit) {
-      this.selectFeature(hit.id);
-      this.setStatus('已选择草图', 'ok', hit.name);
-      return;
-    }
-    this.clearSelection();
-  }
-
-  /** 屏幕 6px 折算到草图平面处的世界容差 */
-  private sketchPickTol(origin: [number, number, number]): number {
-    const cam = this.viewport.camera as THREE.PerspectiveCamera;
-    const dist = cam.position.distanceTo(new THREE.Vector3(...origin));
-    const h = this.viewport.renderer.domElement.clientHeight || 800;
-    const worldPerPx = (2 * dist * Math.tan(((cam.fov * Math.PI) / 180) / 2)) / h;
-    return Math.max(worldPerPx * 6, 0.4);
-  }
-
   // ============================================================
-  // 装配体可视化拾取
+  // 装配体可视化拾取（配合参考拾取 + 3D 标记在 src/app/pick-service.ts）
   // ============================================================
-  /**
-   * 装配模式拾取配合参考。优先级：
-   *   1. 屏幕空间近处有棱边 → 棱边参考（直线=方向轴，圆=轴线/中心）；
-   *   2. 命中面为圆柱/圆锥 → 轴线参考（配合时作同心）；
-   *   3. 命中面为平面 → 平面参考（质心 + 法向）。
-   * 局部几何存于组件自身坐标系，求解时用组件世界矩阵变换出去即可。
-   */
-  private pickAssembly(x: number, y: number, additive: boolean): void {
-    const a = this.assembly;
-    if (!a) return;
-    const rc = this.viewport.rayFromScreen(x, y);
-
-    // 命中最近的组件
-    let best: { compId: string; faceIndex: number; comp: Component } | null = null;
-    let bestDist = Infinity;
-    for (const c of a.components) {
-      if (!c.visible || !c.view) continue;
-      const hits = rc.intersectObject(c.view.mesh, false);
-      if (hits.length && hits[0].faceIndex !== undefined && hits[0].distance < bestDist) {
-        const fi = c.view.faceIndexFromTriangle(hits[0].faceIndex);
-        if (fi >= 0) {
-          best = { compId: c.id, faceIndex: fi, comp: c };
-          bestDist = hits[0].distance;
-        }
-      }
-    }
-    if (!best || !best.comp.view) {
-      if (!additive) this.clearAssemblyPicks();
-      return;
-    }
-
-    const view = best.comp.view;
-    let ref: MateRef;
-    let label: string;
-
-    // 1) 棱边优先（屏幕空间阈值内）
-    const edgeIdx = this.pickEdgeIn(view, x, y, 7);
-    if (edgeIdx !== null) {
-      const em = view.edgeMetas[edgeIdx];
-      if (em) {
-        if (em.curveType === 'circle' && em.axis) {
-          ref = {
-            comp: best.comp.id,
-            localPoint: [...em.axis.point],
-            localDir: [...em.axis.dir],
-            kind: 'cylindrical',
-            isAxis: true,
-            radius: em.radius,
-          };
-          label = '圆边（轴）';
-        } else {
-          ref = {
-            comp: best.comp.id,
-            localPoint: [...em.mid],
-            localDir: [...em.dir],
-            kind: 'edge',
-            isAxis: true,
-          };
-          label = '棱边';
-        }
-        this.pushAssemblyPick(a, ref, label, additive);
-        return;
-      }
-    }
-
-    // 2) 面
-    const meta = view.faceMetas[best.faceIndex];
-    if (!meta) return;
-    if ((meta.surfaceType === 'cylinder' || meta.surfaceType === 'cone') && meta.axis) {
-      ref = {
-        comp: best.comp.id,
-        localPoint: [...meta.axis.point],
-        localDir: [...meta.axis.dir],
-        kind: 'cylindrical',
-        isAxis: true,
-        radius: meta.radius,
-      };
-      label = meta.surfaceType === 'cylinder' ? '圆柱面（轴）' : '圆锥面（轴）';
-    } else {
-      ref = {
-        comp: best.comp.id,
-        localPoint: [...meta.centroid],
-        localDir: [...meta.normal],
-        kind: 'planar',
-      };
-      label = meta.surfaceType === 'plane' || meta.surfaceType === undefined ? '平面' : '曲面';
-    }
-    this.pushAssemblyPick(a, ref, label, additive);
-  }
-
-  private pushAssemblyPick(a: Assembly, ref: MateRef, label: string, additive: boolean): void {
-    if (!additive || this.assemblyPicks.length >= 2) this.assemblyPicks = [];
-    this.assemblyPicks.push(ref);
-    this.syncAssemblyPickMarkers();
-    const names = this.assemblyPicks
-      .map((p) => `${a.getComponent(p.comp)?.name ?? '?'}·${mateRefLabel(p)}`)
-      .join(' → ');
-    this.setStatus('装配拾取', 'ok', `${label}（${this.assemblyPicks.length}/2）：${names}`);
-    this.emit('change', 'props');
-    this.viewport.invalidate();
-  }
-
+  /** 清空装配拾取（对话框调用；会广播 change/props） */
   clearAssemblyPicks(): void {
-    this.assemblyPicks = [];
-    this.syncAssemblyPickMarkers();
-    this.emit('change', 'props');
-  }
-
-  /** 依据当前拾取重建 3D 标记：橙=第 1 个参考，蓝=第 2 个，球 + 轴向线段 */
-  private syncAssemblyPickMarkers(): void {
-    const a = this.assembly;
-    if (!this.assemblyPickGroup) {
-      this.assemblyPickGroup = new THREE.Group();
-      this.assemblyPickGroup.userData.pickMarker = true;
-      this.viewport.root.add(this.assemblyPickGroup);
-    }
-    const g = this.assemblyPickGroup;
-    for (const child of [...g.children]) {
-      g.remove(child);
-      child.traverse((o) => { if (o instanceof THREE.Mesh || o instanceof THREE.Line) { (o.geometry as THREE.BufferGeometry)?.dispose(); (o.material as THREE.Material)?.dispose(); } });
-    }
-    if (!a) return;
-    const pos = new THREE.Vector3();
-    const quat = new THREE.Quaternion();
-    const scl = new THREE.Vector3();
-    const colors = [0xff8c00, 0x2b8cff];
-    this.assemblyPicks.forEach((ref, i) => {
-      const c = a.getComponent(ref.comp);
-      if (!c) return;
-      const m = a.displayMatrix(c);
-      m.decompose(pos, quat, scl);
-      const wp = new THREE.Vector3(...ref.localPoint).applyMatrix4(m);
-      const wd = new THREE.Vector3(...ref.localDir).applyQuaternion(quat).normalize();
-      const node = new THREE.Group();
-      node.position.copy(wp);
-      const color = colors[i % colors.length];
-      const dot = new THREE.Mesh(
-        new THREE.SphereGeometry(1.3, 12, 8),
-        new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 })
-      );
-      dot.renderOrder = 999;
-      node.add(dot);
-      const half = 9;
-      const seg = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3().copy(wd).multiplyScalar(-half),
-        new THREE.Vector3().copy(wd).multiplyScalar(half),
-      ]);
-      const line = new THREE.Line(seg, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 }));
-      line.renderOrder = 999;
-      node.add(line);
-      g.add(node);
-    });
-    g.visible = this.mode === 'assembly';
-  }
-
-  /** 屏幕空间边拾取（针对指定视图） */
-  private pickEdgeIn(sv: ShapeView, sx: number, sy: number, threshold = 8): number | null {
-    const rect = this.viewport.renderer.domElement.getBoundingClientRect();
-    const mx = sx - rect.left;
-    const my = sy - rect.top;
-    let best = -1;
-    let bestD = threshold;
-
-    const tmp = new THREE.Vector3();
-    for (let i = 0; i < sv.edgeMetas.length; i++) {
-      const flat = sv.meshResult.edgePolylines[i];
-      if (!flat || flat.length < 6) continue;
-      let prev: THREE.Vector3 | null = null;
-      for (let k = 0; k < flat.length; k += 3) {
-        tmp.set(flat[k], flat[k + 1], flat[k + 2]);
-        const cur = tmp.clone();
-        if (prev) {
-          const a = this.viewport.worldToScreen([prev.x, prev.y, prev.z]);
-          const b = this.viewport.worldToScreen([cur.x, cur.y, cur.z]);
-          const d = distToSegment(mx, my, a.x, a.y, b.x, b.y);
-          if (d < bestD) {
-            bestD = d;
-            best = i;
-          }
-        }
-        prev = cur;
-      }
-    }
-    return best >= 0 ? best : null;
-  }
-
-  /** 屏幕空间边拾取（模型模式） */
-  private pickEdge(rc: THREE.Raycaster, sx: number, sy: number): number | null {
-    const sv = this.shapeView;
-    if (!sv) return null;
-    void rc;
-    return this.pickEdgeIn(sv, sx, sy);
+    this.pickSvc.clearAssemblyPicks();
   }
 
   /** 选中一个实体（选择过滤器为「实体」时专用；经命中的面反查 bodyIndex） */
   selectBody(index: number, additive = false): void {
-    this.applyGeomSelection('body', index, additive);
+    this.pickSvc.selectBody(index, additive);
   }
 
   /** 命中的面所属实体下标（无归属信息时 -1） */
   bodyIndexOfFace(fi: number): number {
-    const m = this.currentModel();
-    const bi = m?.mesh.faceMetas[fi]?.bodyIndex;
-    return bi ?? -1;
+    return this.pickSvc.bodyIndexOfFace(fi);
   }
 
   /**
@@ -1287,17 +1001,7 @@ export class App implements AppApi {
    * 供右键菜单「选择其他…」使用（SolidWorks 同名功能）。
    */
   pickCandidateFaces(sx: number, sy: number): number[] {
-    const sv = this.shapeView;
-    if (!sv) return [];
-    const rc = this.viewport.rayFromScreen(sx, sy);
-    const hits = rc.intersectObject(sv.mesh, false);
-    const out: number[] = [];
-    for (const h of hits) {
-      if (h.faceIndex === undefined) continue;
-      const fi = sv.faceIndexFromTriangle(h.faceIndex);
-      if (fi >= 0 && !out.includes(fi)) out.push(fi);
-    }
-    return out;
+    return this.pickSvc.pickCandidateFaces(sx, sy);
   }
 
   // ============================================================
@@ -1313,7 +1017,7 @@ export class App implements AppApi {
     }
     if (mode !== 'assembly') {
       this.assemblyPicks = [];
-      this.syncAssemblyPickMarkers();
+      this.pickSvc.syncAssemblyPickMarkers();
     }
     if (mode === 'assembly') {
       const a = this.ensureAssembly();
@@ -1342,7 +1046,7 @@ export class App implements AppApi {
         if (child.userData?.compId) child.visible = false;
       }
     }
-    if (this.assemblyPickGroup) this.assemblyPickGroup.visible = mode === 'assembly';
+    this.pickSvc.setPickGroupVisible(mode === 'assembly');
     const canvas = this.viewport.renderer.domElement;
     canvas.style.visibility = mode === 'drawing' ? 'hidden' : '';
     if (this.drawingHost) this.drawingHost.classList.toggle('hidden', mode !== 'drawing');
@@ -2197,15 +1901,6 @@ export class App implements AppApi {
 
 function round2(v: number): number {
   return Math.round(v * 100) / 100;
-}
-
-function distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const L2 = dx * dx + dy * dy;
-  if (L2 < 1e-9) return Math.hypot(px - x1, py - y1);
-  let t = ((px - x1) * dx + (py - y1) * dy) / L2;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
 }
 
 /** 坐标轴原点标记 */

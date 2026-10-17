@@ -39,6 +39,7 @@ const SUITES = [
   { name: '撤销/重做管理器（压栈/节流/suppress/换栈）', file: 'tools/undo-manager-test.ts' },
   { name: '表达式/参数服务（求值缓存/写入口/纯查询）', file: 'tools/param-service-test.ts' },
   { name: '文件服务（导出/保存/打开/导入流程）', file: 'tools/file-service-test.ts' },
+  { name: '拾取交互服务（点击分发/顶点·棱边·面拾取/装配配合拾取/标记）', file: 'tools/pick-service-test.ts' },
 ];
 
 let failed = 0;
