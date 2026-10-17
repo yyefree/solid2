@@ -9,6 +9,7 @@ import type { SkBSpline, SkEntity, SkHyperbola, SkParabola, Sketch, SketchPlane 
 import { planeToWorld, worldToPlane, arcAngles, ellipsePointAt, hyperbolaPointAt, parabolaPointAt } from '../sketch/types';
 import { bsplineInterpolate, bsplinePolyline } from '../sketch/curve';
 import { COLORS, sketchMaterial } from './materials';
+import { disposeGroupChildren } from './dispose';
 
 /**
  * 高级曲线族的 2D 采样（纯数学，主线程可用）。
@@ -316,12 +317,7 @@ export class SketchOverlay {
   }
 
   private clearGroup(g: THREE.Group): void {
-    while (g.children.length) {
-      const c = g.children.pop() as THREE.Object3D;
-      const any = c as any;
-      any.geometry?.dispose?.();
-      any.material?.dispose?.();
-    }
+    disposeGroupChildren(g);
   }
 
   // ---------------- 命中测试 ----------------
@@ -367,7 +363,7 @@ export class SketchOverlay {
     return best;
   }
 
-  private distanceToEntity(sk: Sketch, e: any, p: [number, number]): { d: number; t: number } | null {
+  private distanceToEntity(sk: Sketch, e: SkEntity, p: [number, number]): { d: number; t: number } | null {
     if (e.kind === 'line') {
       const a = sk.points[e.a];
       const b = sk.points[e.b];

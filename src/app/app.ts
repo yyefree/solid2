@@ -9,7 +9,7 @@
  */
 import * as THREE from 'three';
 import { CadDocument, newSketchFeature } from '../doc/model';
-import type { Feature, FeatureId, PlaneRef, SketchFeature } from '../doc/types';
+import type { Feature, FeatureId, FeatureParamsPatch, PlaneRef, SketchFeature } from '../doc/types';
 import { FEATURE_LABEL } from '../doc/types';
 import {
   resolveExpressions,
@@ -27,6 +27,7 @@ import { viewsOfMesh } from '../core/kernel-types';
 import { Viewport, type ViewDir, LAYOUT_DEFS, type LayoutName } from '../view/viewport';
 import { ShapeView, type DisplayStyle } from '../view/shapeview';
 import { COLORS, previewMaterial } from '../view/materials';
+import { disposeGeomAndMaterial, disposeGroupChildren } from '../view/dispose';
 import { notify, tableModal } from '../ui/toast';
 import { DEFAULT_UNIT, isUnitSystem, formatLength, formatArea, formatVolume, type UnitSystem } from '../core/units';
 import { closePropertyManager } from '../ui/propertymanager';
@@ -892,12 +893,7 @@ export class App implements AppApi {
   }
 
   refreshHighlight(): void {
-    while (this.highlightGroup.children.length) {
-      const c = this.highlightGroup.children.pop() as THREE.Object3D;
-      const any = c as any;
-      any.geometry?.dispose?.();
-      any.material?.dispose?.();
-    }
+    disposeGroupChildren(this.highlightGroup);
     const sv = this.shapeView;
     if (!sv) return;
 
@@ -2051,9 +2047,7 @@ export class App implements AppApi {
   clearPreview(): void {
     if (this.previewObject) {
       this.previewObject.removeFromParent();
-      const any = this.previewObject as any;
-      any.geometry?.dispose?.();
-      any.material?.dispose?.();
+      disposeGeomAndMaterial(this.previewObject);
       this.previewObject = null;
       this.viewport.invalidate();
     }
@@ -2112,13 +2106,13 @@ export class App implements AppApi {
     });
   }
 
-  updateFeatureParams(id: FeatureId, patch: Record<string, any>): void {
+  updateFeatureParams(id: FeatureId, patch: FeatureParamsPatch): void {
     const f = this.doc.getFeature(id);
     if (!f) return;
     // 与 setParam / setFeatureExpression 一致：编辑特征参数必须入撤销栈。
     // 否则「改尺寸 → Ctrl+Z」不会回到旧值，而是弹掉更早的一次无关操作
     // （属性面板的 numberField 只在 change/blur 提交，不会逐键触发，故安全）。
-    this.mutate(() => Object.assign(f.params as any, patch));
+    this.mutate(() => Object.assign(f.params as Record<string, unknown>, patch));
   }
 
   // ============================================================

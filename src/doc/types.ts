@@ -589,6 +589,17 @@ export type Feature =
   | SheetBaseFlangeFeature
   | SheetEdgeFlangeFeature;
 
+/**
+ * 特征参数增量补丁（`App.updateFeatureParams` 的入参）。
+ *
+ * 按特征类型分布的「部分参数」联合：键必须存在于对应特征变体的 `params`，
+ * 由编译期校验（写错参数名会直接报错，杜绝拼错后静默合并进 params 的 bug）。
+ * 新特征类型加入 `Feature` 联合后自动获得覆盖，无需手工维护。
+ */
+export type FeatureParamsPatch = {
+  [K in Feature['type']]?: Partial<Extract<Feature, { type: K }>['params']>
+}[Feature['type']];
+
 export const FEATURE_LABEL: Record<string, string> = {
   sketch: '草图',
   extrude: '拉伸',

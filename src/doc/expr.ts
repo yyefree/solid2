@@ -418,26 +418,32 @@ export function collectRefs(node: ExprNode, out: string[][] = []): string[][] {
 // 参数路径（用于特征属性引用与 expressions 键）
 // ============================================================
 /** 读取 `dims[0]` / `distance` 这类路径的值 */
-export function getParamPath(params: any, path: string): number | undefined {
+export function getParamPath(params: unknown, path: string): number | undefined {
   const m = /^([A-Za-z0-9_]+)(?:\[(\d+)\])?$/.exec(path);
   if (!m) return undefined;
-  const v = params?.[m[1]];
+  const obj = params as Record<string, unknown> | null | undefined;
+  const v = obj?.[m[1]];
   if (m[2] === undefined) return typeof v === 'number' ? v : undefined;
   const i = parseInt(m[2], 10);
-  return Array.isArray(v) && typeof v[i] === 'number' ? v[i] : undefined;
+  if (!Array.isArray(v)) return undefined;
+  const n = (v as unknown[])[i];
+  return typeof n === 'number' ? n : undefined;
 }
 
 /** 写入 `dims[0]` / `distance` 这类路径 */
-export function setParamPath(params: any, path: string, value: number): boolean {
+export function setParamPath(params: unknown, path: string, value: number): boolean {
   const m = /^([A-Za-z0-9_]+)(?:\[(\d+)\])?$/.exec(path);
   if (!m) return false;
+  const obj = params as Record<string, unknown> | null | undefined;
+  if (!obj) return false;
   if (m[2] === undefined) {
-    params[m[1]] = value;
+    obj[m[1]] = value;
     return true;
   }
   const i = parseInt(m[2], 10);
-  if (!Array.isArray(params[m[1]])) return false;
-  params[m[1]][i] = value;
+  const arr = obj[m[1]];
+  if (!Array.isArray(arr)) return false;
+  (arr as unknown[])[i] = value;
   return true;
 }
 
@@ -452,16 +458,18 @@ export const PARAM_LABEL: Record<string, string> = {
 };
 
 /** 列出特征里所有「标量 / 数组元素」数值参数（供表达式对话框选择） */
-export function listNumericParams(params: any): { path: string; label: string; value: number }[] {
+export function listNumericParams(params: unknown): { path: string; label: string; value: number }[] {
   const out: { path: string; label: string; value: number }[] = [];
   if (!params || typeof params !== 'object') return out;
-  for (const key of Object.keys(params)) {
-    const v = params[key];
+  const obj = params as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    const v = obj[key];
     if (typeof v === 'number') {
       out.push({ path: key, label: PARAM_LABEL[key] ?? key, value: v });
-    } else if (Array.isArray(v) && v.every((x) => typeof x === 'number')) {
-      for (let i = 0; i < v.length; i++) {
-        out.push({ path: `${key}[${i}]`, label: `${PARAM_LABEL[key] ?? key} ${i + 1}`, value: v[i] });
+    } else if (Array.isArray(v) && (v as unknown[]).every((x) => typeof x === 'number')) {
+      const arr = v as unknown[];
+      for (let i = 0; i < arr.length; i++) {
+        out.push({ path: `${key}[${i}]`, label: `${PARAM_LABEL[key] ?? key} ${i + 1}`, value: arr[i] as number });
       }
     }
   }
@@ -564,7 +572,7 @@ export function resolveExpressions(doc: DocLike): ResolveResult {
     const key = featCell(f.id, path);
     if (cache.has(key)) return cache.get(key)!;
     if (visiting.has(key)) throw new ExprError(`循环引用：${f.name}.${path}`);
-    const expr = (f as any).expressions?.[path];
+    const expr = f.expressions?.[path];
     if (expr === undefined) {
       // 无表达式 → 直接用字面值
       const lit = getParamPath(f.params, path);
@@ -613,7 +621,7 @@ export function resolveExpressions(doc: DocLike): ResolveResult {
   const outFeatures: Feature[] = features.map((f) => JSON.parse(JSON.stringify(f)) as Feature);
   const outById = new Map(outFeatures.map((f) => [f.id, f]));
   for (const f of features) {
-    const ex = (f as any).expressions as Record<string, string> | undefined;
+    const ex = f.expressions;
     if (!ex) continue;
     for (const path of Object.keys(ex)) {
       try {

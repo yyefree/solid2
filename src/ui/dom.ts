@@ -24,14 +24,14 @@ export function qs<T extends HTMLElement = HTMLElement>(sel: string, root: Paren
   return n as T;
 }
 
-export function on<K extends keyof HTMLElementEventMap>(
+export function on(
   node: HTMLElement | Window | Document,
-  type: K | string,
-  handler: (e: any) => void,
+  type: string,
+  handler: (e: Event) => void,
   opts?: AddEventListenerOptions
 ): () => void {
-  node.addEventListener(type as any, handler, opts);
-  return () => node.removeEventListener(type as any, handler, opts);
+  node.addEventListener(type as keyof HTMLElementEventMap, handler, opts);
+  return () => node.removeEventListener(type as keyof HTMLElementEventMap, handler, opts);
 }
 
 /** 数值输入框（带上下微调），返回元素与取值函数 */

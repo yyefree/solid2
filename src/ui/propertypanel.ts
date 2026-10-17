@@ -35,34 +35,34 @@ function renderModelProps(app: AppApi, host: HTMLElement) {
   )));
 
   if (sel.type === 'extrude') {
-    const p = sel.params as any;
+    const p = sel.params;
     const d = numberField('距离', p.distance, (v) => app.updateFeatureParams(sel.id, { distance: v }), { unit: 'mm' });
     const rev = checkField('反向', !!p.reverse, (v) => app.updateFeatureParams(sel.id, { reverse: v }));
     const sym = checkField('对称', !!p.symmetric, (v) => app.updateFeatureParams(sel.id, { symmetric: v }));
     wrap.appendChild(section('参数', el('div', { class: 'col' }, d.row, rev.row, sym.row)));
   }
   if (sel.type === 'revolve') {
-    const p = sel.params as any;
+    const p = sel.params;
     const a = numberField('角度 (°)', p.angleDeg, (v) => app.updateFeatureParams(sel.id, { angleDeg: v }), {});
     wrap.appendChild(section('参数', a.row));
   }
   if (sel.type === 'fillet') {
-    const p = sel.params as any;
+    const p = sel.params;
     const r = numberField('半径', p.radius, (v) => app.updateFeatureParams(sel.id, { radius: v }), { unit: 'mm' });
     wrap.appendChild(section('参数', r.row));
   }
   if (sel.type === 'chamfer') {
-    const p = sel.params as any;
+    const p = sel.params;
     const d = numberField('距离', p.distance, (v) => app.updateFeatureParams(sel.id, { distance: v }), { unit: 'mm' });
     wrap.appendChild(section('参数', d.row));
   }
   if (sel.type === 'shell') {
-    const p = sel.params as any;
+    const p = sel.params;
     const t = numberField('厚度', p.thickness, (v) => app.updateFeatureParams(sel.id, { thickness: v }), { unit: 'mm' });
     wrap.appendChild(section('参数', t.row));
   }
   if (sel.type === 'primitive') {
-    const p = sel.params as any;
+    const p = sel.params;
     const wrap2 = el('div', { class: 'col' });
     for (let i = 0; i < p.dims.length; i++) {
       const f = numberField(`尺寸 ${i + 1}`, p.dims[i], (v) => {
@@ -75,19 +75,19 @@ function renderModelProps(app: AppApi, host: HTMLElement) {
     wrap.appendChild(section('参数', wrap2));
   }
   if (sel.type === 'linearPattern') {
-    const p = sel.params as any;
+    const p = sel.params;
     const sp = numberField('间距', p.spacing, (v) => app.updateFeatureParams(sel.id, { spacing: v }), { unit: 'mm' });
     const cnt = numberField('数量', p.count, (v) => app.updateFeatureParams(sel.id, { count: Math.max(2, Math.round(v)) }), { step: 1 });
     wrap.appendChild(section('参数', el('div', { class: 'col' }, sp.row, cnt.row)));
   }
   if (sel.type === 'circularPattern') {
-    const p = sel.params as any;
+    const p = sel.params;
     const cnt = numberField('数量', p.count, (v) => app.updateFeatureParams(sel.id, { count: Math.max(2, Math.round(v)) }), { step: 1 });
     const ang = numberField('总角度 (°)', p.totalAngleDeg, (v) => app.updateFeatureParams(sel.id, { totalAngleDeg: v }), {});
     wrap.appendChild(section('参数', el('div', { class: 'col' }, cnt.row, ang.row)));
   }
   if (sel.type === 'hole') {
-    const p = sel.params as any;
+    const p = sel.params;
     const col = el('div', { class: 'col' });
     col.appendChild(numberField('孔径 Φ', p.diameter, (v) => app.updateFeatureParams(sel.id, { diameter: v }), { min: 0.1, step: 0.5, unit: 'mm' }).row);
     col.appendChild(checkField('通孔', !!p.through, (v) => app.updateFeatureParams(sel.id, { through: v })).row);
@@ -105,7 +105,7 @@ function renderModelProps(app: AppApi, host: HTMLElement) {
     wrap.appendChild(section('参数', col));
   }
   if (sel.type === 'referencePlane') {
-    const p = sel.params as any;
+    const p = sel.params;
     const info = el('div', { class: 'col' },
       el('div', { class: 'field' }, el('label', { text: '偏移距离' }), el('div', { class: 'val mono', text: `${round(p.distance ?? 0)} mm` })),
       el('div', { class: 'field' }, el('label', { text: '原点' }), el('div', { class: 'val mono', text: `(${p.plane.origin.map((n: number) => round(n)).join(', ')})` })),
@@ -113,14 +113,14 @@ function renderModelProps(app: AppApi, host: HTMLElement) {
     wrap.appendChild(section('参数', info));
   }
   if (sel.type === 'draft') {
-    const p = sel.params as any;
+    const p = sel.params;
     const col = el('div', { class: 'col' });
     col.appendChild(numberField('拔模角 (°)', p.angleDeg, (v) => app.updateFeatureParams(sel.id, { angleDeg: v }), { min: 0, max: 89, step: 1 }).row);
     col.appendChild(checkField('反向', !!p.reverse, (v) => app.updateFeatureParams(sel.id, { reverse: v })).row);
     wrap.appendChild(section('参数', col));
   }
   if (sel.type === 'rib') {
-    const p = sel.params as any;
+    const p = sel.params;
     const col = el('div', { class: 'col' });
     col.appendChild(numberField('厚度', p.thickness, (v) => app.updateFeatureParams(sel.id, { thickness: v }), { min: 0.1, step: 0.5, unit: 'mm' }).row);
     col.appendChild(numberField('深度', p.depth ?? 10, (v) => app.updateFeatureParams(sel.id, { depth: v }), { min: 0.1, step: 1, unit: 'mm' }).row);

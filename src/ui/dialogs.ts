@@ -10,12 +10,13 @@ import { formatLength, formatArea, formatVolume } from '../core/units';
 import { el, numberField, selectField, checkField, clear, section } from './dom';
 import { newId } from '../sketch/types';
 import type { ExtrudeFeature, ExtrudeStartCondition, ExtrudeEndCondition, ExtrudeEnd2Condition, ThinType, ThinSpec, RevolveFeature, LoftFeature, SweepFeature, PrimitiveFeature, FilletFeature, ChamferFeature, ShellFeature, LinearPatternFeature, CircularPatternFeature, MirrorFeature, HoleFeature, ReferencePlaneFeature, HoleType, DraftFeature, RibFeature, SpringFeature, SpiralFeature, CoilHandedness, BooleanOp, ScaleFeature, SplitFeature, SplitKeep, MoveBodyFeature, DeleteBodyFeature, CombineFeature, CombineOp, SheetBaseFlangeFeature, SheetEdgeFlangeFeature } from '../doc/types';
-import type { SketchPlane } from '../sketch/types';
+import type { SketchPlane, SkConstraint } from '../sketch/types';
 import { worldToPlane } from '../sketch/types';
 import { PLANES, makeEdgeRef, makeFaceRef, CadDocument, planeFromFace, offsetPlane, parallelPlane, perpendicularPlane, angledPlane, planeOf, worldFromSketch } from '../doc/model';
 import { download } from '../core/meshexport';
 import type { ViewKind, DimAnnotation, GdtSymbol } from '../app/drawing';
 import { GDT_LABEL } from '../app/drawing';
+import type { MateType } from '../app/assembly';
 import type { MateRef } from '../app/assembly';
 import { mateRefLabel } from '../app/assembly';
 
@@ -72,8 +73,8 @@ export const featureDialogs = {
     app.startSketch(pl);
   },
 
-  addRelation(app: AppApi, type: string): void {
-    app.sketch.addRelation(type as any);
+  addRelation(app: AppApi, type: SkConstraint['type']): void {
+    app.sketch.addRelation(type);
   },
 
   smartDimension(app: AppApi): void {
@@ -1214,7 +1215,7 @@ export const featureDialogs = {
       actions: [
         { label: '取消' },
         { label: '确定', primary: true, onClick: () => {
-          const type = sel.select.value as any;
+          const type = sel.select.value as MateType;
           const usePick = refModeRow.select.value === 'pick';
           let refA: MateRef;
           let refB: MateRef;

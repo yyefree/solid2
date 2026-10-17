@@ -32,9 +32,20 @@ export function planeOf(f: SketchFeature): SketchPlane {
 }
 
 export interface EvalOut {
+  /**
+   * 特征求值结果。`shape` / `tool` / `added` 为 OCCT `TopoDS_Shape`（WASM 绑定无类型），
+   * 属于**内核边界**——按约定边界处维持 `any`，勿在领域层扩散（见技术栈约定）。
+   */
   shape: any;
   tool?: any;
   added?: any;
+}
+
+/** 文档序列化结构（`CadDocument.toJSON` 产出 / `fromJSON` 消费） */
+export interface SerializedDoc {
+  version: number;
+  params: ParamDef[];
+  features: Feature[];
 }
 
 export function worldFromSketch(pl: SketchPlane, x: number, y: number): [number, number, number] {
@@ -256,7 +267,7 @@ export class CadDocument {
     );
   }
 
-  toJSON(): any {
+  toJSON(): SerializedDoc {
     return {
       version: 2,
       params: this.params.map((p) => ({ ...p })),
@@ -264,15 +275,18 @@ export class CadDocument {
     };
   }
 
-  static fromJSON(data: any): CadDocument {
+  static fromJSON(data: unknown): CadDocument {
     const d = new CadDocument();
-    if (Array.isArray(data?.params)) {
-      d.params = data.params
-        .filter((p: any) => p && typeof p.name === 'string' && typeof p.expr === 'string')
-        .map((p: any) => ({ name: p.name, expr: p.expr, ...(p.comment ? { comment: p.comment } : {}) }));
+    const rec = (data ?? null) as { params?: unknown; features?: unknown } | null;
+    if (rec && Array.isArray(rec.params)) {
+      d.params = (rec.params as unknown[])
+        .filter((p): p is ParamDef => typeof p === 'object' && p !== null &&
+          typeof (p as Record<string, unknown>).name === 'string' &&
+          typeof (p as Record<string, unknown>).expr === 'string')
+        .map((p) => ({ name: p.name, expr: p.expr, ...(p.comment ? { comment: p.comment } : {}) }));
     }
-    if (data?.features?.length) {
-      d.features = data.features as Feature[];
+    if (rec && Array.isArray(rec.features) && rec.features.length) {
+      d.features = rec.features as Feature[];
       for (const f of d.features) {
         const m = /(\d+)$/.exec(f.name ?? '');
         const n = m ? parseInt(m[1], 10) : 0;

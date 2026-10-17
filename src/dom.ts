@@ -6,7 +6,7 @@
  * `ui/dom.ts` 仍从这里 re-export `el` / `clear`，保证既有 UI 调用点无需改动。
  */
 
-export type Attrs = Record<string, any>;
+export type Attrs = Record<string, unknown>;
 
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
