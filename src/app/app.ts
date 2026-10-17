@@ -34,6 +34,7 @@ import { closePropertyManager } from '../ui/propertymanager';
 import { DEFAULT_PLANE, RIGHT_PLANE, TOP_PLANE, type SketchPlane } from '../sketch/types';
 import { SketchController, type SketchTool } from './sketchMode';
 import { SelectionStore, type GeomKind, type SelectionFilter } from './selection-store';
+import { UndoManager, type MutateOpts } from './undo-manager';
 import { Assembly, mateRefLabel, type MateRef, type Component } from './assembly';
 import { Drawing, generateStandardViews, type ViewKind } from './drawing';
 import { openSectionProperties } from '../ui/sectionprops-dialog';
@@ -205,11 +206,8 @@ export class App implements AppApi {
   /** 拾取参考的 3D 标记（球 + 轴向线段），加在视口根节点 */
   private assemblyPickGroup: THREE.Group | null = null;
 
-  // ---- 撤销（按当前文档隔离）----
-  private undoStack: string[] = [];
-  private redoStack: string[] = [];
-  private maxUndo = 60;
-  private suppressUndo = false;
+  // ---- 撤销（按当前文档隔离，实现在 src/app/undo-manager.ts）----
+  private readonly undoMgr: UndoManager;
   /**
    * 重建代号：用于丢弃**过期**的异步重建结果。
    * `rebuild()` 等待几何内核（worker）期间，用户可能再次触发重建，或切换文档
@@ -263,6 +261,22 @@ export class App implements AppApi {
     this.sketch = new SketchController(this);
     this.onCanvasClick = (x, y, additive) => this.sketch.handleClick(x, y, additive);
 
+    // 撤销管理器：宿主回调均为闭包（构造时 this.doc 等字段已初始化）
+    this.undoMgr = new UndoManager({
+      snapshot: () => JSON.stringify(this.doc.toJSON()),
+      restore: (json) => {
+        this.doc = CadDocument.fromJSON(JSON.parse(json));
+        this.activeDoc().doc = this.doc;
+      },
+      afterRestore: async () => {
+        this.pruneFeatureUiState();
+        await this.rebuild();
+      },
+      rebuild: (opts) => this.rebuild(opts),
+      emit: (...evts) => this.emit(...evts),
+      info: (msg) => notify.info(msg),
+    });
+
     this.viewport.start();
     this.bindPointer();
     // 键盘热键由 ../app/hotkeys 统一注册（SolidWorks 键位表）
@@ -277,12 +291,14 @@ export class App implements AppApi {
       imported: null,
       assembly: null,
       drawing: null,
-      undo: this.undoStack,
-      redo: this.redoStack,
+      undo: [],
+      redo: [],
       view: null,
     };
     this.documents.push(first);
     this.activeDocId = first.id;
+    // 初始条目与撤销管理器共享同一对栈（切文档时按引用交换）
+    this.undoMgr.useStacks(first.undo, first.redo);
   }
 
   private nextDocId(): string {
@@ -369,8 +385,9 @@ export class App implements AppApi {
     e.imported = this.importedModel;
     e.assembly = this.assembly;
     e.drawing = this.drawing;
-    e.undo = this.undoStack;
-    e.redo = this.redoStack;
+    const stacks = this.undoMgr.stacks;
+    e.undo = stacks.undo;
+    e.redo = stacks.redo;
     e.view = this.viewport.cameraSnapshot();
   }
 
@@ -382,8 +399,7 @@ export class App implements AppApi {
     this.importedModel = entry.imported;
     this.assembly = entry.assembly;
     this.drawing = entry.drawing;
-    this.undoStack = entry.undo;
-    this.redoStack = entry.redo;
+    this.undoMgr.useStacks(entry.undo, entry.redo);
     this.activeDocId = entry.id;
     this.sel.reset(); // 切文档：选中态整体重置（含特征/几何/草图），避免跨文档残留
     this.clearSelection();
@@ -405,12 +421,17 @@ export class App implements AppApi {
   get canUndo(): boolean {
     // 草图编辑态：可撤销性由草图内部历史决定（见 SketchController.canUndo）
     if (this.mode === 'sketch' && this.editingSketch) return this.sketch.canUndo;
-    return this.undoStack.length > 0;
+    return this.undoMgr.canUndo;
   }
 
   get canRedo(): boolean {
     if (this.mode === 'sketch' && this.editingSketch) return this.sketch.canRedo;
-    return this.redoStack.length > 0;
+    return this.undoMgr.canRedo;
+  }
+
+  /** 当前文档撤销栈深度（诊断/测试用；UI 可用性判断请用 canUndo） */
+  get undoDepth(): number {
+    return this.undoMgr.stacks.undo.length;
   }
 
   // ============================================================
@@ -521,21 +542,8 @@ export class App implements AppApi {
   // 文档与视图
   // ============================================================
   /**
-   * 压入撤销栈（**私有**）。
-   *
-   * 外部（尤其 UI 层）不得直接调用——此前 `ui/dialogs.ts` 就调过它，导致压栈责任
-   * 分散在十几个入口 + UI 层，漏掉一处就会出现「改尺寸 → Ctrl+Z 弹掉更早的无关操作」。
-   * 外部修改文档一律走 `mutate()`。
-   */
-  private pushUndo(): void {
-    if (this.suppressUndo) return;
-    this.undoStack.push(JSON.stringify(this.doc.toJSON()));
-    if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
-    this.redoStack.length = 0;
-  }
-
-  /**
-   * 统一的「写文档」入口：压撤销栈 → 执行改动 → 重建 →（可选）广播事件。
+   * 统一的「写文档」入口（委托 `undo-manager.ts` 的 UndoManager）：
+   * 压撤销栈 → 执行改动 → 重建 →（可选）广播事件。
    *
    * 把所有会改文档的操作收敛到这里，「压栈」不再依赖调用点自觉：
    * `mutate(() => this.doc.setParam(...), { emit: ['params'] })`
@@ -545,11 +553,8 @@ export class App implements AppApi {
    * @param opts.emit  重建后广播的事件（重建本身已广播 change/tree/props/params）
    * @param opts.rebuild 传 `false` 跳过重建（调用方自行处理后续）
    */
-  mutate(fn: () => void, opts: { fit?: boolean; emit?: AppEvent[]; rebuild?: boolean } = {}): void {
-    this.pushUndo();
-    fn();
-    if (opts.rebuild !== false) this.rebuild({ fit: opts.fit });
-    if (opts.emit?.length) this.emit(...opts.emit);
+  mutate(fn: () => void, opts: MutateOpts = {}): void {
+    this.undoMgr.mutate(fn, opts);
   }
 
   /**
@@ -574,24 +579,7 @@ export class App implements AppApi {
       else notify.info('没有可撤销的草图操作');
       return;
     }
-    const prev = this.undoStack.pop();
-    if (!prev) {
-      notify.info('没有可撤销的操作');
-      return;
-    }
-    this.redoStack.push(JSON.stringify(this.doc.toJSON()));
-    // suppressUndo 在「文档替换 + 异步重建」全程保持 true，用 try/finally 保证复位，
-    // 避免全局布尔在 await 异步 rebuild 之前被提前清零（此前为脆弱写法）。
-    this.suppressUndo = true;
-    try {
-      this.doc = CadDocument.fromJSON(JSON.parse(prev));
-      this.activeDoc().doc = this.doc;
-      this.pruneFeatureUiState();
-      await this.rebuild();
-    } finally {
-      this.suppressUndo = false;
-    }
-    notify.info('已撤销');
+    await this.undoMgr.undo();
   }
 
   async redo(): Promise<void> {
@@ -600,22 +588,7 @@ export class App implements AppApi {
       else notify.info('没有可重做的草图操作');
       return;
     }
-    const next = this.redoStack.pop();
-    if (!next) {
-      notify.info('没有可重做的操作');
-      return;
-    }
-    this.undoStack.push(JSON.stringify(this.doc.toJSON()));
-    this.suppressUndo = true;
-    try {
-      this.doc = CadDocument.fromJSON(JSON.parse(next));
-      this.activeDoc().doc = this.doc;
-      this.pruneFeatureUiState();
-      await this.rebuild();
-    } finally {
-      this.suppressUndo = false;
-    }
-    notify.info('已重做');
+    await this.undoMgr.redo();
   }
 
   // ============================================================
@@ -1610,9 +1583,9 @@ export class App implements AppApi {
   // 草图
   // ============================================================
   startSketch(plane: PlaneRef | SketchPlane): void {
-    // 这里保持手写 pushUndo（不走 mutate）：`doc.nextName` 会**递增名称计数器**，
+    // 这里保持手写压栈（不走 mutate）：`doc.nextName` 会**递增名称计数器**，
     // 必须发生在压栈之后，否则撤销后计数器不回退。顺序敏感，故不套用 mutate。
-    this.pushUndo();
+    this.undoMgr.push();
     const f = newSketchFeature(typeof plane === 'string' ? plane : 'custom');
     if (typeof plane !== 'string') f.params.customPlane = plane;
     f.name = this.doc.nextName('sketch');

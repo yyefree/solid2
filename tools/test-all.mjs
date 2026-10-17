@@ -36,6 +36,7 @@ const SUITES = [
   { name: '热键层（解析/覆盖存储）', file: 'tools/hotkeys-test.ts' },
   { name: '草图编辑历史（撤销/重做栈）', file: 'tools/sketch-history-test.ts' },
   { name: '选中态唯一真源（互斥/过滤器/悬空剪除）', file: 'tools/selection-store-test.ts' },
+  { name: '撤销/重做管理器（压栈/节流/suppress/换栈）', file: 'tools/undo-manager-test.ts' },
 ];
 
 let failed = 0;

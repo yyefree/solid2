@@ -1165,12 +1165,12 @@ const sketchSel = await evaluate(`(async () => {
     const skOf = () => app.editingSketch?.params.sketch;
     out.afterDraw_ents = skOf()?.entities.length ?? 0;
     const featBefore = app.doc.features.length;
-    const stackBefore = app.undoStack.length;
+    const stackBefore = app.undoDepth;
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
     await sleep(180);
     out.afterUndo_ents = skOf()?.entities.length ?? 0;
     out.undo_featSame = app.doc.features.length === featBefore;
-    out.undo_stackSame = app.undoStack.length === stackBefore;
+    out.undo_stackSame = app.undoDepth === stackBefore;
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
     await sleep(180);
     out.afterRedo_ents = skOf()?.entities.length ?? 0;
