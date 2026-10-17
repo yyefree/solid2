@@ -36,6 +36,7 @@ import { SelectionStore, type GeomKind, type SelectionFilter } from './selection
 import { Assembly, mateRefLabel, type MateRef, type Component } from './assembly';
 import { Drawing, generateStandardViews, type ViewKind } from './drawing';
 import { openSectionProperties } from '../ui/sectionprops-dialog';
+import type { AppApi } from './app-api';
 
 export type AppMode = 'model' | 'sketch' | 'assembly' | 'drawing';
 
@@ -97,7 +98,7 @@ export interface StatusInfo {
   detail?: string;
 }
 
-export class App {
+export class App implements AppApi {
   readonly viewport: Viewport;
   doc = new CadDocument();
   shapeView: ShapeView | null = null;

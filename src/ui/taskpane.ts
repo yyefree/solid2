@@ -5,7 +5,7 @@
  */
 import { el, clear } from './dom';
 import { icon } from './icons';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 
 const TASK_TABS = [
   { id: 'resources', ic: 'about', label: 'SolidWorks 资源' },
@@ -19,7 +19,7 @@ function hint(text: string): HTMLElement {
   return el('div', { class: 'hint', text });
 }
 
-function renderResources(_app: App): HTMLElement {
+function renderResources(_app: AppApi): HTMLElement {
   const wrap = el('div', { class: 'col tp-resources' });
   wrap.appendChild(el('div', { class: 'tp-logo', text: 'Solid2' }));
   wrap.appendChild(el('div', { class: 'hint', text: '参数化三维 CAD · OpenCASCADE 几何内核（WebAssembly）· 界面按 SolidWorks 布局复刻。' }));
@@ -37,7 +37,7 @@ function renderResources(_app: App): HTMLElement {
   return wrap;
 }
 
-function renderPalette(app: App): HTMLElement {
+function renderPalette(app: AppApi): HTMLElement {
   if (app.mode === 'drawing' && app.drawing) {
     const wrap = el('div', { class: 'col' });
     wrap.appendChild(el('div', { class: 'tp-res-h', text: `视图调色板（${app.drawing.views.length} 个视图）` }));
@@ -52,7 +52,7 @@ function renderPalette(app: App): HTMLElement {
   return hint('在「工程图」模式下，可从视图调色板把视图拖入图纸。');
 }
 
-function renderCustomProps(app: App): HTMLElement {
+function renderCustomProps(app: AppApi): HTMLElement {
   const wrap = el('div', { class: 'col' });
   wrap.appendChild(el('div', { class: 'tp-res-h', text: '自定义属性' }));
   const tbl = el('div', { class: 'kv' });
@@ -70,7 +70,7 @@ function renderCustomProps(app: App): HTMLElement {
   return wrap;
 }
 
-export function buildTaskPane(app: App, host: HTMLElement): void {
+export function buildTaskPane(app: AppApi, host: HTMLElement): void {
   const content = el('div', { class: 'tp-content' });
   const strip = el('div', { class: 'tp-strip' });
   host.append(content, strip);
@@ -113,7 +113,7 @@ export function buildTaskPane(app: App, host: HTMLElement): void {
 }
 
 /** 左侧「配置管理器」面板（SolidWorks ConfigurationManager）—— 极简实现 */
-export function buildConfigPanel(app: App, host: HTMLElement): void {
+export function buildConfigPanel(app: AppApi, host: HTMLElement): void {
   const render = () => {
     clear(host);
     const wrap = el('div', { class: 'col' });

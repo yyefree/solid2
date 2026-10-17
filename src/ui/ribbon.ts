@@ -8,7 +8,7 @@
  */
 import { el, clear } from './dom';
 import { icon } from './icons';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { notify } from './toast';
 import { featureDialogs } from './dialogs';
 import { surfaceDialogs } from './surface-dialogs';
@@ -24,9 +24,9 @@ export interface RButton {
   icon: string;
   big?: boolean;
   tip?: string;
-  run: (app: App) => void;
-  enabled?: (app: App) => boolean;
-  active?: (app: App) => boolean;
+  run: (app: AppApi) => void;
+  enabled?: (app: AppApi) => boolean;
+  active?: (app: AppApi) => boolean;
 }
 
 export type RItem = RButton | 'sep';
@@ -502,7 +502,7 @@ export function ribbonController(): RibbonController | null {
 /** makeButton 执行成功后回调（记录上一命令）——模块级 setter，renderRibbon 里赋值 */
 let setLastCmd: (id: string) => void = () => {};
 
-export function renderRibbon(app: App, tabsHost: HTMLElement, panelHost: HTMLElement): RibbonController {
+export function renderRibbon(app: AppApi, tabsHost: HTMLElement, panelHost: HTMLElement): RibbonController {
   const tabs = buildTabs();
   const prefs = loadPrefs();
   const hidden = new Set<string>(prefs.hidden.filter((id) => tabs.some((t) => t.id === id)));
@@ -675,7 +675,7 @@ export function renderRibbon(app: App, tabsHost: HTMLElement, panelHost: HTMLEle
   return controller;
 }
 
-function makeButton(app: App, item: RButton): HTMLElement {
+function makeButton(app: AppApi, item: RButton): HTMLElement {
   const enabled = item.enabled ? item.enabled(app) : true;
   const active = item.active ? item.active(app) : false;
   const btn = el(

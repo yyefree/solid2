@@ -4,7 +4,7 @@
  * 结构：顶部一条 4 个图标的「快捷方式栏」+ 下方命令列表（可带子菜单）。
  * 菜单内容随上下文变化：图形区空白 / 选中面 / 选中边 / 设计树上的特征 / 设计树空白。
  */
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { openContextMenu, type PopupItem } from './popup';
 import { featureDialogs } from './dialogs';
 import { openMeasure } from './measure';
@@ -16,7 +16,7 @@ import { openViewSettings } from './headsup';
 const D = featureDialogs;
 
 /** 图形区右键 */
-export function installContextMenu(app: App, host: HTMLElement): () => void {
+export function installContextMenu(app: AppApi, host: HTMLElement): () => void {
   const onCtx = (e: MouseEvent) => {
     e.preventDefault();
     const faces = app.selection.faces.length;
@@ -79,7 +79,7 @@ export function installContextMenu(app: App, host: HTMLElement): () => void {
   return () => host.removeEventListener('contextmenu', onCtx);
 }
 
-function viewItems(app: App): PopupItem[] {
+function viewItems(app: AppApi): PopupItem[] {
   return [
     { label: '前视', icon: 'front', sc: sc('view.front'), run: () => app.setView('front') },
     { label: '后视', icon: 'front', sc: sc('view.back'), run: () => app.setView('back') },
@@ -91,7 +91,7 @@ function viewItems(app: App): PopupItem[] {
   ];
 }
 
-function displayStyleItems(app: App): PopupItem[] {
+function displayStyleItems(app: AppApi): PopupItem[] {
   const mk = (label: string, ic: string, style: string): PopupItem => ({
     label,
     icon: ic,
@@ -107,7 +107,7 @@ function displayStyleItems(app: App): PopupItem[] {
   ];
 }
 
-function hideShowItems(app: App): PopupItem[] {
+function hideShowItems(app: AppApi): PopupItem[] {
   return [
     { label: '基准面', icon: 'plane', checked: app.showPlanes, run: () => app.togglePlanes(!app.showPlanes) },
     { label: '网格', icon: 'grid', checked: app.showGrid, run: () => app.toggleGrid(!app.showGrid) },
@@ -115,7 +115,7 @@ function hideShowItems(app: App): PopupItem[] {
   ];
 }
 
-function sceneItems(app: App): PopupItem[] {
+function sceneItems(app: AppApi): PopupItem[] {
   return (['默认', '单色灰', '深色', '白色'] as const).map((n) => ({
     label: n,
     icon: 'applyScene',
@@ -124,7 +124,7 @@ function sceneItems(app: App): PopupItem[] {
   }));
 }
 
-function moreCommandsItems(app: App): PopupItem[] {
+function moreCommandsItems(app: AppApi): PopupItem[] {
   return [
     { label: '快捷键一览…', icon: 'help', run: () => window.dispatchEvent(new CustomEvent('solid2:help')) },
     { label: '视图设置…', icon: 'viewSettings', run: () => openViewSettings(app) },
@@ -134,7 +134,7 @@ function moreCommandsItems(app: App): PopupItem[] {
   ];
 }
 
-function blankItems(app: App): PopupItem[] {
+function blankItems(app: AppApi): PopupItem[] {
   return [
     { label: '缩放至区域…', icon: 'zoomArea', run: () => notify.info('请用顶部视图工具栏的「缩放至区域」按钮') },
     { label: '上一视图', icon: 'prevView', sc: sc('view.prevView'), run: () => app.prevView() },
@@ -165,7 +165,7 @@ function blankItems(app: App): PopupItem[] {
  * 「选择其他…」子菜单：列出该屏幕位置射线穿过的所有候选面（SolidWorks 同名功能）。
  * 只有候选 ≥ 1（即确实有其它面可重选）时才出现。
  */
-function selectOtherItems(app: App, x: number, y: number): PopupItem[] {
+function selectOtherItems(app: AppApi, x: number, y: number): PopupItem[] {
   const cands = app.pickCandidateFaces(x, y);
   const cur = app.selection.faces;
   return [
@@ -185,7 +185,7 @@ function selectOtherItems(app: App, x: number, y: number): PopupItem[] {
   ];
 }
 
-function faceItems(app: App, x: number, y: number): PopupItem[] {
+function faceItems(app: AppApi, x: number, y: number): PopupItem[] {
   const n = app.selection.faces.length;
   const others = app.pickCandidateFaces(x, y).length;
   return [
@@ -208,7 +208,7 @@ function faceItems(app: App, x: number, y: number): PopupItem[] {
   ];
 }
 
-function edgeItems(app: App): PopupItem[] {
+function edgeItems(app: AppApi): PopupItem[] {
   const n = app.selection.edges.length;
   return [
     { label: `已选中 ${n} 条边`, icon: 'check', disabled: true },
@@ -225,7 +225,7 @@ function edgeItems(app: App): PopupItem[] {
   ];
 }
 
-function sketchItems(app: App): PopupItem[] {
+function sketchItems(app: AppApi): PopupItem[] {
   return [
     { label: '智能尺寸', icon: 'smartDim', sc: sc('sk.dim'), run: () => D.smartDimension(app) },
     { label: '构造几何线', icon: 'construction', run: () => D.toggleConstruction(app) },
@@ -258,7 +258,7 @@ function sketchItems(app: App): PopupItem[] {
 // ============================================================
 // 设计树右键
 // ============================================================
-export function openFeatureContextMenu(app: App, id: string, x: number, y: number): void {
+export function openFeatureContextMenu(app: AppApi, id: string, x: number, y: number): void {
   const f = app.doc.getFeature(id);
   if (!f) return;
   const isSketch = f.type === 'sketch';
@@ -307,7 +307,7 @@ export function openFeatureContextMenu(app: App, id: string, x: number, y: numbe
   );
 }
 
-export function openTreeContextMenu(app: App, x: number, y: number): void {
+export function openTreeContextMenu(app: AppApi, x: number, y: number): void {
   openContextMenu(
     [
       { icon: 'sketch', label: '草图绘制', run: () => app.startSketch('front') },
@@ -353,7 +353,7 @@ export function openTreeContextMenu(app: App, x: number, y: number): void {
   );
 }
 
-function editFeature(app: App, id: string): void {
+function editFeature(app: AppApi, id: string): void {
   const f = app.doc.getFeature(id);
   if (!f) return;
   if (f.type === 'sketch' && app.mode !== 'sketch') {
@@ -363,7 +363,7 @@ function editFeature(app: App, id: string): void {
   notify.info(`已选中「${f.name}」，可在左侧属性管理器修改参数`);
 }
 
-function renameFeature(app: App, id: string): void {
+function renameFeature(app: AppApi, id: string): void {
   const f = app.doc.getFeature(id);
   if (!f) return;
   promptText('重命名特征', '名称', f.name, (v) => {

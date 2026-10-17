@@ -9,12 +9,12 @@
  */
 import { el, clear } from './dom';
 import { icon } from './icons';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { FEATURE_LABEL, FEATURE_ICON } from '../doc/types';
 import { notify, confirmDialog } from './toast';
 import { openFeatureContextMenu, openTreeContextMenu } from './contextmenu';
 
-export function buildFeatureTree(app: App, host: HTMLElement): void {
+export function buildFeatureTree(app: AppApi, host: HTMLElement): void {
   const render = () => {
     clear(host);
     const tree = el('div', { class: 'tree' });

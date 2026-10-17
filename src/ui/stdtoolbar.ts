@@ -5,7 +5,7 @@
  */
 import { el, clear } from './dom';
 import { icon } from './icons';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { openViewSettings } from './headsup';
 
 interface StdBtn {
@@ -13,8 +13,8 @@ interface StdBtn {
   label: string;
   ic: string;
   tip: string;
-  run: (app: App) => void;
-  enabled?: (app: App) => boolean;
+  run: (app: AppApi) => void;
+  enabled?: (app: AppApi) => boolean;
 }
 
 const BUTTONS: (StdBtn | 'sep')[] = [
@@ -31,7 +31,7 @@ const BUTTONS: (StdBtn | 'sep')[] = [
   { id: 'help', label: '帮助', ic: 'help', tip: '快捷键一览', run: () => window.dispatchEvent(new CustomEvent('solid2:help')) },
 ];
 
-export function buildStdToolbar(app: App, host: HTMLElement): void {
+export function buildStdToolbar(app: AppApi, host: HTMLElement): void {
   const render = () => {
     clear(host);
     for (const b of BUTTONS) {

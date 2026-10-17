@@ -2,11 +2,11 @@
  * 属性管理器（右侧面板）。
  */
 import { el, clear, numberField, checkField, section } from './dom';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { FEATURE_LABEL } from '../doc/types';
 import { featureDialogs } from './dialogs';
 
-export function buildPropertyPanel(app: App, host: HTMLElement): void {
+export function buildPropertyPanel(app: AppApi, host: HTMLElement): void {
   const render = () => {
     clear(host);
     if (app.mode === 'sketch') { renderSketchProps(app, host); return; }
@@ -21,7 +21,7 @@ export function buildPropertyPanel(app: App, host: HTMLElement): void {
   app.on('params', render);
 }
 
-function renderModelProps(app: App, host: HTMLElement) {
+function renderModelProps(app: AppApi, host: HTMLElement) {
   let sel = app.selectedFeatureId ? app.doc.getFeature(app.selectedFeatureId) ?? null : null;
   if (!sel && app.doc.features.length > 0) sel = app.doc.features[app.doc.features.length - 1];
   if (!sel) {
@@ -160,7 +160,7 @@ function renderModelProps(app: App, host: HTMLElement) {
   host.appendChild(wrap);
 }
 
-function renderSketchProps(app: App, host: HTMLElement) {
+function renderSketchProps(app: AppApi, host: HTMLElement) {
   const sk = app.editingSketch;
   if (!sk) return;
   const wrap = el('div', { class: 'col' });
@@ -179,7 +179,7 @@ function renderSketchProps(app: App, host: HTMLElement) {
   host.appendChild(wrap);
 }
 
-function renderAssemblyProps(app: App, host: HTMLElement) {
+function renderAssemblyProps(app: AppApi, host: HTMLElement) {
   const a = app.assembly;
   if (!a) return;
   const wrap = el('div', { class: 'col' });
@@ -202,7 +202,7 @@ function renderAssemblyProps(app: App, host: HTMLElement) {
   host.appendChild(wrap);
 }
 
-function renderDrawingProps(app: App, host: HTMLElement) {
+function renderDrawingProps(app: AppApi, host: HTMLElement) {
   const d = app.drawing;
   if (!d) return;
   const wrap = el('div', { class: 'col' });

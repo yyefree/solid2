@@ -10,7 +10,7 @@
  */
 import { el } from './dom';
 import { icon } from './icons';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { featureDialogs } from './dialogs';
 import { surfaceDialogs } from './surface-dialogs';
 import { openMeasure } from './measure';
@@ -33,7 +33,7 @@ interface MenuDef {
   items: () => PopupItem[];
 }
 
-export function buildMenubar(app: App, host: HTMLElement): void {
+export function buildMenubar(app: AppApi, host: HTMLElement): void {
   // ---------- 产品标志按钮 ----------
   const brand = el(
     'button',
@@ -162,7 +162,7 @@ export function buildMenubar(app: App, host: HTMLElement): void {
 // ============================================================
 // 各菜单内容
 // ============================================================
-function fileMenu(app: App): PopupItem[] {
+function fileMenu(app: AppApi): PopupItem[] {
   return [
     { label: '新建', icon: 'new', sc: sc('file.new'), run: () => app.newDocument('model') },
     { label: '打开…', icon: 'open', sc: sc('file.open'), run: () => app.openProject() },
@@ -198,7 +198,7 @@ function fileMenu(app: App): PopupItem[] {
   ];
 }
 
-function editMenu(app: App): PopupItem[] {
+function editMenu(app: AppApi): PopupItem[] {
   return [
     { label: '撤销', icon: 'undo', sc: sc('edit.undo'), disabled: !app.canUndo, run: () => app.undo() },
     { label: '重做', icon: 'redo', sc: sc('edit.redo'), disabled: !app.canRedo, run: () => app.redo() },
@@ -227,7 +227,7 @@ function editMenu(app: App): PopupItem[] {
   ];
 }
 
-function viewMenu(app: App): PopupItem[] {
+function viewMenu(app: AppApi): PopupItem[] {
   const mk = (label: string, ic: string, style: string): PopupItem => ({
     label,
     icon: ic,
@@ -313,7 +313,7 @@ function viewMenu(app: App): PopupItem[] {
   ];
 }
 
-function insertMenu(app: App): PopupItem[] {
+function insertMenu(app: AppApi): PopupItem[] {
   return [
     { label: '草图绘制', icon: 'sketch', run: () => app.startSketch('front') },
     { label: '上视基准面草图', icon: 'originPlane', run: () => app.startSketch('top') },
@@ -442,7 +442,7 @@ function insertMenu(app: App): PopupItem[] {
   ];
 }
 
-function toolsMenu(app: App): PopupItem[] {
+function toolsMenu(app: AppApi): PopupItem[] {
   return [
     { label: '参数表…', icon: 'smartDim', run: () => D.parameterTable(app) },
     { label: '表达式…', icon: 'relation', disabled: !app.doc.features.length, run: () => D.featureExpression(app) },
@@ -502,7 +502,7 @@ function toolsMenu(app: App): PopupItem[] {
   ];
 }
 
-function windowMenu(app: App): PopupItem[] {
+function windowMenu(app: AppApi): PopupItem[] {
   return [
     { label: '零件', icon: 'part', checked: app.mode === 'model', run: () => app.setMode('model') },
     { label: '装配体', icon: 'assembly', checked: app.mode === 'assembly', run: () => app.setMode('assembly') },
@@ -518,7 +518,7 @@ function windowMenu(app: App): PopupItem[] {
   ];
 }
 
-function helpMenu(app: App): PopupItem[] {
+function helpMenu(app: AppApi): PopupItem[] {
   return [
     { label: '快捷键一览…', icon: 'help', run: () => showHotkeyHelp(app) },
     { label: 'AI 语法帮助…', icon: 'aiPrompt', run: () => openAiHelp() },
@@ -534,7 +534,7 @@ function helpMenu(app: App): PopupItem[] {
 // ============================================================
 // 辅助
 // ============================================================
-function showHotkeyHelp(app: App): void {
+function showHotkeyHelp(app: AppApi): void {
   void app;
   const groups = hotkeyGroups();
   const body = el('div', { class: 'hk-help' });

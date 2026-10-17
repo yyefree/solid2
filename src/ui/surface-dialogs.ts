@@ -9,7 +9,7 @@
 import { el, numberField, selectField, checkField } from './dom';
 import { modal, notify } from './toast';
 import { newId } from '../sketch/types';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import type {
   SurfaceExtrudeFeature,
   SurfaceRevolveFeature,
@@ -21,12 +21,12 @@ import type {
 } from '../doc/types';
 
 /** 草图下拉选项 */
-function sketchOptions(app: App): { value: string; label: string }[] {
+function sketchOptions(app: AppApi): { value: string; label: string }[] {
   return app.doc.sketchFeatures().map((s, i) => ({ value: s.id, label: `${s.name}（草图 ${i + 1}）` }));
 }
 
 /** 默认草图：正在编辑的草图，否则当前选中/退出的草图，最后兜底最后一个草图 */
-function defaultSketchId(app: App): string {
+function defaultSketchId(app: AppApi): string {
   const sketches = app.doc.sketchFeatures();
   if (app.editingSketch) return app.editingSketch.id;
   const a = app.activeSketchFeature;
@@ -34,7 +34,7 @@ function defaultSketchId(app: App): string {
   return sketches[sketches.length - 1]?.id ?? '';
 }
 
-function openSurfaceExtrude(app: App): void {
+function openSurfaceExtrude(app: AppApi): void {
   const sketches = app.doc.sketchFeatures();
   if (!sketches.length) { notify.err('没有可用草图'); return; }
   const body = el('div', { class: 'col' });
@@ -74,7 +74,7 @@ function openSurfaceExtrude(app: App): void {
   });
 }
 
-function openSurfaceRevolve(app: App): void {
+function openSurfaceRevolve(app: AppApi): void {
   const sketches = app.doc.sketchFeatures();
   if (!sketches.length) { notify.err('没有可用草图'); return; }
   const body = el('div', { class: 'col' });
@@ -121,7 +121,7 @@ function openSurfaceRevolve(app: App): void {
   });
 }
 
-function openSurfacePlanar(app: App): void {
+function openSurfacePlanar(app: AppApi): void {
   const sketches = app.doc.sketchFeatures();
   if (!sketches.length) { notify.err('没有可用草图'); return; }
   const body = el('div', { class: 'col' });
@@ -152,7 +152,7 @@ function openSurfacePlanar(app: App): void {
 }
 
 /** 放样曲面：多选截面草图（勾选顺序即放样顺序） */
-function openSurfaceLoft(app: App): void {
+function openSurfaceLoft(app: AppApi): void {
   const sketches = app.doc.sketchFeatures();
   if (sketches.length < 2) { notify.err('至少需要两个草图作为截面'); return; }
   const body = el('div', { class: 'col' });
@@ -195,7 +195,7 @@ function openSurfaceLoft(app: App): void {
 }
 
 /** 扫描曲面：轮廓草图沿路径草图扫成曲面 */
-function openSurfaceSweep(app: App): void {
+function openSurfaceSweep(app: AppApi): void {
   const sketches = app.doc.sketchFeatures();
   if (sketches.length < 2) { notify.err('至少需要两个草图（轮廓 + 路径）'); return; }
   const opts = sketchOptions(app);
@@ -231,7 +231,7 @@ function openSurfaceSweep(app: App): void {
 }
 
 /** 裁剪曲面：用一个平面按轴裁剪所选曲面体，保留一侧 */
-function openSurfaceTrim(app: App): void {
+function openSurfaceTrim(app: AppApi): void {
   const surfaces = app.doc.surfaceFeatures();
   if (!surfaces.length) { notify.err('没有可裁剪的曲面体'); return; }
   const body = el('div', { class: 'col' });
@@ -289,7 +289,7 @@ function openSurfaceTrim(app: App): void {
 }
 
 /** 缝合曲面：把多个曲面体的相邻面合并成一个壳 */
-function openSurfaceSew(app: App): void {
+function openSurfaceSew(app: AppApi): void {
   const surfaces = app.doc.surfaceFeatures();
   if (surfaces.length < 2) { notify.err('至少需要两个曲面体'); return; }
   const body = el('div', { class: 'col' });

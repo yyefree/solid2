@@ -9,7 +9,7 @@
  *   - 下方「主页」按钮 → 回到等轴测默认视图；
  *   - 外围叠加 **指北罗盘**（N/E/S/W + 30° 刻度环），拖动罗盘可绕竖直轴旋转模型。
  */
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import * as THREE from 'three';
 
 const SIZE = 150; // svg 画布边长
@@ -56,7 +56,7 @@ const EDGES: [number, number][] = [
   [0, 4], [1, 5], [2, 6], [3, 7],
 ];
 
-export function buildViewcube(app: App, host: HTMLElement): void {
+export function buildViewcube(app: AppApi, host: HTMLElement): void {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width', String(SIZE));
   svg.setAttribute('height', String(SIZE));

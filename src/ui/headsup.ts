@@ -8,7 +8,7 @@
 import { el } from './dom';
 import { icon } from './icons';
 import * as THREE from 'three';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { openPopup, type PopupItem } from './popup';
 import { notify, modal } from './toast';
 import { featureDialogs } from './dialogs';
@@ -28,7 +28,7 @@ const APPEARANCE_COLORS: { label: string; hex: number }[] = [
   { label: '黑色', hex: 0x2b3542 },
 ];
 
-export function buildHeadsUp(app: App, host: HTMLElement): void {
+export function buildHeadsUp(app: AppApi, host: HTMLElement): void {
   const bar = el('div', { class: 'headsup' });
 
   const btn = (id: string, label: string, ic: string, onClick: (e: MouseEvent) => void, extra = '') => {
@@ -171,7 +171,7 @@ export function buildHeadsUp(app: App, host: HTMLElement): void {
 }
 
 /** 视图定向（SolidWorks: 空格键）—— 命名视图 + 缩放比例 */
-export function openViewOrientation(app: App, at?: { x: number; y: number }): void {
+export function openViewOrientation(app: AppApi, at?: { x: number; y: number }): void {
   const pos = at ?? { x: window.innerWidth / 2 - 110, y: 120 };
   openPopup(
     [
@@ -196,7 +196,7 @@ export function openViewOrientation(app: App, at?: { x: number; y: number }): vo
 }
 
 /** 视图设置对话框（SolidWorks「视图设置」） */
-export function openViewSettings(app: App): void {
+export function openViewSettings(app: AppApi): void {
   const row = (label: string, checked: boolean, onChange: (v: boolean) => void) => {
     const inp = el('input', { type: 'checkbox', checked }) as HTMLInputElement;
     inp.addEventListener('change', () => onChange(inp.checked));
@@ -266,7 +266,7 @@ export function openViewSettings(app: App): void {
 // ============================================================
 // 缩放至区域
 // ============================================================
-function startZoomArea(app: App): void {
+function startZoomArea(app: AppApi): void {
   const canvas = app.viewport.renderer.domElement;
   const wrap = canvas.parentElement;
   if (!wrap) return;
@@ -348,7 +348,7 @@ function startZoomArea(app: App): void {
 }
 
 /** 供上下文菜单复用的显示样式项 */
-export function displayStyleItems(app: App): PopupItem[] {
+export function displayStyleItems(app: AppApi): PopupItem[] {
   const mk = (label: string, ic: string, style: string): PopupItem => ({
     label,
     icon: ic,
@@ -364,7 +364,7 @@ export function displayStyleItems(app: App): PopupItem[] {
 }
 
 /** 供上下文菜单复用的「参考几何体」项 */
-export function referenceItems(app: App): PopupItem[] {
+export function referenceItems(app: AppApi): PopupItem[] {
   return [
     { label: '基准面', icon: 'plane', run: () => featureDialogs.referencePlane(app) },
     { label: '基准轴', icon: 'axis', disabled: true },
@@ -380,7 +380,7 @@ export function referenceItems(app: App): PopupItem[] {
  * 切换「旋转视图」模式（SolidWorks 同名工具）。
  * 与中键旋转同一套 OrbitControls，区别是：左键在模式内也能旋转，Esc 退出。
  */
-export function setRotateMode(app: App, on: boolean): void {
+export function setRotateMode(app: AppApi, on: boolean): void {
   const canvas = app.viewport.renderer.domElement;
   const wrap = canvas.parentElement;
   if (!wrap) return;
@@ -397,7 +397,7 @@ export function setRotateMode(app: App, on: boolean): void {
 }
 
 /** 旋转视图模式下的 Esc 退出（在 buildHeadsUp 尾部调用） */
-export function installRotateModeEsc(app: App, onActive: () => boolean, off: () => void): void {
+export function installRotateModeEsc(app: AppApi, onActive: () => boolean, off: () => void): void {
   document.addEventListener(
     'keydown',
     (e) => {

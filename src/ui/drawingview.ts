@@ -6,9 +6,9 @@
  */
 import { el, clear } from './dom';
 import { notify } from './toast';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 
-export function buildDrawingView(app: App, host: HTMLElement): void {
+export function buildDrawingView(app: AppApi, host: HTMLElement): void {
   const render = () => {
     clear(host);
     const d = app.drawing;

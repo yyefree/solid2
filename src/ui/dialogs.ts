@@ -2,9 +2,9 @@
  * 特征对话框集合 —— 每个命令对应一个交互或确认流程。
  *
  * 原则：简单参数用 promptNumber，多参数用 modal 表单。
- * 所有对话框只操作 App，不直接碰 DOM。
+ * 所有对话框只操作 AppApi，不直接碰 DOM。
  */
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { notify, promptNumber, modal, tableModal, confirmDialog } from './toast';
 import { formatLength, formatArea, formatVolume } from '../core/units';
 import { el, numberField, selectField, checkField, clear, section } from './dom';
@@ -64,7 +64,7 @@ function thinGroup() {
 
 export const featureDialogs = {
   // ---------------- 草图 ----------------
-  sketchOnFace(app: App): void {
+  sketchOnFace(app: AppApi): void {
     const infos = app.selectedFaceInfos();
     if (infos.length !== 1) { notify.info('请先在模型中选中一个平面'); return; }
     const info = infos[0];
@@ -72,29 +72,29 @@ export const featureDialogs = {
     app.startSketch(pl);
   },
 
-  addRelation(app: App, type: string): void {
+  addRelation(app: AppApi, type: string): void {
     app.sketch.addRelation(type as any);
   },
 
-  smartDimension(app: App): void {
+  smartDimension(app: AppApi): void {
     app.sketch.smartDimension();
   },
 
-  toggleConstruction(app: App): void {
+  toggleConstruction(app: AppApi): void {
     app.sketch.toggleConstruction();
   },
 
-  deleteSketchSelection(app: App): void {
+  deleteSketchSelection(app: AppApi): void {
     app.sketch.deleteSelection();
   },
 
   /** 镜像实体：以选中的直线为镜像轴，镜像其余选中的实体 */
-  mirrorEntities(app: App): void {
+  mirrorEntities(app: AppApi): void {
     app.sketch.mirrorSelection();
   },
 
   /** 默认绑定草图：正在编辑的草图 > 当前选中/退出的草图 > 最后一个草图 */
-  pickSketchId(app: App): string {
+  pickSketchId(app: AppApi): string {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) return '';
     const a = app.activeSketchFeature;
@@ -104,7 +104,7 @@ export const featureDialogs = {
 
   // ---------------- 基于草图 ----------------
   /** 拉伸凸台 / 切除（SW 式：起始条件 + 方向1终止条件 + 方向2） */
-  extrude(app: App, operation: 'add' | 'cut'): void {
+  extrude(app: AppApi, operation: 'add' | 'cut'): void {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) { notify.err('没有可用草图'); return; }
     const sketchId = app.editingSketch?.id ?? featureDialogs.pickSketchId(app);
@@ -220,7 +220,7 @@ export const featureDialogs = {
     });
   },
 
-  revolve(app: App): void {
+  revolve(app: AppApi): void {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) { notify.err('没有可用草图'); return; }
     const sketchId = app.editingSketch?.id ?? featureDialogs.pickSketchId(app);
@@ -251,7 +251,7 @@ export const featureDialogs = {
     });
   },
 
-  loft(app: App): void {
+  loft(app: AppApi): void {
     const sketches = app.doc.sketchFeatures();
     if (sketches.length < 2) { notify.err('至少需要两个草图'); return; }
     const f: LoftFeature = {
@@ -262,7 +262,7 @@ export const featureDialogs = {
   },
 
   /** 扫描（SW 式：选轮廓草图 + 路径草图 + 可选薄壁特征） */
-  sweep(app: App): void {
+  sweep(app: AppApi): void {
     const sketches = app.doc.sketchFeatures();
     if (sketches.length < 2) { notify.err('至少需要两个草图（轮廓 + 路径）'); return; }
     const opts = sketches.map((s, i) => ({ value: s.id, label: `${i + 1}. ${s.name}` }));
@@ -299,7 +299,7 @@ export const featureDialogs = {
 
   // ---------------- 曲线族 ----------------
   /** 弹簧：圆截面沿螺旋线放样成实体 */
-  spring(app: App): void {
+  spring(app: AppApi): void {
     const hasModel = app.hasModel;
     const body = el('div', { class: 'col' });
     const ox = numberField('轴起点 X', 0, () => {}, { step: 1, unit: 'mm' });
@@ -381,7 +381,7 @@ export const featureDialogs = {
   },
 
   /** 涡状线盘簧（发条）：平面阿基米德螺线加厚成闭合带材，再沿法向拉伸 */
-  spiral(app: App): void {
+  spiral(app: AppApi): void {
     const hasModel = app.hasModel;
     const body = el('div', { class: 'col' });
     const planeRow = selectField('所在平面', 'front', [
@@ -453,7 +453,7 @@ export const featureDialogs = {
   },
 
   // ---------------- 基本体 ----------------
-  primitive(app: App, kind: PrimitiveFeature['params']['kind']): void {
+  primitive(app: AppApi, kind: PrimitiveFeature['params']['kind']): void {
     const defaults: Record<string, number[]> = {
       box: [20, 20, 20], cylinder: [10, 30], sphere: [15], cone: [12, 0, 25], torus: [20, 5],
     };
@@ -492,7 +492,7 @@ export const featureDialogs = {
   },
 
   // ---------------- 工程特征 ----------------
-  fillet(app: App): void {
+  fillet(app: AppApi): void {
     const edges = app.selectedEdgeInfos();
     if (!edges.length) { notify.err('请先选中边'); return; }
     const body = el('div', { class: 'col' });
@@ -528,7 +528,7 @@ export const featureDialogs = {
   },
 
   /** 缩放（SolidWorks「缩放比例」）：统一或非均匀，以指定点为不动点 */
-  scale(app: App): void {
+  scale(app: AppApi): void {
     if (!app.hasModel) { notify.err('请先创建实体'); return; }
     const bb = app.currentModel()?.bbox;
     const c: [number, number, number] = bb
@@ -588,7 +588,7 @@ export const featureDialogs = {
   },
 
   /** 分割（SolidWorks「分割」）：用一个基准面把实体切开 */
-  split(app: App): void {
+  split(app: AppApi): void {
     if (!app.hasModel) { notify.err('请先创建实体'); return; }
     const body = el('div', { class: 'col' });
     const planeRow = selectField('切割基准面', 'front', [
@@ -630,7 +630,7 @@ export const featureDialogs = {
   },
 
   /** 移动/复制实体（SolidWorks「移动/复制实体」）：先绕轴旋转，再平移；可复制多份 */
-  moveBody(app: App): void {
+  moveBody(app: AppApi): void {
     if (!app.hasModel) { notify.err('请先创建实体'); return; }
     const bodyCount = app.modelSummary().solids;
     const body = el('div', { class: 'col' });
@@ -694,7 +694,7 @@ export const featureDialogs = {
   },
 
   /** 删除实体（SolidWorks「删除实体」）：从多实体中移除指定实体 */
-  deleteBody(app: App): void {
+  deleteBody(app: AppApi): void {
     const count = app.modelSummary().solids;
     if (count < 1) { notify.err('请先创建实体'); return; }
     const body = el('div', { class: 'col' });
@@ -727,7 +727,7 @@ export const featureDialogs = {
   },
 
   /** 组合（SolidWorks「组合」）：把多个实体按布尔操作合成一个 */
-  combine(app: App): void {
+  combine(app: AppApi): void {
     const count = app.modelSummary().solids;
     if (count < 2) { notify.err('组合至少需要 2 个实体（可先用「分割」或「移动/复制」产生多实体）'); return; }
     const body = el('div', { class: 'col' });
@@ -769,7 +769,7 @@ export const featureDialogs = {
     });
   },
 
-  chamfer(app: App): void {
+  chamfer(app: AppApi): void {
     const edges = app.selectedEdgeInfos();
     if (!edges.length) { notify.err('请先选中边'); return; }
     promptNumber('倒角', '距离 (mm)', 2, (d) => {
@@ -781,7 +781,7 @@ export const featureDialogs = {
     });
   },
 
-  shell(app: App): void {
+  shell(app: AppApi): void {
     const faces = app.selectedFaceInfos();
     if (!faces.length) { notify.err('请先选中要移除的面'); return; }
     promptNumber('抽壳', '厚度 (mm)', 2, (t) => {
@@ -795,7 +795,7 @@ export const featureDialogs = {
 
   // ---------------- 参考几何体 ----------------
   /** 异型孔向导：在选中的平面上打孔（简单孔 / 柱形沉头 / 锥形沉头 / 螺纹） */
-  holeWizard(app: App): void {
+  holeWizard(app: AppApi): void {
     const infos = app.selectedFaceInfos();
     if (infos.length !== 1) { notify.info('请先选中一个平面作为孔的放置面'); return; }
     const info = infos[0];
@@ -903,7 +903,7 @@ export const featureDialogs = {
   },
 
   /** 基准面：基于选中面或标准基准面创建（偏移 / 平行 / 垂直 / 成角度），并可直接在其上绘制草图 */
-  referencePlane(app: App): void {
+  referencePlane(app: AppApi): void {
     const infos = app.selectedFaceInfos();
     const hasFace = infos.length === 1;
     const body = el('div', { class: 'col' });
@@ -995,7 +995,7 @@ export const featureDialogs = {
 
   // ---------------- 工程特征（拔模/筋） ----------------
   /** 拔模：选中要拔模的面，再选中性面（标准基准面或第一个选中面） */
-  draft(app: App): void {
+  draft(app: AppApi): void {
     const faces = app.selectedFaceInfos();
     if (!faces.length) { notify.err('请先选中要拔模的面'); return; }
     const body = el('div', { class: 'col' });
@@ -1041,7 +1041,7 @@ export const featureDialogs = {
   },
 
   /** 筋：把草图的开口轮廓加厚成薄壁 */
-  rib(app: App): void {
+  rib(app: AppApi): void {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) { notify.err('没有可用草图'); return; }
     const sketchId = app.editingSketch?.id ?? featureDialogs.pickSketchId(app);
@@ -1071,7 +1071,7 @@ export const featureDialogs = {
   },
 
   // ---------------- 阵列 ----------------
-  linearPattern(app: App): void {
+  linearPattern(app: AppApi): void {
     const body = el('div', { class: 'col' });
     const dirRow = numberField('方向 X', 1, () => {}, {});
     const dirY = numberField('方向 Y', 0, () => {}, {});
@@ -1099,7 +1099,7 @@ export const featureDialogs = {
     });
   },
 
-  circularPattern(app: App): void {
+  circularPattern(app: AppApi): void {
     const body = el('div', { class: 'col' });
     const axO = numberField('轴原点 X', 0, () => {}, {});
     const axOY = numberField('轴原点 Y', 0, () => {}, {});
@@ -1131,7 +1131,7 @@ export const featureDialogs = {
     });
   },
 
-  mirror(app: App): void {
+  mirror(app: AppApi): void {
     const body = el('div', { class: 'col' });
     const pRow = numberField('平面上一点 X', 0, () => {}, {});
     const pY = numberField('Y', 0, () => {}, {});
@@ -1159,14 +1159,14 @@ export const featureDialogs = {
   },
 
   // ---------------- 装配 ----------------
-  insertComponent(app: App): void {
+  insertComponent(app: AppApi): void {
     const a = app.ensureAssembly();
     a.insertFromDocument(app.doc.clone(), `零件${a.components.length + 1}`);
     app.syncAssemblyScene();
     notify.ok('已插入当前零件');
   },
 
-  newComponent(app: App): void {
+  newComponent(app: AppApi): void {
     const a = app.ensureAssembly();
     const doc = new CadDocument();
     a.addComponent(doc, `零件${a.components.length + 1}`);
@@ -1174,7 +1174,7 @@ export const featureDialogs = {
     notify.ok('新建零件已添加');
   },
 
-  deleteComponent(app: App): void {
+  deleteComponent(app: AppApi): void {
     const a = app.ensureAssembly();
     if (!a.components.length) { notify.info('没有组件'); return; }
     const c = a.components[a.components.length - 1];
@@ -1185,7 +1185,7 @@ export const featureDialogs = {
     });
   },
 
-  mate(app: App): void {
+  mate(app: AppApi): void {
     const a = app.ensureAssembly();
     if (a.components.length < 2) { notify.info('至少需要两个组件'); return; }
     const types = ['coincident', 'concentric', 'distance', 'parallel', 'perpendicular', 'angle'] as const;
@@ -1250,14 +1250,14 @@ export const featureDialogs = {
     });
   },
 
-  solveAssembly(app: App): void {
+  solveAssembly(app: AppApi): void {
     const a = app.ensureAssembly();
     const r = a.solve();
     app.syncAssemblyScene();
     notify.info(`配合求解完成：${r.iterations} 轮，残差 ${r.residual.toExponential(1)}`);
   },
 
-  toggleFixed(app: App): void {
+  toggleFixed(app: AppApi): void {
     const a = app.ensureAssembly();
     if (!a.components.length) { notify.info('没有组件'); return; }
     const c = a.components[a.components.length - 1];
@@ -1266,7 +1266,7 @@ export const featureDialogs = {
     notify.ok(c.fixed ? '已固定' : '已浮动');
   },
 
-  interference(app: App): void {
+  interference(app: AppApi): void {
     const a = app.ensureAssembly();
     a.checkInterference().then((res) => {
       if (!res.length) { notify.ok('无干涉'); return; }
@@ -1274,7 +1274,7 @@ export const featureDialogs = {
     }).catch((e) => notify.err(`干涉检查失败：${(e as Error).message}`));
   },
 
-  explodeDialog(app: App): void {
+  explodeDialog(app: AppApi): void {
     const a = app.ensureAssembly();
     promptNumber('爆炸视图', '爆炸距离 (mm)', a.explodeAmount, (v) => {
       a.setExplode(v);
@@ -1283,23 +1283,23 @@ export const featureDialogs = {
   },
 
   // ---------------- 工程图 ----------------
-  generateDrawing(app: App, kinds: ViewKind[]): void {
+  generateDrawing(app: AppApi, kinds: ViewKind[]): void {
     app.generateDrawing(kinds);
   },
 
-  addDrawingView(app: App, kind: ViewKind): void {
+  addDrawingView(app: AppApi, kind: ViewKind): void {
     app.addDrawingView(kind);
   },
 
-  drawingDimension(app: App): void {
+  drawingDimension(app: AppApi): void {
     app.toggleDimensionMode();
   },
 
-  clearDrawingDims(app: App): void {
+  clearDrawingDims(app: AppApi): void {
     app.clearDrawingDims();
   },
 
-  toggleHiddenLines(app: App): void {
+  toggleHiddenLines(app: AppApi): void {
     const d = app.drawing;
     if (!d) return;
     d.showHidden = !d.showHidden;
@@ -1307,13 +1307,13 @@ export const featureDialogs = {
     notify.info(d.showHidden ? '隐藏线：显示' : '隐藏线：隐藏');
   },
 
-  showBOM(app: App): void {
+  showBOM(app: AppApi): void {
     const d = app.drawing;
     if (!d) { notify.info('没有工程图'); return; }
     tableModal('明细表', ['视图', '边数', '隐藏线'], d.views.map((v, i) => [v.label, String(v.edges.length), String(v.edges.filter(e => e.hidden).length)]));
   },
 
-  exportDrawingSVG(app: App): void {
+  exportDrawingSVG(app: AppApi): void {
     const d = app.drawing;
     if (!d) { notify.err('没有工程图'); return; }
     const svg = d.toSVG();
@@ -1321,11 +1321,11 @@ export const featureDialogs = {
     notify.ok('SVG 已导出');
   },
 
-  exportDrawingPNG(app: App): void {
+  exportDrawingPNG(app: AppApi): void {
     app.exportDrawingPNG().catch((e) => notify.err(`PNG 导出失败：${(e as Error).message}`));
   },
 
-  autoDimensionDrawing(app: App): void {
+  autoDimensionDrawing(app: AppApi): void {
     const d = app.drawing;
     if (!d || !d.views.length) { notify.info('请先生成工程图视图'); return; }
     const body = el('div', { class: 'col' });
@@ -1347,11 +1347,11 @@ export const featureDialogs = {
     });
   },
 
-  autoHoleDimension(app: App): void {
+  autoHoleDimension(app: AppApi): void {
     app.autoHoleDimensionDrawing();
   },
 
-  dimensionTolerance(app: App): void {
+  dimensionTolerance(app: AppApi): void {
     const d = app.drawing;
     const items: { viewId: string; dim: DimAnnotation; label: string }[] = [];
     if (d) {
@@ -1400,7 +1400,7 @@ export const featureDialogs = {
     });
   },
 
-  gdt(app: App): void {
+  gdt(app: AppApi): void {
     const d = app.drawing;
     if (!d || !d.views.length) {
       notify.info('请先生成工程图视图');
@@ -1437,11 +1437,11 @@ export const featureDialogs = {
     });
   },
 
-  toggleBOM(app: App): void {
+  toggleBOM(app: AppApi): void {
     app.toggleDrawingBOM();
   },
 
-  sheetSettings(app: App): void {
+  sheetSettings(app: AppApi): void {
     const d = app.drawing;
     if (!d) { notify.info('没有工程图'); return; }
     const s = d.sheet;
@@ -1466,7 +1466,7 @@ export const featureDialogs = {
   },
 
   // ---------------- 评估 ----------------
-  modelInfo(app: App): void {
+  modelInfo(app: AppApi): void {
     const cur = app.currentModel();
     if (!cur) { notify.info('没有模型'); return; }
     const st = cur.stats;
@@ -1480,7 +1480,7 @@ export const featureDialogs = {
     ]);
   },
 
-  geometryCheck(app: App): void {
+  geometryCheck(app: AppApi): void {
     if (!app.hasModel) { notify.err('没有实体'); return; }
     const errs = app.doc.features.filter(f => f.error);
     if (errs.length) {
@@ -1492,7 +1492,7 @@ export const featureDialogs = {
 
   // ---------------- 参数化（参考 FreeCAD Expressions） ----------------
   /** 参数表：全局命名参数 + 表达式，一处改动驱动整棵特征树 */
-  parameterTable(app: App): void {
+  parameterTable(app: AppApi): void {
     const host = el('div', { class: 'col' });
     const IDENT = /^[A-Za-z_\u3400-\u4dbf\u4e00-\u9fff][A-Za-z0-9_\u3400-\u4dbf\u4e00-\u9fff]*$/;
 
@@ -1600,7 +1600,7 @@ export const featureDialogs = {
   },
 
   /** 给「当前特征」的某个数值参数绑定表达式 */
-  featureExpression(app: App): void {
+  featureExpression(app: AppApi): void {
     const sel = app.doc.features.length ? app.doc.features[app.doc.features.length - 1] : null;
     if (!sel) { notify.info('请先创建一个特征'); return; }
     const host = el('div', { class: 'col' });
@@ -1693,7 +1693,7 @@ export const featureDialogs = {
   // 钣金（第二十轮新增）
   // ============================================================
   /** 基体法兰（SW「Base Flange」）：把草图轮廓当作展开轮廓，沿草图法向拉伸出薄板 */
-  sheetBaseFlange(app: App): void {
+  sheetBaseFlange(app: AppApi): void {
     const sketches = app.doc.sketchFeatures();
     if (!sketches.length) { notify.err('没有可用草图'); return; }
     const sketchId = app.editingSketch?.id ?? featureDialogs.pickSketchId(app);
@@ -1736,7 +1736,7 @@ export const featureDialogs = {
   },
 
   /** 边线法兰（SW「Edge Flange」）：在选中的一条直线边上折起一面墙 */
-  sheetEdgeFlange(app: App): void {
+  sheetEdgeFlange(app: AppApi): void {
     const edges = app.selectedEdgeInfos();
     if (edges.length !== 1) { notify.err('请先在模型中选中一条边'); return; }
     const edge = edges[0];

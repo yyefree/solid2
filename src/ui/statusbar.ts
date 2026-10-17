@@ -7,12 +7,12 @@
 import { el, clear } from './dom';
 import { icon } from './icons';
 import * as THREE from 'three';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { openPopup, type PopupItem } from './popup';
 import { notify } from './toast';
 import { UNIT_SYSTEMS, fmtCoord, type UnitSystem } from '../core/units';
 
-const FILTER_LABEL: Record<App['selectionFilter'], string> = {
+const FILTER_LABEL: Record<AppApi['selectionFilter'], string> = {
   all: '全部',
   face: '仅面',
   edge: '仅边',
@@ -20,7 +20,7 @@ const FILTER_LABEL: Record<App['selectionFilter'], string> = {
   body: '实体',
 };
 
-export function buildStatusbar(app: App, host: HTMLElement): void {
+export function buildStatusbar(app: AppApi, host: HTMLElement): void {
   const led = el('span', { class: 'led' });
   const text = el('span', { class: 'sb-msg', text: '' });
   // 模式上下文徽标（SolidWorks 状态栏左侧的「正在编辑：草图1 / 零件 / 装配体」）
@@ -63,7 +63,7 @@ export function buildStatusbar(app: App, host: HTMLElement): void {
   const filter = el('button', { class: 'sb-filter', type: 'button', title: '选择过滤器', dataset: { cmd: 'view.filter' } }, filterLabel, filterCaret);
   filter.addEventListener('click', () => {
     const r = filter.getBoundingClientRect();
-    const mk = (label: App['selectionFilter'], tip: string): PopupItem => ({
+    const mk = (label: AppApi['selectionFilter'], tip: string): PopupItem => ({
       label: FILTER_LABEL[label],
       tip,
       checked: app.selectionFilter === label,

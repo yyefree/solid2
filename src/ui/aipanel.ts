@@ -11,7 +11,7 @@
 import { el, clear } from './dom';
 import { modal, notify } from './toast';
 import { icon } from './icons';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import {
   boxRefOf,
   defaultProvider,
@@ -52,7 +52,7 @@ const EDIT_EXAMPLES = [
 
 type Mode = 'create' | 'edit';
 
-export function openAiModeling(app: App, opts: { mode?: Mode } = {}): void {
+export function openAiModeling(app: AppApi, opts: { mode?: Mode } = {}): void {
   const provider = defaultProvider();
   let mode: Mode = opts.mode ?? (app.doc.features.length ? 'edit' : 'create');
   let lastCreate: AiResult | null = null;
@@ -352,7 +352,7 @@ const CHG_LABEL: Record<string, string> = {
 };
 
 /** 当前模型的类型分布，如「基本体×1 · 孔×1」 */
-function summarizeTypes(app: App): string {
+function summarizeTypes(app: AppApi): string {
   const counter = new Map<string, number>();
   for (const f of app.doc.features) {
     const label = FEATURE_LABELS[f.type] ?? f.type;

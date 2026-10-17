@@ -9,7 +9,7 @@
  */
 import { el, clear, section } from './dom';
 import { modal } from './toast';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import type { StandardPlaneId } from '../core/sectionprops';
 import { computeSectionProps, planeThrough, sliceMeshPlane } from '../core/sectionprops';
 import {
@@ -24,7 +24,7 @@ const PLANES: { id: StandardPlaneId; label: string }[] = [
 ];
 
 /** 由 faceMetas 估算网格质心（面积加权），用于让默认截面穿过零件 */
-function meshCentroid(app: App): [number, number, number] {
+function meshCentroid(app: AppApi): [number, number, number] {
   const m = app.currentModel()?.mesh;
   if (!m) return [0, 0, 0];
   let ax = 0, ay = 0, az = 0, a = 0;
@@ -39,7 +39,7 @@ function meshCentroid(app: App): [number, number, number] {
 }
 
 /** 打开「截面属性」对话框 */
-export function openSectionProperties(app: App): void {
+export function openSectionProperties(app: AppApi): void {
   const host = el('div', { class: 'col' });
 
   // 基准面选择

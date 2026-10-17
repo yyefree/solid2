@@ -11,7 +11,7 @@
  *      不会出现「菜单写着 Ctrl+B 但按了没反应」。
  *   3. 输入框内不拦截；模态框打开时只放行 Esc（交给模态框自己关闭）。
  */
-import type { App } from './app';
+import type { AppApi } from './app-api';
 import { notify } from '../ui/toast';
 import { openShortcutBar } from '../ui/shortcutbar';
 import { openViewOrientation, setRotateMode } from '../ui/headsup';
@@ -32,9 +32,9 @@ export interface HotkeyDef {
   /** 分组（帮助>快捷键一览 用） */
   group: string;
   scope?: HotkeyScope;
-  run: (app: App) => void;
+  run: (app: AppApi) => void;
   /** 额外的可用性判断 */
-  when?: (app: App) => boolean;
+  when?: (app: AppApi) => boolean;
   /** 自定义匹配（方向键这种带修饰的族） */
   match?: (e: KeyboardEvent) => boolean;
 }
@@ -322,7 +322,7 @@ function inEditable(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || t.isContentEditable;
 }
 
-export function installHotkeys(app: App): () => void {
+export function installHotkeys(app: AppApi): () => void {
   const onKey = (e: KeyboardEvent) => {
     if (inEditable(e.target)) return;
 

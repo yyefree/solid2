@@ -3,9 +3,9 @@
  * 当有命令处于激活状态（编辑草图 / 选择集待确认）时出现。
  */
 import { el } from './dom';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 
-export function buildConfirmationCorner(app: App, host: HTMLElement): void {
+export function buildConfirmationCorner(app: AppApi, host: HTMLElement): void {
   const ok = el('button', { class: 'cc-btn cc-ok', type: 'button', title: '确定（Enter）', text: '✓' });
   const no = el('button', { class: 'cc-btn cc-no', type: 'button', title: '取消（Esc）', text: '✗' });
   const corner = el('div', { class: 'conf-corner' }, ok, no);

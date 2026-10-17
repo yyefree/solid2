@@ -2,13 +2,13 @@
  * 参考三重轴（SolidWorks Reference Triad）—— 图形区左下角。
  * 三个轴向随相机实时投影，颜色沿用 CAD 约定：X 红 / Y 绿 / Z 蓝。
  */
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import * as THREE from 'three';
 
 const SIZE = 84;
 const LEN = 26;
 
-export function buildTriad(app: App, host: HTMLElement): void {
+export function buildTriad(app: AppApi, host: HTMLElement): void {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width', String(SIZE));
   svg.setAttribute('height', String(SIZE));

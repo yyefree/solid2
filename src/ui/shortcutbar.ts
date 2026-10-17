@@ -7,7 +7,7 @@
  */
 import { el, clear } from './dom';
 import { icon } from './icons';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { featureDialogs } from './dialogs';
 import { openMeasure } from './measure';
 import { notify } from './toast';
@@ -15,11 +15,11 @@ import { notify } from './toast';
 interface BarCmd {
   icon: string;
   label: string;
-  run: (app: App) => void;
+  run: (app: AppApi) => void;
 }
 
 /** 每个模式下的快捷方式栏命令（前 4 个为默认 4 方向） */
-function commandsFor(app: App): BarCmd[] {
+function commandsFor(app: AppApi): BarCmd[] {
   const D = featureDialogs;
   if (app.mode === 'sketch') {
     return [
@@ -72,7 +72,7 @@ function commandsFor(app: App): BarCmd[] {
 }
 
 /** 鼠标手势：4 方向（SolidWorks 默认） */
-function gestureCommandsFor(app: App): BarCmd[] {
+function gestureCommandsFor(app: AppApi): BarCmd[] {
   const D = featureDialogs;
   if (app.mode === 'sketch') {
     return [
@@ -107,7 +107,7 @@ let barAway: ((e: MouseEvent) => void) | null = null;
 let barCount = 4;
 let lastPointer = { x: 200, y: 200 };
 
-export function openShortcutBar(app: App, at?: { x: number; y: number }): void {
+export function openShortcutBar(app: AppApi, at?: { x: number; y: number }): void {
   closeShortcutBar();
   const pos = at ?? lastPointer;
   const cmds = commandsFor(app);
@@ -212,7 +212,7 @@ export function gestureJustFired(): boolean {
   return gestureConsumed;
 }
 
-export function installMouseGestures(app: App, host: HTMLElement): () => void {
+export function installMouseGestures(app: AppApi, host: HTMLElement): () => void {
   const canvas = app.viewport.renderer.domElement;
   let dragging = false;
   let start = { x: 0, y: 0 };
@@ -305,7 +305,7 @@ export function installMouseGestures(app: App, host: HTMLElement): () => void {
   };
 }
 
-function buildWheel(app: App): { el: HTMLElement; sectors: HTMLElement[]; count: number } {
+function buildWheel(app: AppApi): { el: HTMLElement; sectors: HTMLElement[]; count: number } {
   const count = 4; // SolidWorks 默认 4 方向；可在设置中改 8
   const cmds = gestureCommandsFor(app);
   const R = 74;

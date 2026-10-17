@@ -482,536 +482,534 @@ function profileWireOf(skf: SketchFeature): any {
   throw new Error('曲面：草图没有可用轮廓');
 }
 
-export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut {
-  switch (f.type) {
-    case 'sketch':
-      return { shape: current };
 
-    case 'primitive': {
-      const { kind, dims, origin } = f.params;
-      let shape: any;
-      if (kind === 'box') shape = S.primitives.box(dims[0], dims[1], dims[2]);
-      else if (kind === 'cylinder') shape = S.primitives.cylinder(dims[0], dims[1]);
-      else if (kind === 'sphere') shape = S.primitives.sphere(dims[0]);
-      else if (kind === 'cone') shape = S.primitives.cone(dims[0], dims[1], dims[2]);
-      else shape = S.primitives.torus(dims[0], dims[1]);
-      if (origin && (origin[0] || origin[1] || origin[2])) {
-        shape = S.translate(shape, origin[0], origin[1], origin[2]);
-      }
-      const op = f.params.operation ?? 'new';
-      return { shape: applyBoolean(op, current, shape), added: shape, tool: op === 'cut' ? shape : undefined };
+/**
+ * 特征求值处理器注册表。
+ *
+ * 把原先 530 行 `switch (f.type)` 求值分派改为「类型 → 处理器」映射：
+ * - 用 mapped type（`FeatureHandlers`）让每个 handler 的 `f` 在编译期严格收窄到对应特征变体，
+ *   与 switch 的 case 收窄等价；新增特征类型时只需在 `FEATURE_HANDLERS` 里加一项，
+ *   缺漏会被编译期强制报错，无需再维护 switch 的 default 分支。
+ * - dispatch 处只做一次局部 cast（见 `FEATURE_REGISTRY` 构造），运行期行为与 switch 完全一致，
+ *   递归调用点（`rebuildFeatures` 内 `evaluateFeature(...)`）签名不变。
+ */
+
+type FeatureHandlerFn = (f: Feature, current: any, ctx: EvalCtx) => EvalOut;
+
+type FeatureHandlers = {
+  [K in Feature['type']]: (f: Extract<Feature, { type: K }>, current: any, ctx: EvalCtx) => EvalOut;
+};
+
+const FEATURE_HANDLERS: FeatureHandlers = {
+  sketch: (f, current) => ({ shape: current }),
+
+  primitive: (f, current) => {
+    const { kind, dims, origin } = f.params;
+    let shape: any;
+    if (kind === 'box') shape = S.primitives.box(dims[0], dims[1], dims[2]);
+    else if (kind === 'cylinder') shape = S.primitives.cylinder(dims[0], dims[1]);
+    else if (kind === 'sphere') shape = S.primitives.sphere(dims[0]);
+    else if (kind === 'cone') shape = S.primitives.cone(dims[0], dims[1], dims[2]);
+    else shape = S.primitives.torus(dims[0], dims[1]);
+    if (origin && (origin[0] || origin[1] || origin[2])) {
+      shape = S.translate(shape, origin[0], origin[1], origin[2]);
     }
+    const op = f.params.operation ?? 'new';
+    return { shape: applyBoolean(op, current, shape), added: shape, tool: op === 'cut' ? shape : undefined };
+  },
 
-    case 'extrude': {
-      const skf = ctx.doc.getFeature(f.params.sketchId);
-      if (!skf || skf.type !== 'sketch') throw new Error('拉伸：找不到引用的草图');
-      const pl = planeOf(skf);
-      const p = f.params;
-      // 薄壁特征：把轮廓偏置成带状面（支持开环/闭环）；否则用常规封闭轮廓
-      const thin = p.thin;
-      const faces = thin ? thinProfileFaces(skf, pl, thin) : facesOfSketch(skf);
-      if (!faces.length) throw new Error(thin ? '薄壁：草图没有可用轮廓' : '拉伸：草图没有封闭轮廓');
-      const sign = p.reverse ? -1 : 1;
-      const dir: Vec3 = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
-
-      // 起始条件：等距（把轮廓沿草图法向平移后再拉伸）
-      const off = p.start === 'offset' ? (p.startOffset ?? 0) * (p.startReverse ? -1 : 1) : 0;
-      const baseFaces = off
-        ? faces.map((fc) => S.translate(fc, pl.normal[0] * off, pl.normal[1] * off, pl.normal[2] * off))
-        : faces;
-      const baseOrigin: Vec3 = [
-        pl.origin[0] + pl.normal[0] * off,
-        pl.origin[1] + pl.normal[1] * off,
-        pl.origin[2] + pl.normal[2] * off,
-      ];
-
-      // 方向 1
-      const e1 = extrudeEndDistance(p, baseOrigin, dir, current);
-      let solid = extrudeFaces(baseFaces, dir, e1.distance, e1.symmetric);
-
-      // 方向 2（两侧不对称：给定深度 / 完全贯穿）
-      const end2 = p.end2 ?? 'none';
-      if (end2 !== 'none') {
-        const dir2: Vec3 = [-dir[0], -dir[1], -dir[2]];
-        const d2 = end2 === 'throughAll'
-          ? extrudeEndDistance({ ...p, endCondition: 'throughAll' }, baseOrigin, dir2, current).distance
-          : Math.abs(p.distance2 ?? 0);
-        if (d2 > 1e-6) solid = S.fuse(solid, extrudeFaces(baseFaces, dir2, d2, false));
-      }
-
-      const op = p.operation;
-      return {
-        shape: applyBoolean(op, current, solid),
-        added: op === 'add' || op === 'new' ? solid : undefined,
-        tool: op === 'cut' ? solid : undefined,
-      };
+  extrude: (f, current, ctx) => {
+    const skf = ctx.doc.getFeature(f.params.sketchId);
+    if (!skf || skf.type !== 'sketch') throw new Error('拉伸：找不到引用的草图');
+    const pl = planeOf(skf);
+    const p = f.params;
+    const thin = p.thin;
+    const faces = thin ? thinProfileFaces(skf, pl, thin) : facesOfSketch(skf);
+    if (!faces.length) throw new Error(thin ? '薄壁：草图没有可用轮廓' : '拉伸：草图没有封闭轮廓');
+    const sign = p.reverse ? -1 : 1;
+    const dir: Vec3 = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
+    const off = p.start === 'offset' ? (p.startOffset ?? 0) * (p.startReverse ? -1 : 1) : 0;
+    const baseFaces = off
+      ? faces.map((fc) => S.translate(fc, pl.normal[0] * off, pl.normal[1] * off, pl.normal[2] * off))
+      : faces;
+    const baseOrigin: Vec3 = [
+      pl.origin[0] + pl.normal[0] * off,
+      pl.origin[1] + pl.normal[1] * off,
+      pl.origin[2] + pl.normal[2] * off,
+    ];
+    const e1 = extrudeEndDistance(p, baseOrigin, dir, current);
+    let solid = extrudeFaces(baseFaces, dir, e1.distance, e1.symmetric);
+    const end2 = p.end2 ?? 'none';
+    if (end2 !== 'none') {
+      const dir2: Vec3 = [-dir[0], -dir[1], -dir[2]];
+      const d2 = end2 === 'throughAll'
+        ? extrudeEndDistance({ ...p, endCondition: 'throughAll' }, baseOrigin, dir2, current).distance
+        : Math.abs(p.distance2 ?? 0);
+      if (d2 > 1e-6) solid = S.fuse(solid, extrudeFaces(baseFaces, dir2, d2, false));
     }
+    const op = p.operation;
+    return {
+      shape: applyBoolean(op, current, solid),
+      added: op === 'add' || op === 'new' ? solid : undefined,
+      tool: op === 'cut' ? solid : undefined,
+    };
+  },
 
-    case 'revolve': {
-      const skf = ctx.doc.getFeature(f.params.sketchId);
-      if (!skf || skf.type !== 'sketch') throw new Error('旋转：找不到引用的草图');
-      const pl = planeOf(skf);
-      // 薄壁特征：把轮廓偏置成带状/环带面后再旋转（支持开环/闭环）
-      const thin = f.params.thin;
-      const faces = thin ? thinProfileFaces(skf, pl, thin) : facesOfSketch(skf);
-      if (!faces.length) throw new Error(thin ? '旋转：薄壁草图没有可用轮廓' : '旋转：草图没有封闭轮廓');
-      const a = skf.params.sketch;
-      const axisA = f.params.axisA;
-      const axisB = f.params.axisB;
-      const origin = worldFromSketch(pl, axisA[0], axisA[1]);
-      const p2 = worldFromSketch(pl, axisB[0], axisB[1]);
-      const axis: [number, number, number] = [p2[0] - origin[0], p2[1] - origin[1], p2[2] - origin[2]];
-      void a;
-      const ang = (f.params.angleDeg * Math.PI) / 180;
-      const parts = faces.map((face) => S.revolve(face, origin, axis, ang));
-      const solid = parts.length === 1 ? parts[0] : S.fuseAll(parts);
-      const op = f.params.operation;
-      return {
-        shape: applyBoolean(op, current, solid),
-        added: op === 'add' || op === 'new' ? solid : undefined,
-        tool: op === 'cut' ? solid : undefined,
-      };
-    }
+  revolve: (f, current, ctx) => {
+    const skf = ctx.doc.getFeature(f.params.sketchId);
+    if (!skf || skf.type !== 'sketch') throw new Error('旋转：找不到引用的草图');
+    const pl = planeOf(skf);
+    const thin = f.params.thin;
+    const faces = thin ? thinProfileFaces(skf, pl, thin) : facesOfSketch(skf);
+    if (!faces.length) throw new Error(thin ? '旋转：薄壁草图没有可用轮廓' : '旋转：草图没有封闭轮廓');
+    const a = skf.params.sketch;
+    const axisA = f.params.axisA;
+    const axisB = f.params.axisB;
+    const origin = worldFromSketch(pl, axisA[0], axisA[1]);
+    const p2 = worldFromSketch(pl, axisB[0], axisB[1]);
+    const axis: [number, number, number] = [p2[0] - origin[0], p2[1] - origin[1], p2[2] - origin[2]];
+    void a;
+    const ang = (f.params.angleDeg * Math.PI) / 180;
+    const parts = faces.map((face) => S.revolve(face, origin, axis, ang));
+    const solid = parts.length === 1 ? parts[0] : S.fuseAll(parts);
+    const op = f.params.operation;
+    return {
+      shape: applyBoolean(op, current, solid),
+      added: op === 'add' || op === 'new' ? solid : undefined,
+      tool: op === 'cut' ? solid : undefined,
+    };
+  },
 
-    case 'loft': {
-      const wires: any[] = [];
-      for (const sid of f.params.sketchIds) {
-        const skf = ctx.doc.getFeature(sid);
-        if (!skf || skf.type !== 'sketch') continue;
-        const pl = planeOf(skf);
-        solveSketch(skf.params.sketch);
-        const regions = sketchToRegions(skf.params.sketch, pl);
-        if (regions.length) wires.push(regions[0].outer);
-      }
-      if (wires.length < 2) throw new Error('放样：至少需要两个截面草图');
-      const solid = S.loftRobust(wires, true, !!f.params.ruled);
-      const op = f.params.operation;
-      return { shape: applyBoolean(op, current, solid), added: solid, tool: op === 'cut' ? solid : undefined };
-    }
-
-    case 'sweep': {
-      const prof = ctx.doc.getFeature(f.params.profileSketchId);
-      const path = ctx.doc.getFeature(f.params.pathSketchId);
-      if (!prof || prof.type !== 'sketch' || !path || path.type !== 'sketch') {
-        throw new Error('扫描：缺少轮廓或路径草图');
-      }
-      const plP = planeOf(prof);
-      solveSketch(prof.params.sketch);
-      const plPath = planeOf(path);
-      solveSketch(path.params.sketch);
-      // 路径支持开放折线（线/弧串）与闭环
-      const pathPts = sampleSketchPath(path.params.sketch, plPath, 48);
-      if (pathPts.length < 2) throw new Error('扫描：路径草图没有可用曲线');
-      let solid: any;
-      const thin = f.params.thin;
-      if (thin) {
-        // 薄壁：轮廓偏置成带/环带后沿路径扫掠。
-        // 环带（闭环轮廓）用「外管 − 内管」布尔得到中空管；带状（开环轮廓）直接扫一条带。
-        const loops = thinLoops3D(prof, plP, thin);
-        if (!loops.length) throw new Error('扫描：薄壁轮廓草图没有可用轮廓');
-        const to2 = (p: Vec3): Vec2 => {
-          const q = worldToPlane(plP, p);
-          return [q[0], q[1]];
-        };
-        const parts = loops.map((l) => {
-          const outerSolid = sweepProfileAlongPath(pathPts, l.outer.map(to2), plP.normal);
-          if (!l.inner) return outerSolid;
-          return S.cutAll(outerSolid, [sweepProfileAlongPath(pathPts, l.inner.map(to2), plP.normal)]);
-        });
-        solid = parts.length === 1 ? parts[0] : S.fuseAll(parts);
-      } else {
-        const pRegions = sketchToRegions(prof.params.sketch, plP);
-        if (!pRegions.length) throw new Error('扫描：轮廓草图没有封闭区域');
-        solid = sweepProfileAlongPath(pathPts, pRegions[0].polygon, plP.normal);
-      }
-      const op = f.params.operation;
-      return { shape: applyBoolean(op, current, solid), added: solid, tool: op === 'cut' ? solid : undefined };
-    }
-
-    case 'spring': {
-      const p = f.params;
-      const solid = springSolid({
-        origin: p.origin,
-        axis: p.axis,
-        radius: Math.max(p.meanDiameter, 0.02) / 2,
-        wireR: Math.max(p.wireDiameter, 0.01) / 2,
-        pitch: p.pitch,
-        turns: Math.max(p.turns, 0.05),
-        handedness: p.handedness,
-        taperDeg: p.taperDeg ?? 0,
-        segsPerTurn: p.segmentsPerTurn ?? 24,
-      });
-      const op = p.operation;
-      return { shape: applyBoolean(op, current, solid), added: solid, tool: op === 'cut' ? solid : undefined };
-    }
-
-    case 'spiral': {
-      const p = f.params;
-      const pl = p.plane;
-      const ribbon = spiralRibbon2D({
-        startRadius: Math.max(p.startRadius, 0.02),
-        pitch: p.pitch,
-        turns: Math.max(p.turns, 0.05),
-        thickness: Math.max(p.thickness, 0.01),
-        handedness: p.handedness,
-        segsPerTurn: 36,
-      });
-      if (ribbon.length < 3) throw new Error('涡状线：参数退化');
-      const world = ribbon.map(([x, y]) => worldFromSketch(pl, x, y));
-      const face = S.faceFromPoints(world);
-      const solid = S.extrude(face, pl.normal, Math.max(p.width, 0.01), !!p.symmetric);
-      const op = p.operation;
-      return { shape: applyBoolean(op, current, solid), added: solid, tool: op === 'cut' ? solid : undefined };
-    }
-
-    case 'fillet': {
-      if (!current) throw new Error('圆角：没有可操作的实体');
-      const edges = resolveEdges(current, f.params.edges);
-      if (!edges.length) throw new Error('圆角：找不到对应的边');
-      return { shape: S.fillet(current, edges, f.params.radius, f.params.radius2) };
-    }
-
-    case 'scale': {
-      if (!current) throw new Error('缩放：没有可操作的实体');
-      const p = f.params;
-      const factors: [number, number, number] = p.nonUniform
-        ? [p.factors?.[0] ?? 1, p.factors?.[1] ?? 1, p.factors?.[2] ?? 1]
-        : [p.factor, p.factor, p.factor];
-      if (factors.some((k) => !Number.isFinite(k) || Math.abs(k) < 1e-9)) {
-        throw new Error('缩放：系数不能为 0');
-      }
-      return { shape: S.scale(current, p.center, factors) };
-    }
-
-    case 'split': {
-      if (!current) throw new Error('分割：没有可操作的实体');
-      const pl = f.params.plane;
-      return { shape: S.splitByPlane(current, pl, f.params.keep) };
-    }
-
-    case 'moveBody': {
-      if (!current) throw new Error('移动/复制实体：没有可操作的实体');
-      const { delta, axisOrigin, axisDir, angleDeg, copy: doCopy, count, indices } = f.params;
-      const all = S.bodiesOf(current);
-      if (!all.length) throw new Error('移动/复制实体：当前没有实体');
-      const sel = indices && indices.length ? new Set(indices) : null;
-      if (sel) {
-        for (const i of sel) {
-          if (!Number.isInteger(i) || i < 0 || i >= all.length) {
-            throw new Error(`移动/复制实体：实体下标 ${i} 越界（当前 ${all.length} 个实体）`);
-          }
-        }
-      }
-      const targets = all.filter((_, i) => !sel || sel.has(i));
-      const others = all.filter((_, i) => sel && !sel.has(i));
-      const ang = ((angleDeg ?? 0) * Math.PI) / 180;
-      const out: any[] = [...others];
-      if (doCopy) {
-        const n = Math.max(1, Math.round(count ?? 1));
-        out.push(...targets); // 原件留在原位
-        for (let i = 1; i <= n; i++) {
-          for (const b of targets) {
-            out.push(
-              S.moveBody(b, axisOrigin, axisDir, ang * i, [delta[0] * i, delta[1] * i, delta[2] * i])
-            );
-          }
-        }
-      } else {
-        for (const b of targets) out.push(S.moveBody(b, axisOrigin, axisDir, ang, delta));
-      }
-      return { shape: out.length === 1 ? out[0] : S.compoundOf(out) };
-    }
-
-    case 'deleteBody': {
-      if (!current) throw new Error('删除实体：没有可操作的实体');
-      const bodies = S.bodiesOf(current);
-      // 支持负数下标：-1 = 最后一个。因为 bodiesOf 的展开顺序由拓扑决定，
-      // 「最后一个」往往比「第 N 个」更贴近用户意图（AI 层就是这么用的）。
-      const del = new Set((f.params.indices ?? []).map((i) => (i < 0 ? bodies.length + i : i)));
-      if (!del.size) throw new Error('删除实体：没有选择要删除的实体');
-      for (const i of del) {
-        if (!Number.isInteger(i) || i < 0 || i >= bodies.length) {
-          throw new Error(`删除实体：实体下标 ${i} 越界（当前 ${bodies.length} 个实体）`);
-        }
-      }
-      const kept = bodies.filter((_, i) => !del.has(i));
-      if (!kept.length) throw new Error('删除实体：不能删除全部实体');
-      return { shape: kept.length === 1 ? kept[0] : S.compoundOf(kept) };
-    }
-
-    case 'combine': {
-      if (!current) throw new Error('组合：没有可操作的实体');
-      const bodies = S.bodiesOf(current);
-      const { mainIndex, toolIndices, operation } = f.params;
-      if (!Number.isInteger(mainIndex) || mainIndex < 0 || mainIndex >= bodies.length) {
-        throw new Error(`组合：主体下标 ${mainIndex} 越界（当前 ${bodies.length} 个实体）`);
-      }
-      const tools = (toolIndices ?? []).length
-        ? (toolIndices ?? []).filter((i) => i !== mainIndex)
-        : bodies.map((_, i) => i).filter((i) => i !== mainIndex);
-      if (!tools.length) throw new Error('组合：没有选择工具体');
-      for (const i of tools) {
-        if (!Number.isInteger(i) || i < 0 || i >= bodies.length) {
-          throw new Error(`组合：工具体下标 ${i} 越界（当前 ${bodies.length} 个实体）`);
-        }
-      }
-      const merged = S.combineBodies(bodies[mainIndex], tools.map((i) => bodies[i]), operation);
-      // 未被选中的实体原样保留；merged 可能仍是多实体（如「添加」两个不相交实体）
-      const used = new Set([mainIndex, ...tools]);
-      const out = [...S.bodiesOf(merged), ...bodies.filter((_, i) => !used.has(i))];
-      return { shape: out.length === 1 ? out[0] : S.compoundOf(out) };
-    }
-
-    case 'chamfer': {
-      if (!current) throw new Error('倒角：没有可操作的实体');
-      const edges = resolveEdges(current, f.params.edges);
-      if (!edges.length) throw new Error('倒角：找不到对应的边');
-      return { shape: S.chamfer(current, edges, f.params.distance) };
-    }
-
-    case 'shell': {
-      if (!current) throw new Error('抽壳：没有可操作的实体');
-      const faces = resolveFaces(current, f.params.faces);
-      if (!faces.length) throw new Error('抽壳：找不到要移除的面');
-      return { shape: S.shell(current, faces, f.params.thickness) };
-    }
-
-    case 'linearPattern': {
-      if (!current) throw new Error('阵列：没有可操作的实体');
-      const seed = f.params.seedFeatureId ? ctx.doc.getFeature(f.params.seedFeatureId) : null;
-      const seedOut = seed ? ctx.doc.evalCache.get(seed.id) : undefined;
-      const { direction, spacing, count } = f.params;
-      if (count < 2) return { shape: current };
-      const base = seedOut?.tool ?? seedOut?.added ?? null;
-      if (base) {
-        const instances = S.linearPatternInstances(base, direction, spacing, count);
-        const merged = S.fuseAll(instances);
-        const isCut = !!seedOut?.tool;
-        return { shape: isCut ? S.cut(current, merged) : S.fuse(current, merged), tool: isCut ? merged : undefined };
-      }
-      const copies = S.linearPatternInstances(current, direction, spacing, count);
-      return { shape: S.fuseAll(copies) };
-    }
-
-    case 'circularPattern': {
-      if (!current) throw new Error('阵列：没有可操作的实体');
-      const seed = f.params.seedFeatureId ? ctx.doc.getFeature(f.params.seedFeatureId) : null;
-      const seedOut = seed ? ctx.doc.evalCache.get(seed.id) : undefined;
-      const { axisOrigin, axisDir, count, totalAngleDeg, equalSpacing } = f.params;
-      if (count < 2) return { shape: current };
-      const total = (totalAngleDeg * Math.PI) / 180;
-      const step = equalSpacing && total >= Math.PI * 2 - 1e-6 ? total / count : total / Math.max(count - 1, 1);
-      const base = seedOut?.tool ?? seedOut?.added ?? null;
-      const mk = (shape: any) =>
-        Array.from({ length: count }, (_, i) => S.rotateAxis(shape, axisOrigin, axisDir, step * i));
-      if (base) {
-        const merged = S.fuseAll(mk(base));
-        const isCut = !!seedOut?.tool;
-        return { shape: isCut ? S.cut(current, merged) : S.fuse(current, merged), tool: isCut ? merged : undefined };
-      }
-      return { shape: S.fuseAll(mk(current)) };
-    }
-
-    case 'mirror': {
-      if (!current) throw new Error('镜像：没有可操作的实体');
-      const seed = f.params.seedFeatureId ? ctx.doc.getFeature(f.params.seedFeatureId) : null;
-      const seedOut = seed ? ctx.doc.evalCache.get(seed.id) : undefined;
-      const { planePoint, planeNormal } = f.params;
-      const base = seedOut?.tool ?? seedOut?.added ?? null;
-      if (base) {
-        const m = S.mirrorPlane(base, planePoint, planeNormal);
-        const isCut = !!seedOut?.tool;
-        return { shape: isCut ? S.cut(current, m) : S.fuse(current, m), tool: isCut ? m : undefined };
-      }
-      const m = S.mirrorPlane(current, planePoint, planeNormal);
-      return { shape: S.fuse(current, m) };
-    }
-
-    case 'referencePlane':
-      // 基准面纯数据：创建时已算好平面，求值时透传当前实体（供其上的草图复用）
-      return { shape: current };
-
-    case 'hole': {
-      if (!current) throw new Error('孔：没有可操作的实体');
-      const tool = S.holeTool(f.params);
-      return { shape: S.cut(current, tool), tool };
-    }
-
-    case 'draft': {
-      if (!current) throw new Error('拔模：没有可操作的实体');
-      const faces = resolveFaces(current, f.params.draftFaces);
-      if (!faces.length) throw new Error('拔模：找不到要拔模的面');
-      const nf = f.params.neutralFace;
-      const shape = S.draft(
-        current,
-        faces,
-        nf.point,
-        nf.normal ?? [0, 0, 1],
-        f.params.angleDeg,
-        !!(f.params as any).reverse
-      );
-      return { shape };
-    }
-
-    case 'rib': {
-      if (!current) throw new Error('筋：没有可操作的实体');
-      const skf = ctx.doc.getFeature(f.params.sketchId);
-      if (!skf || skf.type !== 'sketch') throw new Error('筋：找不到引用的草图');
+  loft: (f, current, ctx) => {
+    const wires: any[] = [];
+    for (const sid of f.params.sketchIds) {
+      const skf = ctx.doc.getFeature(sid);
+      if (!skf || skf.type !== 'sketch') continue;
       const pl = planeOf(skf);
       solveSketch(skf.params.sketch);
-      const prof = buildRibProfile(skf.params.sketch, f.params.thickness);
-      if (!prof) throw new Error('筋：草图需为一条连续的开口轮廓');
-      const world = prof.map((p) => worldFromSketch(pl, p[0], p[1]));
-      const face = S.faceFromPoints(world);
-      const depth = Math.max(f.params.depth ?? 10, 0.01);
-      const solid = S.extrude(face, pl.normal, depth, !!f.params.symmetric);
-      return { shape: S.fuse(current, solid), added: solid };
+      const regions = sketchToRegions(skf.params.sketch, pl);
+      if (regions.length) wires.push(regions[0].outer);
     }
+    if (wires.length < 2) throw new Error('放样：至少需要两个截面草图');
+    const solid = S.loftRobust(wires, true, !!f.params.ruled);
+    const op = f.params.operation;
+    return { shape: applyBoolean(op, current, solid), added: solid, tool: op === 'cut' ? solid : undefined };
+  },
 
-    // ---- 曲面特征：生成曲面实体（壳），**不参与实体布尔**，汇入 ctx.surfaceById ----
-    case 'surfaceExtrude': {
-      const skf = ctx.doc.getFeature(f.params.sketchId);
-      if (!skf || skf.type !== 'sketch') throw new Error('拉伸曲面：找不到引用的草图');
-      const pl = planeOf(skf);
-      const wire = profileWireOf(skf);
-      const sign = f.params.reverse ? -1 : 1;
-      const dir: [number, number, number] = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
-      ctx.surfaceById.set(f.id, [S.surfaceExtrude(wire, dir, f.params.distance, !!f.params.symmetric)]);
-      return { shape: current };
+  sweep: (f, current, ctx) => {
+    const prof = ctx.doc.getFeature(f.params.profileSketchId);
+    const path = ctx.doc.getFeature(f.params.pathSketchId);
+    if (!prof || prof.type !== 'sketch' || !path || path.type !== 'sketch') {
+      throw new Error('扫描：缺少轮廓或路径草图');
     }
-
-    case 'surfaceRevolve': {
-      const skf = ctx.doc.getFeature(f.params.sketchId);
-      if (!skf || skf.type !== 'sketch') throw new Error('旋转曲面：找不到引用的草图');
-      const pl = planeOf(skf);
-      const wire = profileWireOf(skf);
-      const origin = worldFromSketch(pl, f.params.axisA[0], f.params.axisA[1]);
-      const p2 = worldFromSketch(pl, f.params.axisB[0], f.params.axisB[1]);
-      const axis: [number, number, number] = [p2[0] - origin[0], p2[1] - origin[1], p2[2] - origin[2]];
-      const sign = f.params.reverse ? -1 : 1;
-      const ang = ((f.params.angleDeg * Math.PI) / 180) * sign;
-      ctx.surfaceById.set(f.id, [S.surfaceRevolve(wire, origin, axis, ang)]);
-      return { shape: current };
-    }
-
-    case 'surfacePlanar': {
-      const skf = ctx.doc.getFeature(f.params.sketchId);
-      if (!skf || skf.type !== 'sketch') throw new Error('平面区域：找不到引用的草图');
-      const faces = facesOfSketch(skf);
-      if (!faces.length) throw new Error('平面区域：草图没有闭合轮廓');
-      ctx.surfaceById.set(f.id, [faces[0]]);
-      return { shape: current };
-    }
-
-    case 'surfaceLoft': {
-      const wires: any[] = [];
-      for (const sid of f.params.sketchIds) {
-        const skf = ctx.doc.getFeature(sid);
-        if (!skf || skf.type !== 'sketch') continue;
-        wires.push(profileWireOf(skf));
-      }
-      if (wires.length < 2) throw new Error('放样曲面：至少需要两个截面草图');
-      ctx.surfaceById.set(f.id, [S.loftRobust(wires, false, !!f.params.ruled)]);
-      return { shape: current };
-    }
-
-    case 'surfaceSweep': {
-      const prof = ctx.doc.getFeature(f.params.profileSketchId);
-      const path = ctx.doc.getFeature(f.params.pathSketchId);
-      if (!prof || prof.type !== 'sketch' || !path || path.type !== 'sketch') {
-        throw new Error('扫描曲面：缺少轮廓或路径草图');
-      }
-      const plP = planeOf(prof);
-      solveSketch(prof.params.sketch);
+    const plP = planeOf(prof);
+    solveSketch(prof.params.sketch);
+    const plPath = planeOf(path);
+    solveSketch(path.params.sketch);
+    const pathPts = sampleSketchPath(path.params.sketch, plPath, 48);
+    if (pathPts.length < 2) throw new Error('扫描：路径草图没有可用曲线');
+    let solid: any;
+    const thin = f.params.thin;
+    if (thin) {
+      const loops = thinLoops3D(prof, plP, thin);
+      if (!loops.length) throw new Error('扫描：薄壁轮廓草图没有可用轮廓');
+      const to2 = (p: Vec3): Vec2 => {
+        const q = worldToPlane(plP, p);
+        return [q[0], q[1]];
+      };
+      const parts = loops.map((l) => {
+        const outerSolid = sweepProfileAlongPath(pathPts, l.outer.map(to2), plP.normal);
+        if (!l.inner) return outerSolid;
+        return S.cutAll(outerSolid, [sweepProfileAlongPath(pathPts, l.inner.map(to2), plP.normal)]);
+      });
+      solid = parts.length === 1 ? parts[0] : S.fuseAll(parts);
+    } else {
       const pRegions = sketchToRegions(prof.params.sketch, plP);
-      if (!pRegions.length) throw new Error('扫描曲面：轮廓草图没有封闭区域');
-      const plPath = planeOf(path);
-      solveSketch(path.params.sketch);
-      const pathPts = sampleSketchPath(path.params.sketch, plPath, 48);
-      if (pathPts.length < 2) throw new Error('扫描曲面：路径草图没有可用曲线');
-      ctx.surfaceById.set(f.id, [sweepProfileAlongPath(pathPts, pRegions[0].polygon, plP.normal, false)]);
-      return { shape: current };
+      if (!pRegions.length) throw new Error('扫描：轮廓草图没有封闭区域');
+      solid = sweepProfileAlongPath(pathPts, pRegions[0].polygon, plP.normal);
     }
+    const op = f.params.operation;
+    return { shape: applyBoolean(op, current, solid), added: solid, tool: op === 'cut' ? solid : undefined };
+  },
 
-    case 'surfaceTrim': {
-      const inputs = collectSurfaceShells(ctx, f.params.surfaceIds, '裁剪曲面');
-      const axisIdx = f.params.axis === 'x' ? 0 : f.params.axis === 'y' ? 1 : 2;
-      // 用一个「半空间盒」裁剪：把盒覆盖的设定一侧与曲面求交（common）即得保留部分。
-      const BIG = 1e5;
-      const base = inputs.length === 1 ? inputs[0] : S.compoundOf(inputs);
-      const bb = S.shapeBBox(base);
-      const c = [(bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2, (bb.min[2] + bb.max[2]) / 2];
-      const origin: [number, number, number] = [c[0] - BIG / 2, c[1] - BIG / 2, c[2] - BIG / 2];
-      origin[axisIdx] = f.params.keep === 'positive' ? f.params.offset : f.params.offset - BIG;
-      const box = S.translate(S.primitives.box(BIG, BIG, BIG), origin[0], origin[1], origin[2]);
-      const kept: any[] = [];
-      for (const s of inputs) {
-        try {
-          kept.push(...S.surfacesOf(S.common(s, box)));
-        } catch {
-          /* 该曲面与裁剪盒无交集 → 被整片裁掉；其余曲面继续裁剪 */
+  spring: (f, current) => {
+    const p = f.params;
+    const solid = springSolid({
+      origin: p.origin,
+      axis: p.axis,
+      radius: Math.max(p.meanDiameter, 0.02) / 2,
+      wireR: Math.max(p.wireDiameter, 0.01) / 2,
+      pitch: p.pitch,
+      turns: Math.max(p.turns, 0.05),
+      handedness: p.handedness,
+      taperDeg: p.taperDeg ?? 0,
+      segsPerTurn: p.segmentsPerTurn ?? 24,
+    });
+    const op = p.operation;
+    return { shape: applyBoolean(op, current, solid), added: solid, tool: op === 'cut' ? solid : undefined };
+  },
+
+  spiral: (f, current) => {
+    const p = f.params;
+    const pl = p.plane;
+    const ribbon = spiralRibbon2D({
+      startRadius: Math.max(p.startRadius, 0.02),
+      pitch: p.pitch,
+      turns: Math.max(p.turns, 0.05),
+      thickness: Math.max(p.thickness, 0.01),
+      handedness: p.handedness,
+      segsPerTurn: 36,
+    });
+    if (ribbon.length < 3) throw new Error('涡状线：参数退化');
+    const world = ribbon.map(([x, y]) => worldFromSketch(pl, x, y));
+    const face = S.faceFromPoints(world);
+    const solid = S.extrude(face, pl.normal, Math.max(p.width, 0.01), !!p.symmetric);
+    const op = p.operation;
+    return { shape: applyBoolean(op, current, solid), added: solid, tool: op === 'cut' ? solid : undefined };
+  },
+
+  fillet: (f, current) => {
+    if (!current) throw new Error('圆角：没有可操作的实体');
+    const edges = resolveEdges(current, f.params.edges);
+    if (!edges.length) throw new Error('圆角：找不到对应的边');
+    return { shape: S.fillet(current, edges, f.params.radius, f.params.radius2) };
+  },
+
+  scale: (f, current) => {
+    if (!current) throw new Error('缩放：没有可操作的实体');
+    const p = f.params;
+    const factors: [number, number, number] = p.nonUniform
+      ? [p.factors?.[0] ?? 1, p.factors?.[1] ?? 1, p.factors?.[2] ?? 1]
+      : [p.factor, p.factor, p.factor];
+    if (factors.some((k) => !Number.isFinite(k) || Math.abs(k) < 1e-9)) {
+      throw new Error('缩放：系数不能为 0');
+    }
+    return { shape: S.scale(current, p.center, factors) };
+  },
+
+  split: (f, current) => {
+    if (!current) throw new Error('分割：没有可操作的实体');
+    const pl = f.params.plane;
+    return { shape: S.splitByPlane(current, pl, f.params.keep) };
+  },
+
+  moveBody: (f, current) => {
+    if (!current) throw new Error('移动/复制实体：没有可操作的实体');
+    const { delta, axisOrigin, axisDir, angleDeg, copy: doCopy, count, indices } = f.params;
+    const all = S.bodiesOf(current);
+    if (!all.length) throw new Error('移动/复制实体：当前没有实体');
+    const sel = indices && indices.length ? new Set(indices) : null;
+    if (sel) {
+      for (const i of sel) {
+        if (!Number.isInteger(i) || i < 0 || i >= all.length) {
+          throw new Error(`移动/复制实体：实体下标 ${i} 越界（当前 ${all.length} 个实体）`);
         }
       }
-      if (!kept.length) throw new Error('裁剪曲面：裁剪后没有任何剩余');
-      for (const sid of f.params.surfaceIds) ctx.surfaceById.delete(sid);
-      ctx.surfaceById.set(f.id, kept);
-      return { shape: current };
     }
-
-    case 'surfaceSew': {
-      const inputs = collectSurfaceShells(ctx, f.params.surfaceIds, '缝合曲面');
-      if (inputs.length < 2) throw new Error('缝合曲面：至少需要两个曲面体');
-      const sewn = S.sewShapes(inputs, f.params.tolerance ?? 1e-4);
-      let shells = S.surfacesOf(sewn);
-      if (!shells.length) shells = [sewn]; // 不相邻时仍返回原形状（含自由面），保证可渲染
-      for (const sid of f.params.surfaceIds) ctx.surfaceById.delete(sid);
-      ctx.surfaceById.set(f.id, shells);
-      return { shape: current };
+    const targets = all.filter((_, i) => !sel || sel.has(i));
+    const others = all.filter((_, i) => sel && !sel.has(i));
+    const ang = ((angleDeg ?? 0) * Math.PI) / 180;
+    const out: any[] = [...others];
+    if (doCopy) {
+      const n = Math.max(1, Math.round(count ?? 1));
+      out.push(...targets);
+      for (let i = 1; i <= n; i++) {
+        for (const b of targets) {
+          out.push(
+            S.moveBody(b, axisOrigin, axisDir, ang * i, [delta[0] * i, delta[1] * i, delta[2] * i])
+          );
+        }
+      }
+    } else {
+      for (const b of targets) out.push(S.moveBody(b, axisOrigin, axisDir, ang, delta));
     }
+    return { shape: out.length === 1 ? out[0] : S.compoundOf(out) };
+  },
 
-    // ============================================================
-    // 钣金
-    // ============================================================
-    case 'sheetBaseFlange': {
-      const p = f.params;
-      if (!(p.thickness > 0)) throw new Error('基体法兰：板厚必须大于 0');
-      const skf = ctx.doc.getFeature(p.sketchId);
-      if (!skf || skf.type !== 'sketch') throw new Error('基体法兰：找不到引用的草图');
-      const pl = planeOf(skf);
-      // 钣金基体 = 把草图轮廓当作展开轮廓，沿草图法向拉伸出**实心薄板**（厚度 = 板厚）。
-      // 等价于「拉伸」一个填充面，只是它是独立的钣金特征类型、携带板厚 / 折弯半径 / K 因子等钣金参数。
-      const faces = facesOfSketch(skf);
-      if (!faces.length) throw new Error('基体法兰：草图没有封闭轮廓');
-      const sign = p.reverse ? -1 : 1;
-      const dir: Vec3 = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
-      const solid = extrudeFaces(faces, dir, Math.abs(p.thickness), false);
-      const op = p.operation;
-      return {
-        shape: applyBoolean(op, current, solid),
-        added: op === 'add' || op === 'new' ? solid : undefined,
-        tool: op === 'cut' ? solid : undefined,
-      };
+  deleteBody: (f, current) => {
+    if (!current) throw new Error('删除实体：没有可操作的实体');
+    const bodies = S.bodiesOf(current);
+    const del = new Set((f.params.indices ?? []).map((i) => (i < 0 ? bodies.length + i : i)));
+    if (!del.size) throw new Error('删除实体：没有选择要删除的实体');
+    for (const i of del) {
+      if (!Number.isInteger(i) || i < 0 || i >= bodies.length) {
+        throw new Error(`删除实体：实体下标 ${i} 越界（当前 ${bodies.length} 个实体）`);
+      }
     }
+    const kept = bodies.filter((_, i) => !del.has(i));
+    if (!kept.length) throw new Error('删除实体：不能删除全部实体');
+    return { shape: kept.length === 1 ? kept[0] : S.compoundOf(kept) };
+  },
 
-    case 'sheetEdgeFlange': {
-      if (!current) throw new Error('边线法兰：请先创建钣金基体（基体法兰）');
-      const p = f.params;
-      if (!(p.length > 0)) throw new Error('边线法兰：法兰长度必须大于 0');
-      if (!(p.thickness > 0)) throw new Error('边线法兰：板厚必须大于 0');
-      const edges = resolveEdges(current, [p.edge]);
-      if (!edges.length) throw new Error('边线法兰：找不到选中的边');
-      const wall = buildEdgeFlange(edges[0], current, p);
-      const op = p.operation;
-      return {
-        shape: applyBoolean(op, current, wall),
-        added: op === 'add' || op === 'new' ? wall : undefined,
-        tool: op === 'cut' ? wall : undefined,
-      };
+  combine: (f, current) => {
+    if (!current) throw new Error('组合：没有可操作的实体');
+    const bodies = S.bodiesOf(current);
+    const { mainIndex, toolIndices, operation } = f.params;
+    if (!Number.isInteger(mainIndex) || mainIndex < 0 || mainIndex >= bodies.length) {
+      throw new Error(`组合：主体下标 ${mainIndex} 越界（当前 ${bodies.length} 个实体）`);
     }
+    const tools = (toolIndices ?? []).length
+      ? (toolIndices ?? []).filter((i) => i !== mainIndex)
+      : bodies.map((_, i) => i).filter((i) => i !== mainIndex);
+    if (!tools.length) throw new Error('组合：没有选择工具体');
+    for (const i of tools) {
+      if (!Number.isInteger(i) || i < 0 || i >= bodies.length) {
+        throw new Error(`组合：工具体下标 ${i} 越界（当前 ${bodies.length} 个实体）`);
+      }
+    }
+    const merged = S.combineBodies(bodies[mainIndex], tools.map((i) => bodies[i]), operation);
+    const used = new Set([mainIndex, ...tools]);
+    const out = [...S.bodiesOf(merged), ...bodies.filter((_, i) => !used.has(i))];
+    return { shape: out.length === 1 ? out[0] : S.compoundOf(out) };
+  },
 
-    default:
-      throw new Error(`未知特征类型：${(f as Feature).type}`);
-  }
+  chamfer: (f, current) => {
+    if (!current) throw new Error('倒角：没有可操作的实体');
+    const edges = resolveEdges(current, f.params.edges);
+    if (!edges.length) throw new Error('倒角：找不到对应的边');
+    return { shape: S.chamfer(current, edges, f.params.distance) };
+  },
+
+  shell: (f, current) => {
+    if (!current) throw new Error('抽壳：没有可操作的实体');
+    const faces = resolveFaces(current, f.params.faces);
+    if (!faces.length) throw new Error('抽壳：找不到要移除的面');
+    return { shape: S.shell(current, faces, f.params.thickness) };
+  },
+
+  linearPattern: (f, current, ctx) => {
+    if (!current) throw new Error('阵列：没有可操作的实体');
+    const seed = f.params.seedFeatureId ? ctx.doc.getFeature(f.params.seedFeatureId) : null;
+    const seedOut = seed ? ctx.doc.evalCache.get(seed.id) : undefined;
+    const { direction, spacing, count } = f.params;
+    if (count < 2) return { shape: current };
+    const base = seedOut?.tool ?? seedOut?.added ?? null;
+    if (base) {
+      const instances = S.linearPatternInstances(base, direction, spacing, count);
+      const merged = S.fuseAll(instances);
+      const isCut = !!seedOut?.tool;
+      return { shape: isCut ? S.cut(current, merged) : S.fuse(current, merged), tool: isCut ? merged : undefined };
+    }
+    const copies = S.linearPatternInstances(current, direction, spacing, count);
+    return { shape: S.fuseAll(copies) };
+  },
+
+  circularPattern: (f, current, ctx) => {
+    if (!current) throw new Error('阵列：没有可操作的实体');
+    const seed = f.params.seedFeatureId ? ctx.doc.getFeature(f.params.seedFeatureId) : null;
+    const seedOut = seed ? ctx.doc.evalCache.get(seed.id) : undefined;
+    const { axisOrigin, axisDir, count, totalAngleDeg, equalSpacing } = f.params;
+    if (count < 2) return { shape: current };
+    const total = (totalAngleDeg * Math.PI) / 180;
+    const step = equalSpacing && total >= Math.PI * 2 - 1e-6 ? total / count : total / Math.max(count - 1, 1);
+    const base = seedOut?.tool ?? seedOut?.added ?? null;
+    const mk = (shape: any) =>
+      Array.from({ length: count }, (_, i) => S.rotateAxis(shape, axisOrigin, axisDir, step * i));
+    if (base) {
+      const merged = S.fuseAll(mk(base));
+      const isCut = !!seedOut?.tool;
+      return { shape: isCut ? S.cut(current, merged) : S.fuse(current, merged), tool: isCut ? merged : undefined };
+    }
+    return { shape: S.fuseAll(mk(current)) };
+  },
+
+  mirror: (f, current, ctx) => {
+    if (!current) throw new Error('镜像：没有可操作的实体');
+    const seed = f.params.seedFeatureId ? ctx.doc.getFeature(f.params.seedFeatureId) : null;
+    const seedOut = seed ? ctx.doc.evalCache.get(seed.id) : undefined;
+    const { planePoint, planeNormal } = f.params;
+    const base = seedOut?.tool ?? seedOut?.added ?? null;
+    if (base) {
+      const m = S.mirrorPlane(base, planePoint, planeNormal);
+      const isCut = !!seedOut?.tool;
+      return { shape: isCut ? S.cut(current, m) : S.fuse(current, m), tool: isCut ? m : undefined };
+    }
+    const m = S.mirrorPlane(current, planePoint, planeNormal);
+    return { shape: S.fuse(current, m) };
+  },
+
+  referencePlane: (f, current) => ({ shape: current }),
+
+  hole: (f, current) => {
+    if (!current) throw new Error('孔：没有可操作的实体');
+    const tool = S.holeTool(f.params);
+    return { shape: S.cut(current, tool), tool };
+  },
+
+  draft: (f, current) => {
+    if (!current) throw new Error('拔模：没有可操作的实体');
+    const faces = resolveFaces(current, f.params.draftFaces);
+    if (!faces.length) throw new Error('拔模：找不到要拔模的面');
+    const nf = f.params.neutralFace;
+    const shape = S.draft(
+      current,
+      faces,
+      nf.point,
+      nf.normal ?? [0, 0, 1],
+      f.params.angleDeg,
+      !!(f.params as any).reverse
+    );
+    return { shape };
+  },
+
+  rib: (f, current, ctx) => {
+    if (!current) throw new Error('筋：没有可操作的实体');
+    const skf = ctx.doc.getFeature(f.params.sketchId);
+    if (!skf || skf.type !== 'sketch') throw new Error('筋：找不到引用的草图');
+    const pl = planeOf(skf);
+    solveSketch(skf.params.sketch);
+    const prof = buildRibProfile(skf.params.sketch, f.params.thickness);
+    if (!prof) throw new Error('筋：草图需为一条连续的开口轮廓');
+    const world = prof.map((p) => worldFromSketch(pl, p[0], p[1]));
+    const face = S.faceFromPoints(world);
+    const depth = Math.max(f.params.depth ?? 10, 0.01);
+    const solid = S.extrude(face, pl.normal, depth, !!f.params.symmetric);
+    return { shape: S.fuse(current, solid), added: solid };
+  },
+
+  surfaceExtrude: (f, current, ctx) => {
+    const skf = ctx.doc.getFeature(f.params.sketchId);
+    if (!skf || skf.type !== 'sketch') throw new Error('拉伸曲面：找不到引用的草图');
+    const pl = planeOf(skf);
+    const wire = profileWireOf(skf);
+    const sign = f.params.reverse ? -1 : 1;
+    const dir: [number, number, number] = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
+    ctx.surfaceById.set(f.id, [S.surfaceExtrude(wire, dir, f.params.distance, !!f.params.symmetric)]);
+    return { shape: current };
+  },
+
+  surfaceRevolve: (f, current, ctx) => {
+    const skf = ctx.doc.getFeature(f.params.sketchId);
+    if (!skf || skf.type !== 'sketch') throw new Error('旋转曲面：找不到引用的草图');
+    const pl = planeOf(skf);
+    const wire = profileWireOf(skf);
+    const origin = worldFromSketch(pl, f.params.axisA[0], f.params.axisA[1]);
+    const p2 = worldFromSketch(pl, f.params.axisB[0], f.params.axisB[1]);
+    const axis: [number, number, number] = [p2[0] - origin[0], p2[1] - origin[1], p2[2] - origin[2]];
+    const sign = f.params.reverse ? -1 : 1;
+    const ang = ((f.params.angleDeg * Math.PI) / 180) * sign;
+    ctx.surfaceById.set(f.id, [S.surfaceRevolve(wire, origin, axis, ang)]);
+    return { shape: current };
+  },
+
+  surfacePlanar: (f, current, ctx) => {
+    const skf = ctx.doc.getFeature(f.params.sketchId);
+    if (!skf || skf.type !== 'sketch') throw new Error('平面区域：找不到引用的草图');
+    const faces = facesOfSketch(skf);
+    if (!faces.length) throw new Error('平面区域：草图没有闭合轮廓');
+    ctx.surfaceById.set(f.id, [faces[0]]);
+    return { shape: current };
+  },
+
+  surfaceLoft: (f, current, ctx) => {
+    const wires: any[] = [];
+    for (const sid of f.params.sketchIds) {
+      const skf = ctx.doc.getFeature(sid);
+      if (!skf || skf.type !== 'sketch') continue;
+      wires.push(profileWireOf(skf));
+    }
+    if (wires.length < 2) throw new Error('放样曲面：至少需要两个截面草图');
+    ctx.surfaceById.set(f.id, [S.loftRobust(wires, false, !!f.params.ruled)]);
+    return { shape: current };
+  },
+
+  surfaceSweep: (f, current, ctx) => {
+    const prof = ctx.doc.getFeature(f.params.profileSketchId);
+    const path = ctx.doc.getFeature(f.params.pathSketchId);
+    if (!prof || prof.type !== 'sketch' || !path || path.type !== 'sketch') {
+      throw new Error('扫描曲面：缺少轮廓或路径草图');
+    }
+    const plP = planeOf(prof);
+    solveSketch(prof.params.sketch);
+    const pRegions = sketchToRegions(prof.params.sketch, plP);
+    if (!pRegions.length) throw new Error('扫描曲面：轮廓草图没有封闭区域');
+    const plPath = planeOf(path);
+    solveSketch(path.params.sketch);
+    const pathPts = sampleSketchPath(path.params.sketch, plPath, 48);
+    if (pathPts.length < 2) throw new Error('扫描曲面：路径草图没有可用曲线');
+    ctx.surfaceById.set(f.id, [sweepProfileAlongPath(pathPts, pRegions[0].polygon, plP.normal, false)]);
+    return { shape: current };
+  },
+
+  surfaceTrim: (f, current, ctx) => {
+    const inputs = collectSurfaceShells(ctx, f.params.surfaceIds, '裁剪曲面');
+    const axisIdx = f.params.axis === 'x' ? 0 : f.params.axis === 'y' ? 1 : 2;
+    const BIG = 1e5;
+    const base = inputs.length === 1 ? inputs[0] : S.compoundOf(inputs);
+    const bb = S.shapeBBox(base);
+    const c = [(bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2, (bb.min[2] + bb.max[2]) / 2];
+    const origin: [number, number, number] = [c[0] - BIG / 2, c[1] - BIG / 2, c[2] - BIG / 2];
+    origin[axisIdx] = f.params.keep === 'positive' ? f.params.offset : f.params.offset - BIG;
+    const box = S.translate(S.primitives.box(BIG, BIG, BIG), origin[0], origin[1], origin[2]);
+    const kept: any[] = [];
+    for (const s of inputs) {
+      try {
+        kept.push(...S.surfacesOf(S.common(s, box)));
+      } catch {
+        /* 该曲面与裁剪盒无交集 → 被整片裁掉；其余曲面继续裁剪 */
+      }
+    }
+    if (!kept.length) throw new Error('裁剪曲面：裁剪后没有任何剩余');
+    for (const sid of f.params.surfaceIds) ctx.surfaceById.delete(sid);
+    ctx.surfaceById.set(f.id, kept);
+    return { shape: current };
+  },
+
+  surfaceSew: (f, current, ctx) => {
+    const inputs = collectSurfaceShells(ctx, f.params.surfaceIds, '缝合曲面');
+    if (inputs.length < 2) throw new Error('缝合曲面：至少需要两个曲面体');
+    const sewn = S.sewShapes(inputs, f.params.tolerance ?? 1e-4);
+    let shells = S.surfacesOf(sewn);
+    if (!shells.length) shells = [sewn];
+    for (const sid of f.params.surfaceIds) ctx.surfaceById.delete(sid);
+    ctx.surfaceById.set(f.id, shells);
+    return { shape: current };
+  },
+
+  sheetBaseFlange: (f, current, ctx) => {
+    const p = f.params;
+    if (!(p.thickness > 0)) throw new Error('基体法兰：板厚必须大于 0');
+    const skf = ctx.doc.getFeature(p.sketchId);
+    if (!skf || skf.type !== 'sketch') throw new Error('基体法兰：找不到引用的草图');
+    const pl = planeOf(skf);
+    const faces = facesOfSketch(skf);
+    if (!faces.length) throw new Error('基体法兰：草图没有封闭轮廓');
+    const sign = p.reverse ? -1 : 1;
+    const dir: Vec3 = [pl.normal[0] * sign, pl.normal[1] * sign, pl.normal[2] * sign];
+    const solid = extrudeFaces(faces, dir, Math.abs(p.thickness), false);
+    const op = p.operation;
+    return {
+      shape: applyBoolean(op, current, solid),
+      added: op === 'add' || op === 'new' ? solid : undefined,
+      tool: op === 'cut' ? solid : undefined,
+    };
+  },
+
+  sheetEdgeFlange: (f, current) => {
+    if (!current) throw new Error('边线法兰：请先创建钣金基体（基体法兰）');
+    const p = f.params;
+    if (!(p.length > 0)) throw new Error('边线法兰：法兰长度必须大于 0');
+    if (!(p.thickness > 0)) throw new Error('边线法兰：板厚必须大于 0');
+    const edges = resolveEdges(current, [p.edge]);
+    if (!edges.length) throw new Error('边线法兰：找不到选中的边');
+    const wall = buildEdgeFlange(edges[0], current, p);
+    const op = p.operation;
+    return {
+      shape: applyBoolean(op, current, wall),
+      added: op === 'add' || op === 'new' ? wall : undefined,
+      tool: op === 'cut' ? wall : undefined,
+    };
+  },
+};
+
+const FEATURE_REGISTRY = new Map<Feature['type'], FeatureHandlerFn>(
+  Object.entries(FEATURE_HANDLERS) as any
+);
+
+export function evaluateFeature(f: Feature, current: any, ctx: EvalCtx): EvalOut {
+  const h = FEATURE_REGISTRY.get(f.type);
+  if (!h) throw new Error(`未知特征类型：${f.type}`);
+  return h(f, current, ctx);
 }
 
 /**

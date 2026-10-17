@@ -14,7 +14,7 @@
 import { el, clear, section } from './dom';
 import { modal } from './toast';
 import { kernel } from '../core/kernel';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import type { EdgeMeta, FaceMeta, Vec3 } from '../core/kernel-types';
 import { angleBetweenDeg, pointEdgeDistance, pointFaceDistance, vecDist } from './measure-math';
 import { formatLength, formatArea, formatVolume, fmtCoord, UNIT_BY_ID } from '../core/units';
@@ -46,7 +46,7 @@ function selLabel(kind: string, n: number): string {
  * 按当前选择计算测量行。返回空数组表示该组合暂不支持（调用方给提示）。
  * 含内核调用的分支是异步的（面/边间距）。
  */
-export async function measureSelection(app: App): Promise<MeasureRow[]> {
+export async function measureSelection(app: AppApi): Promise<MeasureRow[]> {
   const model = app.currentModel();
   if (!model) return [];
   const mesh = model.mesh;
@@ -156,7 +156,7 @@ const GUIDE = [
 ];
 
 /** 打开「测量」对话框（SolidWorks 评估 → 测量） */
-export function openMeasure(app: App): void {
+export function openMeasure(app: AppApi): void {
   const host = el('div', { class: 'col' });
   const selInfo = el('div', { class: 'hint' });
   const table = el('div', { class: 'col' });

@@ -5,7 +5,7 @@
  * CAD 场景绝大多数时间静止（按需重绘），像素级放大既零开销又与画面完全一致。
  */
 import { el } from './dom';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 
 let host: HTMLElement | null = null;
 let lens: HTMLCanvasElement | null = null;
@@ -19,7 +19,7 @@ export function magnifierActive(): boolean {
   return !!host;
 }
 
-export function toggleMagnifier(app: App): void {
+export function toggleMagnifier(app: AppApi): void {
   if (host) {
     closeMagnifier();
     app.setStatus('放大镜：关闭', 'ok');
@@ -28,7 +28,7 @@ export function toggleMagnifier(app: App): void {
   openMagnifier(app);
 }
 
-function openMagnifier(app: App): void {
+function openMagnifier(app: AppApi): void {
   const canvas = app.viewport.renderer.domElement;
   const wrap = canvas.parentElement;
   if (!wrap) return;

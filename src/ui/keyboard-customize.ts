@@ -8,7 +8,7 @@
  */
 import { el, clear } from './dom';
 import { modal, notify } from './toast';
-import type { App } from '../app/app';
+import type { AppApi } from '../app/app-api';
 import { hotkeyList, setHotkeyOverride, resetHotkey, resetAllHotkeys, eventToKeys, hotkeyOverrides } from '../app/hotkeys';
 
 interface Row {
@@ -17,7 +17,7 @@ interface Row {
   keys: string;
 }
 
-export function openKeyboardCustomize(app: App): void {
+export function openKeyboardCustomize(app: AppApi): void {
   void app;
   const rows: Row[] = hotkeyList().map((h) => ({ id: h.id, label: h.label, keys: h.keys }));
   let filterText = '';

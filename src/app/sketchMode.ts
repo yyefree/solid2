@@ -5,7 +5,7 @@
  * 全部命中测试在草图 2D 局部坐标里完成（见 SketchOverlay）。
  */
 import * as THREE from 'three';
-import type { App } from './app';
+import type { AppApi } from './app-api';
 import type { SketchFeature } from '../doc/types';
 import { SketchOverlay, type HitEntity, type HitPoint } from '../view/sketchview';
 import { solveSketch } from '../sketch/solver';
@@ -42,7 +42,7 @@ export type SketchTool =
   | 'bspline';
 
 export class SketchController {
-  private app: App;
+  private app: AppApi;
   private overlay: SketchOverlay | null = null;
   /** 模型态下正在显示的草图特征（退出草图后仍可见） */
   private displayFeature: SketchFeature | null = null;
@@ -68,14 +68,14 @@ export class SketchController {
   //
   // SolidWorks 语义：草图编辑态按 Ctrl+Z 撤销的是**草图内部**的画线 / 约束 / 删除等
   // 操作，而不是文档级的特征增删。此前 edit.undo 是 global scope，草图态按 Ctrl+Z 会
-  // 触发文档级 `App.undo()`——它整体替换 doc，而 `editingSketch` 仍指向旧 doc 的特征
+  // 触发文档级 `AppApi.undo()`——它整体替换 doc，而 `editingSketch` 仍指向旧 doc 的特征
   // 对象 → 草图编辑器与文档脱节（画线后按 Ctrl+Z 毫无反应，模型却回退了）。
   // 快照栈是纯逻辑，见 ../sketch/history（Node 可单测）。
   private history = new SketchHistory();
   /** 恢复快照期间抑制历史记录（restore 自身会触发 solve → commitHistory） */
   private restoring = false;
 
-  constructor(app: App) {
+  constructor(app: AppApi) {
     this.app = app;
   }
 
@@ -272,7 +272,7 @@ export class SketchController {
 
   setTool(t: SketchTool): void {
     this.tool = t;
-    // 与 App 字段同步：Esc 逐层退出（取消链→回选择→退草图）时丝带高亮不能停留在旧工具上
+    // 与 AppApi 字段同步：Esc 逐层退出（取消链→回选择→退草图）时丝带高亮不能停留在旧工具上
     this.app.sketchTool = t;
     this.staged = [];
     this.previewLocal = [];
