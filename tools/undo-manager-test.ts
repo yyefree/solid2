@@ -31,7 +31,7 @@ function makeHost() {
     restore: (json) => { state.doc = json; calls.push(`restore:${json}`); },
     afterRestore: async () => { calls.push('afterRestore'); },
     rebuild: async (opts) => { calls.push(`rebuild:${opts.fit ? 'fit' : 'nofit'}`); },
-    emit: (...evts) => { state.emits.push(...evts); },
+    emit: (...evts) => { state.emits.push(...evts); calls.push(`emit:${evts.join(',')}`); },
     info: (msg) => { state.infos.push(msg); },
   };
   return { host, calls, state };
@@ -41,15 +41,17 @@ function makeHost() {
 {
   const { host, calls, state } = makeHost();
   const m = new UndoManager(host);
-  m.mutate(() => { state.doc = 'v1'; });
-  check('mutate 顺序：rebuild 在执行之后、emit 之前',
-    calls[0] === 'rebuild:nofit' && calls.length === 1, calls.join(','));
+  // fn 自己也入调用序列：顺序断言才真正锁住「执行在重建前、广播在最后」
+  m.mutate(() => { state.doc = 'v1'; calls.push('exec'); }, { emit: ['params'] });
+  check('mutate 顺序：执行 → 重建 → 广播',
+    calls.join(',') === 'exec,rebuild:nofit,emit:params', calls.join(','));
   check('mutate 后 canUndo（快照 v0 已入栈）', m.canUndo && !m.canRedo);
 
   const { host: h2, calls: c2, state: s2 } = makeHost();
   const m2 = new UndoManager(h2);
-  m2.mutate(() => { s2.doc = 'v1'; }, { fit: true, emit: ['params', 'change'] });
-  check('mutate fit 透传给重建', c2[0] === 'rebuild:fit', c2.join(','));
+  m2.mutate(() => { s2.doc = 'v1'; c2.push('exec'); }, { fit: true, emit: ['params', 'change'] });
+  check('mutate fit 透传给重建（仍在执行之后）',
+    c2.join(',') === 'exec,rebuild:fit,emit:params,change', c2.join(','));
   check('mutate emit 广播（多个事件）', s2.emits.join(',') === 'params,change', s2.emits.join(','));
 
   const { host: h3, calls: c3 } = makeHost();
@@ -127,7 +129,7 @@ function makeHost() {
   const wrapped: UndoHost = {
     ...host,
     afterRestore: async () => {
-      m.push(); // 撤销流程内部若再压栈（错误行为），suppress 必须拦截
+      m2.push(); // 撤销流程内部若再压栈（错误行为），suppress 必须拦截
       pushedDuringRestore = true;
     },
   };
@@ -139,8 +141,48 @@ function makeHost() {
     pushedDuringRestore && m2.stacks.undo.length === 0,
     `undoLen=${m2.stacks.undo.length}`);
   await m2.redo();
+  // redo 结束后再压一次：suppress 若泄漏（永为 true），这次压栈会被静默吞掉
+  const undoLen = m2.stacks.undo.length;
+  m2.push();
   check('redo 流程结束后 suppress 复位（新压栈生效）',
-    m2.stacks.redo.length === 0 && m2.canUndo);
+    m2.stacks.undo.length === undoLen + 1 && m2.stacks.redo.length === 0,
+    `undo ${undoLen}→${m2.stacks.undo.length}, redoLen=${m2.stacks.redo.length}`);
+}
+
+// ---- 错误路径：fn 抛错 / afterRestore reject ----
+{
+  const { host, state } = makeHost();
+  const m = new UndoManager(host);
+  let propagated = false;
+  try {
+    m.mutate(() => { throw new Error('boom'); });
+  } catch (e) {
+    propagated = (e as Error).message === 'boom';
+  }
+  check('mutate：fn 抛错 → 异常原样传播（不吞）', propagated);
+  check('mutate：fn 抛错但快照已压栈 → 可 undo 回滚到执行前',
+    m.stacks.undo.length === 1 && m.canUndo, `undoLen=${m.stacks.undo.length}`);
+  await m.undo();
+  check('mutate：fn 抛错后 undo 恢复执行前状态', state.doc === 'v0' && !m.canUndo);
+
+  const { host: h2, state: s2 } = makeHost();
+  const bad: UndoHost = { ...h2, afterRestore: async () => { throw new Error('restore-fail'); } };
+  const m2 = new UndoManager(bad);
+  m2.mutate(() => { s2.doc = 'v1'; });
+  m2.mutate(() => { s2.doc = 'v2'; });
+  let rejected = false;
+  try {
+    await m2.undo();
+  } catch (e) {
+    rejected = (e as Error).message === 'restore-fail';
+  }
+  check('undo：afterRestore reject → 异常传播、文档已回退、不发「已撤销」',
+    rejected && s2.doc === 'v1' && !s2.infos.includes('已撤销'),
+    `doc=${s2.doc}, infos=${s2.infos.join(',')}`);
+  const undoLen = m2.stacks.undo.length;
+  m2.push();
+  check('undo：afterRestore reject 后 suppress 经 finally 复位（新压栈生效）',
+    m2.stacks.undo.length === undoLen + 1, `undo ${undoLen}→${m2.stacks.undo.length}`);
 }
 
 // ---- useStacks：按文档换栈 ----

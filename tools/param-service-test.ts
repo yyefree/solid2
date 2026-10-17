@@ -85,9 +85,17 @@ function extrudeFeature(id = 'f1', distance = 10, name = '拉伸1'): Feature {
   check('paramRows：错误映射到行（value 缺省 + error 有文案）',
     bad.value === undefined && !!bad.error, JSON.stringify(bad));
 
-  // 缓存复用：再次调用不改文档也不重新求值（issues 计数稳定）
+  // 缓存真语义：首次 paramRows 后**绕过服务**直接改文档 → 行来自新文档、
+  // 但值仍取旧解析；reset()（强制重建语义）之后才重新求值。
+  // （只看 issues 计数无法区分「复用」与「每次重算」，必须钉住值本身。）
   svc.paramRows();
-  check('paramRows：命中缓存复用（issues 计数不变）', svc.issues.length === 1);
+  doc.params[0].expr = '80';
+  const staleRow = svc.paramRows().find((r) => r.name === '板厚')!;
+  check('paramRows：命中缓存时复用旧求值（文档已变仍返回旧值 8）',
+    staleRow.value === 8, `value=${staleRow.value}`);
+  svc.reset();
+  const freshRow = svc.paramRows().find((r) => r.name === '板厚')!;
+  check('paramRows：reset 后重新求值（返回新值 80）', freshRow.value === 80, `value=${freshRow.value}`);
 }
 
 // ---- setParam / removeParam：走 mutate + emit ----
@@ -167,6 +175,26 @@ function extrudeFeature(id = 'f1', distance = 10, name = '拉伸1'): Feature {
   svc.removeFeatureExpression(f.id, 'distance');
   check('removeFeatureExpression：删空后 expressions 字段整体移除',
     (f as unknown as { expressions?: unknown }).expressions === undefined);
+}
+
+// ---- removeParam / removeFeatureExpression：未绑定时不压栈不重建 ----
+{
+  const { svc, doc, mutates } = makeHost();
+  svc.removeParam('不存在的参数');
+  check('removeParam：未绑定的参数 → 不压栈、不改文档',
+    mutates.length === 0 && doc.params.length === 0, JSON.stringify(mutates));
+
+  const f = extrudeFeature();
+  doc.add(f);
+  svc.removeFeatureExpression(f.id, 'distance');
+  check('removeFeatureExpression：特征无 expressions 字段 → 不压栈', mutates.length === 0);
+  svc.setFeatureExpression(f.id, 'distance', '2*3');
+  check('setFeatureExpression：绑定成功（压栈 1 次）', mutates.length === 1);
+  svc.removeFeatureExpression(f.id, 'weight');
+  check('removeFeatureExpression：未绑定的 path → 不压栈', mutates.length === 1);
+  svc.removeFeatureExpression(f.id, 'distance');
+  check('removeFeatureExpression：已绑定的 path → 压栈并删除（空后整字段移除）',
+    mutates.length === 2 && (f as unknown as { expressions?: unknown }).expressions === undefined);
 }
 
 // ---- previewExpr：不改文档 ----

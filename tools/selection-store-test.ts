@@ -151,6 +151,28 @@ function check(name: string, ok: boolean, detail = ''): void {
   check('prune 保留仍存在的特征引用', s2.prune((id) => id === 'alive') === false && s2.featureId === 'alive');
 }
 
+// ---- 叠加选择跨类别保留 / 过滤器拒绝保留特征 / prune 剪 editingSketch ----
+{
+  const s = new SelectionStore();
+  s.selectGeom('face', 1, true);
+  s.selectGeom('edge', 2, true);
+  check('叠加选择跨类别保留（面 + 边同时存在）',
+    s.geometry.faces.length === 1 && s.geometry.edges.length === 1,
+    JSON.stringify(s.geometry));
+
+  s.selectFeature('f1');
+  // 切到 edge 过滤器后面被拒（顶点不在允许列表）——已选特征必须保留
+  s.setSelectionFilter('edge');
+  check('过滤器拒绝时不清已选特征（无副作用）',
+    s.selectGeom('vertex', 3, false) === false && s.featureId === 'f1');
+
+  const s2 = new SelectionStore();
+  s2.setEditingSketch('sk-gone');
+  check('prune 剪掉悬空的 editingSketch（切文档等路径）',
+    s2.prune(() => false) === true && s2.editingSketchId === null && !s2.isEditingSketch,
+    `editing=${s2.editingSketchId}`);
+}
+
 // ---- reset ----
 {
   const s = new SelectionStore();

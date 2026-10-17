@@ -366,6 +366,55 @@ function makeHost(overrides: Partial<DrawingHost> = {}) {
     h.rec.toasts[0].kind === 'ok' && h.rec.toasts[0].msg === 'PNG 已导出');
 }
 
+// ---- exportDrawingPNG：光栅化失败 → reject 传播、无 download、无提示 ----
+{
+  const h = makeHost({ rasterizePNG: async () => { throw new Error('raster fail'); } });
+  h.svc.setDrawing(Object.assign(new Drawing(), { views: [mkView()] }));
+  let err: Error | null = null;
+  await h.svc.exportDrawingPNG().catch((e) => { err = e as Error; });
+  check('exportDrawingPNG：rasterizePNG reject → 异常传播、无 download、无提示',
+    !!err && err.message === 'raster fail' &&
+    h.rec.downloads.length === 0 && h.rec.toasts.length === 0, err?.message ?? 'null');
+}
+
+// ---- setDrawing 换文档：清 lastDimRun（Shift 退化为长度标注）----
+{
+  const h = makeHost();
+  h.svc.setDrawing(Object.assign(new Drawing(), { views: [mkView()] }));
+  h.svc.toggleDimensionMode();
+  h.svc.placeDrawingDimension('v1', 0); // 记 lastDimRun = 'v1:0'
+  h.svc.setDrawing(Object.assign(new Drawing(), { views: [mkView()] })); // 换到另一文档（同样有 v1）
+  h.svc.placeDrawingDimension('v1', 0, true); // lastDimRun 已清 → 退化为长度标注
+  check('setDrawing 清 lastDimRun：跨文档 Shift 点击退化为长度标注（不拿旧文档的边算距离）',
+    h.svc.drawing!.views[0].dims.length === 1 &&
+    h.rec.toasts.some((t) => t.msg.startsWith('长度标注')) &&
+    !h.rec.toasts.some((t) => t.msg.startsWith('距离标注')),
+    JSON.stringify(h.rec.toasts.filter((t) => t.msg.includes('标注'))));
+}
+
+// ---- generateDrawing：drawingScale()=0 时不写 fixedScale ----
+{
+  const h = makeHost({ hasModel: () => true, currentModel: () => modelWith(emptyMesh()) });
+  h.svc.generateDrawing(['front']);
+  check('generateDrawing：drawingScale()=0 → fixedScale 保持 0（不覆盖）',
+    h.svc.drawing!.fixedScale === 0, `fixedScale=${h.svc.drawing!.fixedScale}`);
+  h.setScale(2);
+  h.svc.generateDrawing(['front']);
+  check('generateDrawing：drawingScale()=2 → 覆盖 fixedScale',
+    h.svc.drawing!.fixedScale === 2, `fixedScale=${h.svc.drawing!.fixedScale}`);
+}
+
+// ---- toggleDrawingBOM：装配存在但 components 为空 → 零件兜底 ----
+{
+  const asm = { components: [], bomEntries: () => [] } as unknown as Assembly;
+  const h = makeHost({ hasModel: () => true, assembly: () => asm });
+  h.svc.setDrawing(Object.assign(new Drawing(), { views: [mkView()] }));
+  h.svc.toggleDrawingBOM();
+  const bom = h.svc.drawing!.bom;
+  check('toggleDrawingBOM：装配 components 为空 → 落零件兜底（1 行）',
+    bom.length === 1 && bom[0].name === '零件·3 特征', JSON.stringify(bom));
+}
+
 // ---- exitDimensionMode ----
 {
   const h = makeHost();

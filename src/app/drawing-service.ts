@@ -69,6 +69,8 @@ export class DrawingService {
   }
   setDrawing(d: Drawing | null): void {
     this._drawing = d;
+    // 换文档（打开/切条目）：旧文档的「上次标注边」引用对新工程图无意义，必须清
+    this.lastDimRun = null;
   }
   get dimMode(): boolean {
     return this._dimMode;
@@ -101,6 +103,8 @@ export class DrawingService {
     const d = this.ensureDrawing();
     d.unitSystem = this.host.unitSystem();
     generateStandardViews(d, m.mesh, kinds);
+    // 视图整体重建（viewId 重新编号）：旧的「上次标注边」不再可解释，清
+    this.lastDimRun = null;
     const scale = this.host.drawingScale();
     if (scale) d.fixedScale = scale;
     this.host.emit('drawing', 'tree');

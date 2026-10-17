@@ -61,14 +61,10 @@ export interface PickHost {
   mateRefLabel(ref: MateRef): string;
 
   // ---- 选择应用（互斥不变量 + 副作用留在宿主）----
-  /** 落地几何选择（过滤器拒绝时宿主自行 no-op） */
+  /** 落地几何选择（过滤器拒绝时宿主自行 no-op；高亮/草图显示层同步也由宿主负责） */
   applyGeomSelection(kind: GeomKind, index: number, additive: boolean): void;
   /** 清空全部选中（几何 + 特征） */
   clearSelection(): void;
-  /** 重绘选中高亮 */
-  refreshHighlight(): void;
-  /** 把「特征选中」同步到草图显示层 */
-  syncSketchDisplaySelection(): void;
   /** 选中特征（模型态点选显示中的草图用） */
   selectFeature(id: string | null): void;
 
@@ -313,8 +309,11 @@ export class PickService {
     for (let i = 0; i < pos.count; i++) {
       v.fromBufferAttribute(pos as THREE.BufferAttribute, i).project(cam);
       if (v.z < -1 || v.z > 1) continue;
-      const sx = ((v.x + 1) / 2) * rect.width;
-      const sy = ((1 - v.y) / 2) * rect.height;
+      // ⚠️ 入参 x/y 是客户区坐标，必须换成画布相对坐标再比——
+      // 漏减 rect.left/top 时画布只要有偏移（左侧面板即可达 200+px），
+      // 8px 容差内的顶点永远命不中（过滤器=顶点时整个拾取失效）。
+      const sx = rect.left + ((v.x + 1) / 2) * rect.width;
+      const sy = rect.top + ((1 - v.y) / 2) * rect.height;
       const dx = sx - x;
       const dy = sy - y;
       const d = dx * dx + dy * dy;

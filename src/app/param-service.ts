@@ -133,7 +133,10 @@ export class ParamService {
   }
 
   removeParam(name: string): void {
-    this.host.mutate(() => this.host.getDoc().removeParam(name), { emit: ['params'] });
+    const doc = this.host.getDoc();
+    // 未绑定的参数：删除是空操作，不值得压栈 + 全模型重建
+    if (!doc.params.some((p) => p.name === name)) return;
+    this.host.mutate(() => doc.removeParam(name), { emit: ['params'] });
   }
 
   // ---- 特征表达式 ----
@@ -179,7 +182,7 @@ export class ParamService {
 
   removeFeatureExpression(id: FeatureId, path: string): void {
     const f = this.host.getDoc().getFeature(id);
-    if (!f?.expressions) return;
+    if (!f?.expressions || !(path in f.expressions)) return;
     const exprs = f.expressions;
     this.host.mutate(() => {
       delete exprs[path];

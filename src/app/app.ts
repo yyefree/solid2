@@ -14,11 +14,11 @@ import { FEATURE_LABEL } from '../doc/types';
 import { type ExprIssue } from '../doc/expr';
 import { download, pickFile, readFileAsArrayBuffer } from '../core/meshexport';
 import { kernel } from '../core/kernel';
-import type { ModelResult, MeshResult, FaceMeta, EdgeMeta, BBox } from '../core/kernel-types';
+import type { ModelResult, FaceMeta, EdgeMeta } from '../core/kernel-types';
 import { Viewport, type ViewDir, LAYOUT_DEFS, type LayoutName } from '../view/viewport';
 import { ShapeView, type DisplayStyle } from '../view/shapeview';
-import { COLORS, previewMaterial } from '../view/materials';
-import { disposeGeomAndMaterial, disposeGroupChildren } from '../view/dispose';
+import { COLORS } from '../view/materials';
+import { disposeGroupChildren } from '../view/dispose';
 import { notify, tableModal } from '../ui/toast';
 import { DEFAULT_UNIT, isUnitSystem, formatLength, formatArea, formatVolume, type UnitSystem } from '../core/units';
 import { closePropertyManager } from '../ui/propertymanager';
@@ -260,7 +260,6 @@ export class App implements AppApi {
 
   private listeners = new Map<AppEvent, Set<() => void>>();
 
-  private previewObject: THREE.Object3D | null = null;
   private highlightGroup: THREE.Group;
 
   constructor(container: HTMLElement) {
@@ -302,8 +301,6 @@ export class App implements AppApi {
       mateRefLabel: (ref) => mateRefLabel(ref),
       applyGeomSelection: (kind, index, additive) => this.applyGeomSelection(kind, index, additive),
       clearSelection: () => this.clearSelection(),
-      refreshHighlight: () => this.refreshHighlight(),
-      syncSketchDisplaySelection: () => this.syncSketchDisplaySelection(),
       selectFeature: (id) => this.selectFeature(id),
       setStatus: (text, kind, detail) => this.setStatus(text, kind, detail),
       emit: (...evts) => this.emit(...evts),
@@ -397,6 +394,9 @@ export class App implements AppApi {
           this.doc = CadDocument.fromJSON(data);
           this.assembly = null;
           this.drawing = null;
+          // 整体换文档：旧文档的选中特征/草图 id 在新文档不存在，剪除悬空引用
+          // （与 loadFeatures/removeFeature 的清理路径一致）
+          this.pruneFeatureUiState();
         }, { fit: true });
       },
       syncEntry: () => this.syncActiveEntry(),
@@ -554,12 +554,22 @@ export class App implements AppApi {
     this.model = entry.model;
     this.importedModel = entry.imported;
     this.assembly = entry.assembly;
-    this.drawing = entry.drawing;
+    this.drawing = entry.drawing; // setter → drawSvc.setDrawing（同步清标注会话 lastDimRun）
     this.undoMgr.useStacks(entry.undo, entry.redo);
     this.activeDocId = entry.id;
     this.sel.reset(); // 切文档：选中态整体重置（含特征/几何/草图），避免跨文档残留
     this.clearSelection();
-    if (this.mode !== entry.kind) this.setMode(entry.kind);
+    // 同 kind 直切（装配→装配、工程图→工程图）时 setMode 会早退，
+    // 其内部的服务状态清理（标注会话/装配拾取）与 ensure 路径必须手工补齐，
+    // 否则会读到旧文档的组件 id 残留、新条目的 assembly/drawing 还是 null。
+    if (this.mode !== entry.kind) {
+      this.setMode(entry.kind);
+    } else {
+      this.drawSvc.exitDimensionMode();
+      this.pickSvc.assignPicks([]);
+      this.pickSvc.syncAssemblyPickMarkers();
+      this.ensureModeObjects();
+    }
     this.viewport.restoreCamera(entry.view);
     this.rebuildModel();
     this.emit('docs', 'change', 'tree', 'props', 'selection');
@@ -857,10 +867,6 @@ export class App implements AppApi {
   /** 把当前可序列化模型同步到三维场景 */
   syncView(fit = false): void {
     const old = this.shapeView;
-    if (this.previewObject) {
-      this.previewObject.removeFromParent();
-      this.previewObject = null;
-    }
     if (old) {
       old.group.removeFromParent();
       old.dispose();
@@ -1079,20 +1085,25 @@ export class App implements AppApi {
       this.assemblyPicks = [];
       this.pickSvc.syncAssemblyPickMarkers();
     }
-    if (mode === 'assembly') {
+    this.ensureModeObjects();
+    this.applyModeVisibility();
+    this.emit('mode', 'change', 'tree', 'props');
+  }
+
+  /** 进入/激活装配或工程图模式时确保其子对象就绪（setMode 与 activateEntry 共用） */
+  private ensureModeObjects(): void {
+    if (this.mode === 'assembly') {
       const a = this.ensureAssembly();
       if (!a.components.length && this.hasModel) {
-        a.insertFromDocument(this.doc.clone(), this.doc.features.length ? '零件1' : '零件1');
+        a.insertFromDocument(this.doc.clone(), '零件1');
       }
     }
-    if (mode === 'drawing') {
+    if (this.mode === 'drawing') {
       this.ensureDrawing();
       if (this.drawing && !this.drawing.views.length && this.hasModel) {
         this.generateDrawing(['front', 'top', 'right', 'iso']);
       }
     }
-    this.applyModeVisibility();
-    this.emit('mode', 'change', 'tree', 'props');
   }
 
   applyModeVisibility(): void {
@@ -1545,36 +1556,6 @@ export class App implements AppApi {
     this.viewport.setGridVisible(v);
     this.viewport.invalidate();
     this.emit('change', 'view');
-  }
-
-  /** 实时预览（传入内核回传的网格结果，无 OCCT） */
-  showPreviewMesh(mesh: MeshResult, valid = true): void {
-    this.clearPreview();
-    try {
-      const positions = new Float32Array(mesh.positions);
-      const normals = new Float32Array(mesh.normals);
-      const indices = new Uint32Array(mesh.indices);
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-      geo.setIndex(new THREE.BufferAttribute(indices, 1));
-      geo.computeBoundingSphere();
-      const m = new THREE.Mesh(geo, previewMaterial(valid));
-      this.previewObject = m;
-      this.viewport.root.add(m);
-      this.viewport.invalidate();
-    } catch {
-      /* 预览失败不影响主流程 */
-    }
-  }
-
-  clearPreview(): void {
-    if (this.previewObject) {
-      this.previewObject.removeFromParent();
-      disposeGeomAndMaterial(this.previewObject);
-      this.previewObject = null;
-      this.viewport.invalidate();
-    }
   }
 
   addFeature(f: Feature, opts: { rebuild?: boolean } = {}): void {

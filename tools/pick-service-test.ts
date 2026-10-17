@@ -72,8 +72,6 @@ function makeHost(overrides: Partial<PickHost> = {}) {
   const rec = {
     applies: [] as { kind: string; index: number; additive: boolean }[],
     clears: 0,
-    refreshes: 0,
-    syncDisp: 0,
     selectFeatures: [] as (string | null)[],
     statuses: [] as { text: string; kind: string; detail?: string }[],
     emits: [] as string[][],
@@ -113,8 +111,6 @@ function makeHost(overrides: Partial<PickHost> = {}) {
     mateRefLabel: (r) => `L(${r.kind})`,
     applyGeomSelection: (kind, index, additive) => { rec.applies.push({ kind, index, additive }); },
     clearSelection: () => { rec.clears++; },
-    refreshHighlight: () => { rec.refreshes++; },
-    syncSketchDisplaySelection: () => { rec.syncDisp++; },
     selectFeature: (id) => { rec.selectFeatures.push(id); },
     setStatus: (text, kind, detail) => { rec.statuses.push({ text, kind, detail }); },
     emit: (...evts) => { rec.emits.push(evts as string[]); },
@@ -488,6 +484,111 @@ function fakeCanvas() {
   h.set({ sketchMode: false });
   c.fire('dblclick', {});
   check('bindPointer：dblclick 模型态 → 不结束 B 样条', h.rec.sketchCalls.bSpline === 0);
+}
+
+// ---- handleClick：草图编辑态直接返回 ----
+{
+  const h = makeHost();
+  h.set({ mode: 'sketch', sketchMode: true, sv: fakeShapeView({}) });
+  h.svc.handleClick(10, 10, false);
+  check('handleClick：sketch 态先过钩子、随后直接返回（无选择副作用）',
+    h.rec.hookCalls.length === 1 && h.rec.applies.length === 0 && h.rec.clears === 0 &&
+    h.rec.pickDisplay.length === 0);
+}
+
+// ---- pickVertex：客户区坐标必须换算成画布相对坐标（rect.left/top≠0）----
+{
+  const h = makeHost({ canvasRect: () => ({ left: 50, top: 30, width: 100, height: 100, clientHeight: 800 }) });
+  h.set({ sv: fakeShapeView({ vertices: [0, 0, 0] }) });
+  // 世界原点 → NDC(0,0) → 画布相对 (50,50) → 客户区 (100,80)
+  check('pickVertex：客户区坐标减画布偏移后命中（rect.left/top≠0）',
+    h.svc.pickVertex(100, 80) === 0, String(h.svc.pickVertex(100, 80)));
+  check('pickVertex：不减偏移的坐标（50,50）距 62px → 超出 8px 不命中',
+    h.svc.pickVertex(50, 50) === null);
+}
+
+// ---- pickVertex：视锥外（相机背后）顶点被剔除 ----
+{
+  const h = makeHost();
+  h.set({ sv: fakeShapeView({ vertices: [0, 0, 20] }) }); // 相机在 z=10，顶点在相机背后
+  check('pickVertex：相机背后的顶点投影出视锥 → 任何点击都不命中',
+    h.svc.pickVertex(50, 50) === null && h.svc.pickVertex(0, 0) === null && h.svc.pickVertex(99, 99) === null);
+}
+
+// ---- 棱边拾取：客户区坐标同样要减画布偏移 ----
+{
+  const view = fakeShapeView({
+    edgePolylines: [[15, 0, 0, 17, 0, 0]],
+    edges: [{ length: 2 } as Partial<EdgeMeta>],
+  });
+  const h = makeHost({ canvasRect: () => ({ left: 50, top: 30, width: 200, height: 200, clientHeight: 800 }) });
+  h.set({ sv: view, ray: fakeRay([]) });
+  // worldToScreen：(15,0,0)→(150,0)、(17,0,0)→(170,0)；画布相对 (150,0) ↔ 客户区 (200,30)
+  h.svc.handleClick(200, 30, false);
+  check('handleClick 棱边拾取：客户区坐标减画布偏移后命中',
+    h.rec.applies.length === 1 && h.rec.applies[0].kind === 'edge' && h.rec.applies[0].index === 0,
+    JSON.stringify(h.rec.applies));
+  h.rec.applies.length = 0;
+  h.svc.handleClick(150, 0, false); // 不减偏移的位置：距线段 50px，超出 8px
+  check('handleClick 棱边拾取：未减偏移 → 不命中，回落草图兜底 clearSelection',
+    h.rec.applies.length === 0 && h.rec.clears === 1, JSON.stringify(h.rec.applies));
+}
+
+// ---- 几何选择入口：直接透传 + additive 默认 false ----
+{
+  const h = makeHost();
+  h.svc.selectFace(3);
+  h.svc.selectEdge(4);
+  h.svc.selectVertex(5, true);
+  h.svc.selectBody(2);
+  check('selectFace/selectEdge：透传 applyGeomSelection（additive 默认 false）',
+    h.rec.applies[0].kind === 'face' && h.rec.applies[0].index === 3 && h.rec.applies[0].additive === false &&
+    h.rec.applies[1].kind === 'edge' && h.rec.applies[1].index === 4 && h.rec.applies[1].additive === false,
+    JSON.stringify(h.rec.applies));
+  check('selectVertex(additive=true) 透传', h.rec.applies[2].kind === 'vertex' && h.rec.applies[2].additive === true);
+  check('selectBody 透传', h.rec.applies[3].kind === 'body' && h.rec.applies[3].index === 2);
+}
+
+// ---- 装配拾取：多组件按距离选近的、跳过不可见组件 ----
+{
+  const near = fakeShapeView({ faceFromTri: (t) => t, faces: [{ surfaceType: 'plane', centroid: [0, 0, 0], normal: [0, 1, 0] } as Partial<FaceMeta>] });
+  const far = fakeShapeView({ faceFromTri: (t) => t, faces: [{ surfaceType: 'plane', centroid: [0, 0, 0], normal: [0, 1, 0] } as Partial<FaceMeta>] });
+  const inv = fakeShapeView({ faceFromTri: (t) => t, faces: [{ surfaceType: 'plane', centroid: [0, 0, 0], normal: [0, 1, 0] } as Partial<FaceMeta>] });
+  const ray = {
+    intersectObject: (o: THREE.Object3D) =>
+      o === near.mesh ? [{ faceIndex: 0, distance: 1 }] :
+      o === far.mesh ? [{ faceIndex: 0, distance: 9 }] :
+      o === inv.mesh ? [{ faceIndex: 0, distance: 0.5 }] : [],
+  } as unknown as THREE.Raycaster;
+  const asm = fakeAssembly([
+    { id: 'far', visible: true, view: far, name: '远件' },
+    { id: 'inv', visible: false, view: inv, name: '隐件' },
+    { id: 'near', visible: true, view: near, name: '近件' },
+  ] as unknown as Component[]);
+  const h = makeHost();
+  h.set({ mode: 'assembly', asm, ray });
+  h.svc.handleClick(100, 100, false);
+  check('装配拾取：多组件按 distance 选近的；visible:false 即使更近也跳过',
+    h.svc.picks.length === 1 && h.svc.picks[0].comp === 'near', JSON.stringify(h.svc.picks));
+}
+
+// ---- 装配拾取：直线棱边 → edge 参考 ----
+{
+  const view = fakeShapeView({
+    edgePolylines: [[15, 0, 0, 17, 0, 0]],
+    edges: [{ curveType: 'line', mid: [10, 10, 0], dir: [0, 1, 0] } as Partial<EdgeMeta>],
+    faceFromTri: (t) => t,
+    faces: [{ surfaceType: 'plane', centroid: [0, 0, 0], normal: [0, 1, 0] } as Partial<FaceMeta>],
+  });
+  const asm = fakeAssembly([{ id: 'c1', visible: true, view, name: '零件1' } as unknown as Component]);
+  const h = makeHost();
+  h.set({ mode: 'assembly', asm, ray: fakeRay([{ faceIndex: 0, distance: 5 }]) });
+  h.svc.handleClick(160, 0, false); // 屏幕段 (150,0)-(170,0) 上（worldToScreen ×10）
+  const ref = h.svc.picks[0];
+  check('装配拾取：直线棱边 → edge 参考（localPoint=mid, localDir=dir, label 棱边）',
+    h.svc.picks.length === 1 && ref?.kind === 'edge' && ref?.isAxis === true &&
+    JSON.stringify(ref?.localPoint) === '[10,10,0]' && JSON.stringify(ref?.localDir) === '[0,1,0]' &&
+    h.rec.statuses[0].detail === '棱边（1/2）：零件1·L(edge)', JSON.stringify(h.rec.statuses[0]));
 }
 
 console.log(`\n拾取交互服务：${pass} 通过 / ${fail} 失败（共 ${pass + fail} 项）`);
