@@ -37,6 +37,7 @@ const SUITES = [
   { name: '草图编辑历史（撤销/重做栈）', file: 'tools/sketch-history-test.ts' },
   { name: '选中态唯一真源（互斥/过滤器/悬空剪除）', file: 'tools/selection-store-test.ts' },
   { name: '撤销/重做管理器（压栈/节流/suppress/换栈）', file: 'tools/undo-manager-test.ts' },
+  { name: '表达式/参数服务（求值缓存/写入口/纯查询）', file: 'tools/param-service-test.ts' },
 ];
 
 let failed = 0;

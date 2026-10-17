@@ -11,15 +11,7 @@ import * as THREE from 'three';
 import { CadDocument, newSketchFeature } from '../doc/model';
 import type { Feature, FeatureId, FeatureParamsPatch, PlaneRef, SketchFeature } from '../doc/types';
 import { FEATURE_LABEL } from '../doc/types';
-import {
-  resolveExpressions,
-  previewExpression,
-  listNumericParams,
-  getParamPath,
-  type ExprIssue,
-  type ParamDef,
-  type ResolveResult,
-} from '../doc/expr';
+import { type ExprIssue } from '../doc/expr';
 import { download, pickFile, readFileAsArrayBuffer, exportOBJ, exportSTLBinary } from '../core/meshexport';
 import { kernel } from '../core/kernel';
 import type { ModelResult, MeshResult, FaceMeta, EdgeMeta, BBox } from '../core/kernel-types';
@@ -35,6 +27,7 @@ import { DEFAULT_PLANE, RIGHT_PLANE, TOP_PLANE, type SketchPlane } from '../sket
 import { SketchController, type SketchTool } from './sketchMode';
 import { SelectionStore, type GeomKind, type SelectionFilter } from './selection-store';
 import { UndoManager, type MutateOpts } from './undo-manager';
+import { ParamService } from './param-service';
 import { Assembly, mateRefLabel, type MateRef, type Component } from './assembly';
 import { Drawing, generateStandardViews, type ViewKind } from './drawing';
 import { openSectionProperties } from '../ui/sectionprops-dialog';
@@ -225,13 +218,8 @@ export class App implements AppApi {
 
   status: StatusInfo = { text: '就绪', kind: 'ok' };
 
-  // ---- 参数化（表达式，参考 FreeCAD Expressions） ----
-  /** 最近一次表达式解析结果（含参数值、问题列表） */
-  lastResolve: ResolveResult | null = null;
-  /** 参数名 → 数值 */
-  paramValues: Record<string, number> = {};
-  /** 表达式问题列表 */
-  expressionIssues: ExprIssue[] = [];
+  // ---- 参数化（表达式，参考 FreeCAD Expressions；实现在 src/app/param-service.ts）----
+  private readonly paramSvc: ParamService;
 
   // ---- 内核（Web Worker，主线程只持有可序列化结果） ----
   /** 参数化模型的可序列化结果（来自 Worker） */
@@ -275,6 +263,12 @@ export class App implements AppApi {
       rebuild: (opts) => this.rebuild(opts),
       emit: (...evts) => this.emit(...evts),
       info: (msg) => notify.info(msg),
+    });
+
+    // 表达式/参数服务：文档每次现取（切文档/撤销后引用会变）
+    this.paramSvc = new ParamService({
+      getDoc: () => this.doc,
+      mutate: (fn, opts) => this.mutate(fn, opts),
     });
 
     this.viewport.start();
@@ -592,109 +586,66 @@ export class App implements AppApi {
   }
 
   // ============================================================
-  // 参数化：表达式解析（主线程，纯计算）
+  // 参数化：表达式解析（委托 src/app/param-service.ts 的 ParamService）
   // ============================================================
+  /** 参数名 → 数值（最近一次表达式解析；表达式对话框 / 冒烟测试读） */
+  get paramValues(): Record<string, number> {
+    return this.paramSvc.values;
+  }
+
+  /** 表达式问题列表（状态栏计数 / 冒烟测试读） */
+  get expressionIssues(): ExprIssue[] {
+    return this.paramSvc.issues;
+  }
+
   /**
    * 求值全部表达式，返回**已把数值替换为具体值**的特征副本。
    * 所有发给内核的操作都必须用它——内核只认具体数值，不认表达式。
    */
   resolvedFeatures(): Feature[] {
-    const r = resolveExpressions(this.doc);
-    this.lastResolve = r;
-    this.paramValues = r.paramValues;
-    this.expressionIssues = r.issues;
-    return r.features;
+    return this.paramSvc.resolvedFeatures();
   }
 
   /** 全局参数行（供参数表 UI） */
   paramRows(): { name: string; expr: string; comment?: string; value?: number; error?: string }[] {
-    const r = this.lastResolve ?? resolveExpressions(this.doc);
-    this.lastResolve = r;
-    this.paramValues = r.paramValues;
-    this.expressionIssues = r.issues;
-    return this.doc.params.map((p) => {
-      const issue = r.issues.find((i) => i.where === `参数:${p.name}`);
-      return {
-        name: p.name,
-        expr: p.expr,
-        comment: p.comment,
-        value: r.paramValues[p.name],
-        error: issue?.message,
-      };
-    });
+    return this.paramSvc.paramRows();
   }
 
   setParam(name: string, expr: string, comment?: string): void {
-    this.mutate(() => this.doc.setParam(name.trim(), expr, comment), { emit: ['params'] });
+    this.paramSvc.setParam(name, expr, comment);
   }
 
   removeParam(name: string): void {
-    this.mutate(() => this.doc.removeParam(name), { emit: ['params'] });
+    this.paramSvc.removeParam(name);
   }
 
   /** 列出某个特征的数值参数（供表达式对话框选择） */
   featureNumericParams(id: FeatureId): { path: string; label: string; value: number }[] {
-    const f = this.doc.getFeature(id);
-    return f ? listNumericParams(f.params) : [];
+    return this.paramSvc.featureNumericParams(id);
   }
 
   /** 某个特征已绑定的表达式（含计算值与错误） */
   featureExpressionRows(id: FeatureId): { path: string; label: string; expr: string; value?: number; error?: string }[] {
-    const f = this.doc.getFeature(id);
-    if (!f?.expressions) return [];
-    const params = listNumericParams(f.params);
-    const r = resolveExpressions(this.doc);
-    return Object.keys(f.expressions).map((path) => {
-      const issue = r.issues.find((i) => i.where.startsWith(`特征:${f.name}.${path}`));
-      return {
-        path,
-        label: params.find((p) => p.path === path)?.label ?? path,
-        expr: f.expressions![path],
-        value: issue ? undefined : getPathFromResolved(r.features, f.id, path),
-        error: issue?.message,
-      };
-    });
+    return this.paramSvc.featureExpressionRows(id);
   }
 
   /** 给某个特征的某个参数绑定表达式 */
   setFeatureExpression(id: FeatureId, path: string, expr: string): void {
-    const f = this.doc.getFeature(id);
-    if (!f) return;
-    const text = expr.trim();
-    if (!text) {
-      this.removeFeatureExpression(id, path);
-      return;
-    }
-    this.mutate(() => {
-      f.expressions = { ...(f.expressions ?? {}), [path]: text };
-    }, { emit: ['params', 'props'] });
+    this.paramSvc.setFeatureExpression(id, path, expr);
   }
 
   removeFeatureExpression(id: FeatureId, path: string): void {
-    const f = this.doc.getFeature(id);
-    if (!f?.expressions) return;
-    const exprs = f.expressions;
-    this.mutate(() => {
-      delete exprs[path];
-      if (!Object.keys(exprs).length) delete f.expressions;
-    }, { emit: ['params', 'props'] });
+    this.paramSvc.removeFeatureExpression(id, path);
   }
 
   /** 预览一条表达式（不改动文档） */
   previewExpr(src: string): { ok: boolean; value?: number; message?: string } {
-    const r = previewExpression(src, this.doc);
-    return r.ok ? { ok: true, value: r.value } : { ok: false, message: r.message };
+    return this.paramSvc.previewExpr(src);
   }
 
   /** 供对话框拼引用用的「特征名.属性」候选 */
   referenceCandidates(): { ref: string; label: string }[] {
-    const out: { ref: string; label: string }[] = [];
-    for (const f of this.doc.features) {
-      for (const p of listNumericParams(f.params)) {
-        out.push({ ref: `${f.name}.${p.path}`, label: `${f.name} · ${p.label} = ${round2(p.value)}` });
-      }
-    }
-    return out;
+    return this.paramSvc.referenceCandidates();
   }
 
   // ============================================================
@@ -718,7 +669,7 @@ export class App implements AppApi {
       // 把内核侧的错误回写到特征（供 UI 标红）
       const errMap = new Map(model.errors.map((e) => [e.id, e.message]));
       // 表达式错误优先展示（更贴近用户输入）
-      for (const fi of this.lastResolve?.featureIssues ?? []) errMap.set(fi.id, fi.message);
+      for (const fi of this.paramSvc.featureIssues) errMap.set(fi.id, fi.message);
       for (const f of doc.features) f.error = errMap.get(f.id);
       this.syncView(options.fit ?? false);
       const errs = model.errors;
@@ -726,7 +677,7 @@ export class App implements AppApi {
         this.setStatus(`${errs.length} 个特征有错误`, 'err', errs[0].message);
       } else {
         const st = model.stats;
-        const ex = this.expressionIssues.length;
+        const ex = this.paramSvc.issues.length;
         this.setStatus(
           `重建完成 ${model.rebuildMs.toFixed(0)}ms`,
           ex ? 'err' : 'ok',
@@ -1969,8 +1920,7 @@ export class App implements AppApi {
 
   /** 强制重建（SolidWorks: Ctrl+Q）—— 丢弃表达式缓存重新求值 */
   forceRebuild(): void {
-    this.lastResolve = null;
-    this.paramValues = {};
+    this.paramSvc.reset();
     this.rebuild();
     this.emit('view');
     notify.ok('已强制重建');
@@ -2265,12 +2215,6 @@ export class App implements AppApi {
     void this.syncAssemblyScene();
     notify.ok('已切换组件显示状态');
   }
-}
-
-/** 从解析后的特征里取某个参数路径的具体值 */
-function getPathFromResolved(features: Feature[], id: FeatureId, path: string): number | undefined {
-  const f = features.find((x) => x.id === id);
-  return f ? getParamPath(f.params, path) : undefined;
 }
 
 function round2(v: number): number {
