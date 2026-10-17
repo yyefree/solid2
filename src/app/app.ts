@@ -12,10 +12,9 @@ import { CadDocument, newSketchFeature } from '../doc/model';
 import type { Feature, FeatureId, FeatureParamsPatch, PlaneRef, SketchFeature } from '../doc/types';
 import { FEATURE_LABEL } from '../doc/types';
 import { type ExprIssue } from '../doc/expr';
-import { download, pickFile, readFileAsArrayBuffer, exportOBJ, exportSTLBinary } from '../core/meshexport';
+import { download, pickFile, readFileAsArrayBuffer } from '../core/meshexport';
 import { kernel } from '../core/kernel';
 import type { ModelResult, MeshResult, FaceMeta, EdgeMeta, BBox } from '../core/kernel-types';
-import { viewsOfMesh } from '../core/kernel-types';
 import { Viewport, type ViewDir, LAYOUT_DEFS, type LayoutName } from '../view/viewport';
 import { ShapeView, type DisplayStyle } from '../view/shapeview';
 import { COLORS, previewMaterial } from '../view/materials';
@@ -28,6 +27,7 @@ import { SketchController, type SketchTool } from './sketchMode';
 import { SelectionStore, type GeomKind, type SelectionFilter } from './selection-store';
 import { UndoManager, type MutateOpts } from './undo-manager';
 import { ParamService } from './param-service';
+import { FileService } from './file-service';
 import { Assembly, mateRefLabel, type MateRef, type Component } from './assembly';
 import { Drawing, generateStandardViews, type ViewKind } from './drawing';
 import { openSectionProperties } from '../ui/sectionprops-dialog';
@@ -221,6 +221,9 @@ export class App implements AppApi {
   // ---- 参数化（表达式，参考 FreeCAD Expressions；实现在 src/app/param-service.ts）----
   private readonly paramSvc: ParamService;
 
+  // ---- 文件（导出/保存/打开/导入；实现在 src/app/file-service.ts）----
+  private readonly fileSvc: FileService;
+
   // ---- 内核（Web Worker，主线程只持有可序列化结果） ----
   /** 参数化模型的可序列化结果（来自 Worker） */
   model: ModelResult | null = null;
@@ -269,6 +272,51 @@ export class App implements AppApi {
     this.paramSvc = new ParamService({
       getDoc: () => this.doc,
       mutate: (fn, opts) => this.mutate(fn, opts),
+    });
+
+    // 文件服务：内核 Worker 与 DOM 能力（下载/选文件）经宿主闭包注入
+    this.fileSvc = new FileService({
+      hasModel: () => this.hasModel,
+      resolvedFeatures: () => this.resolvedFeatures(),
+      documentJSON: () => JSON.stringify(this.doc.toJSON(), null, 2),
+      loadDocument: (data) => {
+        this.mutate(() => {
+          this.doc = CadDocument.fromJSON(data);
+          this.assembly = null;
+          this.drawing = null;
+        }, { fit: true });
+      },
+      syncEntry: () => this.syncActiveEntry(),
+      setImportedModel: (model) => {
+        this.importedModel = model;
+        this.model = null; // 导入体优先于参数化模型
+        this.syncActiveEntry();
+      },
+      showImportedMesh: (mesh, bbox) => {
+        const sv = new ShapeView(mesh, { style: this.displayStyle, bodyColor: this.appearanceHex });
+        if (this.shapeView) {
+          this.shapeView.group.removeFromParent();
+          this.shapeView.dispose();
+        }
+        this.shapeView = sv;
+        this.viewport.root.add(sv.group);
+        this.viewport.zoomFit(bbox);
+        this.applyModeVisibility();
+        this.viewport.invalidate();
+      },
+      exportStep: (features) => kernel.exportStep(features),
+      tessellate: (features) => kernel.tessellate(features, 0.06, 0.2),
+      importStep: (bytes) => kernel.importStep(bytes),
+      download: (content, filename, mime) => download(content, filename, mime),
+      pickText: async (accept) => {
+        const f = await pickFile(accept);
+        return f ? { name: f.name, text: await f.text() } : null;
+      },
+      pickBinary: async (accept) => {
+        const f = await pickFile(accept);
+        return f ? { name: f.name, buffer: await readFileAsArrayBuffer(f) } : null;
+      },
+      toast: (kind, msg) => (kind === 'ok' ? notify.ok(msg) : notify.err(msg)),
     });
 
     this.viewport.start();
@@ -1612,100 +1660,30 @@ export class App implements AppApi {
   }
 
   // ============================================================
-  // 文件
+  // 文件（委托 src/app/file-service.ts 的 FileService）
   // ============================================================
   async exportStep(): Promise<void> {
-    if (!this.hasModel) {
-      notify.err('没有可导出的实体');
-      return;
-    }
-    try {
-      const r = await kernel.exportStep(this.resolvedFeatures());
-      download(new Uint8Array(r.bytes), 'solid2.step', 'application/step');
-      notify.ok(`STEP 导出成功（${((r.bytes.byteLength) / 1024).toFixed(1)} KB）`);
-    } catch (e) {
-      notify.err(`STEP 导出失败：${(e as Error).message}`);
-    }
+    await this.fileSvc.exportStep();
   }
 
   async exportStl(): Promise<void> {
-    if (!this.hasModel) {
-      notify.err('没有可导出的实体');
-      return;
-    }
-    try {
-      const m = await kernel.tessellate(this.resolvedFeatures(), 0.06, 0.2);
-      const mesh = viewsOfMesh(m.mesh);
-      const buf = exportSTLBinary(mesh);
-      download(buf, 'solid2.stl', 'model/stl');
-      notify.ok(`STL 导出成功（${mesh.indices.length / 3} 三角形）`);
-    } catch (e) {
-      notify.err(`STL 导出失败：${(e as Error).message}`);
-    }
+    await this.fileSvc.exportStl();
   }
 
   async exportObj(): Promise<void> {
-    if (!this.hasModel) {
-      notify.err('没有可导出的实体');
-      return;
-    }
-    try {
-      const m = await kernel.tessellate(this.resolvedFeatures(), 0.06, 0.2);
-      const mesh = viewsOfMesh(m.mesh);
-      download(exportOBJ(mesh), 'solid2.obj', 'model/obj');
-      notify.ok('OBJ 导出成功');
-    } catch (e) {
-      notify.err(`OBJ 导出失败：${(e as Error).message}`);
-    }
+    await this.fileSvc.exportObj();
   }
 
   saveProject(): void {
-    const json = JSON.stringify(this.doc.toJSON(), null, 2);
-    download(json, 'solid2-model.json', 'application/json');
-    notify.ok('项目已保存');
+    this.fileSvc.saveProject();
   }
 
   async openProject(): Promise<void> {
-    const file = await pickFile('.json,.solid2');
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      this.mutate(() => {
-        this.doc = CadDocument.fromJSON(data);
-        this.assembly = null;
-        this.drawing = null;
-      }, { fit: true });
-      this.syncActiveEntry();
-      notify.ok(`已打开：${file.name}`);
-    } catch (e) {
-      notify.err(`打开失败：${(e as Error).message}`);
-    }
+    await this.fileSvc.openProject();
   }
 
   async importStepFile(): Promise<void> {
-    const file = await pickFile('.step,.stp');
-    if (!file) return;
-    try {
-      const buf = await readFileAsArrayBuffer(file);
-      const r = await kernel.importStep(buf);
-      this.importedModel = { mesh: r.mesh, bbox: r.bbox, stats: r.stats, errors: [], rebuildMs: 0 };
-      this.model = null;
-      this.syncActiveEntry();
-      const sv = new ShapeView(r.mesh, { style: this.displayStyle, bodyColor: this.appearanceHex });
-      if (this.shapeView) {
-        this.shapeView.group.removeFromParent();
-        this.shapeView.dispose();
-      }
-      this.shapeView = sv;
-      this.viewport.root.add(sv.group);
-      this.viewport.zoomFit(r.bbox);
-      this.applyModeVisibility();
-      this.viewport.invalidate();
-      notify.ok(`已导入 ${file.name}`);
-    } catch (e) {
-      notify.err(`导入失败：${(e as Error).message}`);
-    }
+    await this.fileSvc.importStepFile();
   }
 
   // ============================================================
