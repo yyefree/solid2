@@ -1326,6 +1326,44 @@ check('特征参数编辑可撤销（改深度 10→20 后 Ctrl+Z 回到 4000）
   Math.abs(paramUndo.v10 - 4000) < 1 && Math.abs(paramUndo.v20 - 8000) < 1 && Math.abs(paramUndo.afterUndo - 4000) < 1,
   `v10=${(paramUndo.v10||0).toFixed(0)} v20=${(paramUndo.v20||0).toFixed(0)} undo=${(paramUndo.afterUndo||0).toFixed(0)}`);
 
+// 选中态唯一真源（SelectionStore）：特征选择 ⇄ 几何选择 **双向**互斥 + 批量入口（全选）亦清特征。
+// 收口前这条不变量由 4 个字段（selectedFeatureId/activeSketchFeature/editingSketch/selection）各自
+// 手工同步维持，同一根因复发 4 次（选中态粘住 / 悬空引用 / 退出草图未选中）。此断言把它钉死。
+const selInvariant = await evaluate(`(async () => {
+  const app = window.__solid2.app;
+  const ai = await import('/src/ai/index.ts');
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  try {
+    const { compiled } = await ai.interpret('20x20x20 的长方体');
+    app.loadFeatures(compiled.features, { replace: true, fit: false });
+    await app.rebuild(); await sleep(60);
+    const boxId = app.doc.features.at(-1)?.id ?? null;
+
+    // 方向一：先选特征 → 再选几何，几何选择应清掉特征选择
+    app.selectFeature(boxId);
+    out.featSelected = app.selectedFeatureId === boxId;
+    app.selectFace(0);
+    out.geomClearsFeature = app.selection.faces.length === 1 && app.selectedFeatureId === null;
+
+    // 方向二：先选几何 → 再选特征，几何选择应被清空（收口前最易漏的方向）
+    app.selectFeature(boxId);
+    out.featureClearsGeom = app.selectedFeatureId === boxId && app.selection.faces.length === 0
+      && app.selection.edges.length === 0 && app.selection.vertices.length === 0;
+
+    // 批量入口：全选几何 → 特征选择同样被清空
+    app.selectAll();
+    out.selectAllClearsFeature = app.selectedFeatureId === null && app.selection.faces.length > 0;
+
+    app.clearSelection();
+    return out;
+  } catch (e) { out.err = String(e && e.message ? e.message : e); return out; }
+})()`);
+check('选中态唯一真源：特征⇄几何双向互斥，全选亦清特征选择',
+  !selInvariant.err && selInvariant.featSelected === true && selInvariant.geomClearsFeature === true &&
+    selInvariant.featureClearsGeom === true && selInvariant.selectAllClearsFeature === true,
+  JSON.stringify(selInvariant));
+
 // Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
 const enterRepeat = await evaluate(`(async () => {
   const { app } = window.__solid2;

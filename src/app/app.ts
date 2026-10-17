@@ -32,6 +32,7 @@ import { DEFAULT_UNIT, isUnitSystem, formatLength, formatArea, formatVolume, typ
 import { closePropertyManager } from '../ui/propertymanager';
 import { DEFAULT_PLANE, RIGHT_PLANE, TOP_PLANE, type SketchPlane } from '../sketch/types';
 import { SketchController, type SketchTool } from './sketchMode';
+import { SelectionStore, type GeomKind, type SelectionFilter } from './selection-store';
 import { Assembly, mateRefLabel, type MateRef, type Component } from './assembly';
 import { Drawing, generateStandardViews, type ViewKind } from './drawing';
 import { openSectionProperties } from '../ui/sectionprops-dialog';
@@ -101,9 +102,13 @@ export class App {
   doc = new CadDocument();
   shapeView: ShapeView | null = null;
   mode: AppMode = 'model';
-  selection: Selection = { faces: [], edges: [], vertices: [], bodies: [] };
-  /** 选择过滤器（SolidWorks 状态栏 / 快捷键 F5）—— 'all' 不过滤（默认，行为不变） */
-  selectionFilter: 'all' | 'face' | 'edge' | 'vertex' | 'body' = 'all';
+  /**
+   * 选中态唯一真源。此前 `selectedFeatureId` / `activeSketchFeature` /
+   * `editingSketch` / `selection` 是 4 个独立字段、靠手工同步，同一根因反复出 bug；
+   * 现全部收进 `SelectionStore`，互斥不变量（特征选择 ⇄ 几何选择）由它保证。
+   * 对外 API 名字不变（下面的 getter/setter 委托），调用方无需改动。
+   */
+  private readonly sel = new SelectionStore();
   /** 单位制（SolidWorks 工具 > 选项 > 文档属性 > 单位）。内部几何恒为 mm，仅显示换算。 */
   unitSystem: UnitSystem = (() => {
     try {
@@ -119,14 +124,50 @@ export class App {
   /** RealView 图形（Heads-up「RealView」按钮）—— 实体材质带环境反射 */
   realView = false;
   /** 设计树中当前选中的特征 id（供属性管理器显示）—— SolidWorks「属性管理器」接管选中的特征 */
-  selectedFeatureId: string | null = null;
+  get selectedFeatureId(): string | null {
+    return this.sel.featureId;
+  }
+  set selectedFeatureId(id: string | null) {
+    this.applyFeatureSelection(id);
+  }
 
   // ---- 草图 ----
-  activeSketchFeature: SketchFeature | null = null;
-  editingSketch: SketchFeature | null = null;
+  /** 当前草图（后续特征对话框的默认绑定目标）。以 id 存储 → 撤销/重做后不会悬空。 */
+  get activeSketchFeature(): SketchFeature | null {
+    return this.sketchFeatureById(this.sel.activeSketchId);
+  }
+  set activeSketchFeature(f: SketchFeature | null) {
+    this.sel.setActiveSketch(f ? f.id : null);
+  }
+  /** 正在编辑的草图；非空即表示处于草图编辑态。 */
+  get editingSketch(): SketchFeature | null {
+    return this.sketchFeatureById(this.sel.editingSketchId);
+  }
+  set editingSketch(f: SketchFeature | null) {
+    this.sel.setEditingSketch(f ? f.id : null);
+  }
   sketchTool: string | null = null;
   pendingPoints: [number, number][] = [];
   readonly sketch: SketchController;
+
+  /** 按 id 取草图特征（不存在或类型不符返回 null） */
+  private sketchFeatureById(id: string | null): SketchFeature | null {
+    if (!id) return null;
+    const f = this.doc.getFeature(id);
+    return f && f.type === 'sketch' ? (f as SketchFeature) : null;
+  }
+
+  /** 几何选择（面/边/点/实体的 mesh 下标）。只读语义：写请走 selectFace/selectEdge/… */
+  get selection(): Selection {
+    return this.sel.geometry;
+  }
+  /** 选择过滤器（SolidWorks 状态栏 / 快捷键 F5）—— 'all' 不过滤（默认，行为不变） */
+  get selectionFilter(): SelectionFilter {
+    return this.sel.selectionFilter;
+  }
+  set selectionFilter(f: SelectionFilter) {
+    this.sel.setSelectionFilter(f);
+  }
 
   // ---- 显示 ----
   displayStyle: DisplayStyle = 'shadedEdges';
@@ -320,7 +361,7 @@ export class App {
     this.undoStack = entry.undo;
     this.redoStack = entry.redo;
     this.activeDocId = entry.id;
-    this.selectedFeatureId = null;
+    this.sel.reset(); // 切文档：选中态整体重置（含特征/几何/草图），避免跨文档残留
     this.clearSelection();
     if (this.mode !== entry.kind) this.setMode(entry.kind);
     this.viewport.restoreCamera(entry.view);
@@ -365,9 +406,9 @@ export class App {
   selectFeature(id: string | null): void {
     this.applyFeatureSelection(id);
     // SolidWorks: 模型态点选草图即选中该草图，后续特征默认绑定它
-    if (id && !this.editingSketch) {
-      const f = this.doc.features.find((x) => x.id === id);
-      if (f && f.type === 'sketch') this.activeSketchFeature = f as SketchFeature;
+    if (id && !this.sel.isEditingSketch) {
+      const f = this.doc.getFeature(id);
+      if (f && f.type === 'sketch') this.sel.setActiveSketch(f.id);
     }
     this.emit('feature', 'props');
   }
@@ -377,17 +418,24 @@ export class App {
    *
    * SolidWorks：特征选择与几何（面/边/点）选择互斥——选中特征即取消几何选择，反之亦然。
    * 退出草图后该草图即为当前选中特征（高亮显示）；此后点选面/边或点空白处都应取消它。
+   * 互斥不变量本身由 `SelectionStore.selectFeature` 保证，这里只负责**副作用**：
+   * 把选中态同步到草图显示层。
    */
   private applyFeatureSelection(id: string | null): void {
-    this.selectedFeatureId = id;
-    if (!this.editingSketch) {
-      this.sketch.setDisplaySelected(!!id && id === this.sketch.displaySketch?.id);
-    }
+    this.sel.selectFeature(id);
+    this.syncSketchDisplaySelection();
+  }
+
+  /** 把「特征选中」同步到图形区显示态草图的选中高亮（编辑态由覆盖层自行管理） */
+  private syncSketchDisplaySelection(): void {
+    if (this.sel.isEditingSketch) return;
+    const id = this.sel.featureId;
+    this.sketch.setDisplaySelected(!!id && id === this.sketch.displaySketch?.id);
   }
 
   /** 设置选择过滤器（SolidWorks 状态栏 Filter） */
-  setSelectionFilter(f: 'all' | 'face' | 'edge' | 'vertex' | 'body'): void {
-    this.selectionFilter = f;
+  setSelectionFilter(f: SelectionFilter): void {
+    this.sel.setSelectionFilter(f);
     this.emit('selection', 'props');
   }
 
@@ -464,9 +512,8 @@ export class App {
    * ——设了状态就要想清楚何时清除。
    */
   private pruneFeatureUiState(): void {
-    const exists = (id: string | null): boolean => !!id && !!this.doc.getFeature(id);
-    if (this.activeSketchFeature && !exists(this.activeSketchFeature.id)) this.activeSketchFeature = null;
-    if (this.selectedFeatureId && !exists(this.selectedFeatureId)) this.applyFeatureSelection(null);
+    const exists = (id: string): boolean => !!this.doc.getFeature(id);
+    if (this.sel.prune(exists)) this.syncSketchDisplaySelection();
   }
 
   undo(): void {
@@ -690,7 +737,7 @@ export class App {
       this.viewport.root.add(sv.group);
       this.shapeView = sv;
     }
-    this.selection = { faces: [], edges: [], vertices: [], bodies: [] };
+    this.sel.clearGeometry();
     this.refreshHighlight();
     if (fit) {
       this.viewport.zoomFit(m?.bbox ?? null);
@@ -716,7 +763,7 @@ export class App {
     }
     ctl.showDisplay(last);
     // 该草图是「当前选中」的特征时，图形区以选中高亮显示（SolidWorks: 退出后草图被选中）
-    ctl.setDisplaySelected(last.id === this.selectedFeatureId);
+    this.syncSketchDisplaySelection();
   }
 
   setDisplayStyle(style: DisplayStyle): void {
@@ -730,57 +777,35 @@ export class App {
   // 选择
   // ============================================================
   clearSelection(): void {
-    this.selection = { faces: [], edges: [], vertices: [], bodies: [] };
+    this.sel.clearGeometry();
     this.applyFeatureSelection(null); // 取消特征选中（含退出草图后残留的草图高亮）
     this.refreshHighlight();
     this.emit('selection', 'props');
   }
 
   selectFace(index: number, additive = false): void {
-    if (this.selectionFilter === 'edge' || this.selectionFilter === 'vertex' || this.selectionFilter === 'body') return;
-    if (!additive) this.selection.edges = [];
-    if (additive) {
-      const i = this.selection.faces.indexOf(index);
-      if (i >= 0) this.selection.faces.splice(i, 1);
-      else this.selection.faces.push(index);
-    } else {
-      this.selection.faces = [index];
-    }
-    this.applyFeatureSelection(null); // 选几何即取消特征选中（含草图高亮）
-    this.refreshHighlight();
-    this.emit('selection', 'props');
+    this.applyGeomSelection('face', index, additive);
   }
 
   selectEdge(index: number, additive = false): void {
-    if (this.selectionFilter === 'face' || this.selectionFilter === 'vertex' || this.selectionFilter === 'body') return;
-    if (!additive) this.selection.faces = [];
-    if (additive) {
-      const i = this.selection.edges.indexOf(index);
-      if (i >= 0) this.selection.edges.splice(i, 1);
-      else this.selection.edges.push(index);
-    } else {
-      this.selection.edges = [index];
-    }
-    this.applyFeatureSelection(null); // 选几何即取消特征选中（含草图高亮）
-    this.refreshHighlight();
-    this.emit('selection', 'props');
+    this.applyGeomSelection('edge', index, additive);
   }
 
   /** 选中一个网格顶点（选择过滤器为「顶点」时专用） */
   selectVertex(index: number, additive = false): void {
-    if (this.selectionFilter !== 'vertex' && this.selectionFilter !== 'all') return;
-    if (!additive) {
-      this.selection.faces = [];
-      this.selection.edges = [];
-    }
-    if (additive) {
-      const i = this.selection.vertices.indexOf(index);
-      if (i >= 0) this.selection.vertices.splice(i, 1);
-      else this.selection.vertices.push(index);
-    } else {
-      this.selection.vertices = [index];
-    }
-    this.applyFeatureSelection(null); // 选几何即取消特征选中（含草图高亮）
+    this.applyGeomSelection('vertex', index, additive);
+  }
+
+  /**
+   * 几何选择的唯一落地路径（4 个 selectXxx 共用）。
+   *
+   * 过滤器拒绝时 `SelectionStore.selectGeom` 返回 `false`，此处直接返回、不做任何改动。
+   * 接受时互斥不变量已由 store 保证（清空特征选择），这里只补副作用：
+   * 草图显示态高亮同步 + 重绘高亮 + 广播。
+   */
+  private applyGeomSelection(kind: GeomKind, index: number, additive: boolean): void {
+    if (!this.sel.selectGeom(kind, index, additive)) return;
+    this.syncSketchDisplaySelection();
     this.refreshHighlight();
     this.emit('selection', 'props');
   }
@@ -1230,22 +1255,7 @@ export class App {
 
   /** 选中一个实体（选择过滤器为「实体」时专用；经命中的面反查 bodyIndex） */
   selectBody(index: number, additive = false): void {
-    if (this.selectionFilter !== 'body' && this.selectionFilter !== 'all') return;
-    if (!additive) {
-      this.selection.faces = [];
-      this.selection.edges = [];
-      this.selection.vertices = [];
-    }
-    if (additive) {
-      const i = this.selection.bodies.indexOf(index);
-      if (i >= 0) this.selection.bodies.splice(i, 1);
-      else this.selection.bodies.push(index);
-    } else {
-      this.selection.bodies = [index];
-    }
-    this.applyFeatureSelection(null); // 选几何即取消特征选中（含草图高亮）
-    this.refreshHighlight();
-    this.emit('selection', 'props');
+    this.applyGeomSelection('body', index, additive);
   }
 
   /** 命中的面所属实体下标（无归属信息时 -1） */
@@ -1565,8 +1575,7 @@ export class App {
   }
 
   enterSketch(f: SketchFeature): void {
-    this.activeSketchFeature = f;
-    this.editingSketch = f;
+    this.sel.setEditingSketch(f.id); // 同时把它设为「当前草图」（后续特征默认绑定它）
     this.mode = 'sketch';
     this.sketchTool = null;
     this.pendingPoints = [];
@@ -1580,7 +1589,7 @@ export class App {
     if (!this.editingSketch) return;
     closePropertyManager(); // 草图 PropertyManager 随退出关闭
     const f = this.editingSketch;
-    this.editingSketch = null;
+    this.sel.setEditingSketch(null); // 退出草图编辑（只清编辑态，activeSketch 稍后按 kept 决定）
     this.sketchTool = null;
     this.pendingPoints = [];
     let kept = true;
@@ -1594,8 +1603,8 @@ export class App {
     this.mode = 'model';
     // SolidWorks: 退出后该草图处于「选中」状态——树高亮 + 图形区高亮 + 属性管理器显示，
     // 可直接继续创建拉伸等特征。空草图被丢弃时不选中任何特征。
-    this.activeSketchFeature = kept ? f : null;
-    this.selectedFeatureId = kept ? f.id : null;
+    this.sel.setActiveSketch(kept ? f.id : null);
+    this.applyFeatureSelection(kept ? f.id : null);
     this.rebuild();
     this.applyModeVisibility();
     this.emit('mode', 'change', 'props', 'feature');
@@ -1941,8 +1950,7 @@ export class App {
     this.assembly = null;
     this.drawing = null;
     this.mode = 'model';
-    this.editingSketch = null;
-    this.activeSketchFeature = null;
+    this.sel.reset(); // 新建文档：选中态整体重置（特征/几何/草图）
     this.rebuild({ fit: true });
     this.syncActiveEntry();
     this.emit('tree', 'props', 'params', 'mode');
@@ -2062,16 +2070,12 @@ export class App {
 
   removeFeature(id: FeatureId): void {
     this.pushUndo();
-    // ⚠️ 删除后必须清掉指向该特征的 UI 状态，否则留下悬空引用：
-    //    - activeSketchFeature 悬空 → 后续特征对话框默认草图会指向已删草图
-    //      （pickSketchId / defaultSketchId 虽有存在性兜底，但状态本身是错的）；
-    //    - selectedFeatureId 悬空 → 设计树高亮 / 属性面板与文档不一致。
-    // 与「退出草图后选中态」同一类问题：设了状态就要想清楚何时清除。
-    const wasActiveSketch = this.activeSketchFeature?.id === id;
-    const wasSelected = this.selectedFeatureId === id;
     this.doc.remove(id);
-    if (wasActiveSketch) this.activeSketchFeature = null;
-    if (wasSelected) this.applyFeatureSelection(null);
+    // 删除后统一剪除指向已删特征的 UI 状态（特征选中 / 当前草图），
+    // 否则会留悬空引用：activeSketchFeature 悬空 → 后续特征对话框默认草图指向已删草图；
+    // selectedFeatureId 悬空 → 设计树高亮 / 属性面板与文档不一致。
+    // 不变量由 SelectionStore.prune 保证，无需在此逐字段判断。
+    this.pruneFeatureUiState();
     this.rebuild();
   }
 
@@ -2110,12 +2114,13 @@ export class App {
       notify.info('没有可选择的几何');
       return;
     }
-    this.selection = {
+    this.sel.setGeometry({
       faces: m.mesh.faceMetas.map((_, i) => i),
       bodies: [],
       edges: [],
       vertices: [],
-    };
+    });
+    this.syncSketchDisplaySelection();
     this.refreshHighlight();
     this.emit('selection', 'props');
     this.setStatus(`已全选 ${this.selection.faces.length} 个面`, 'ok');
