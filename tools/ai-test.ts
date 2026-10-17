@@ -20,6 +20,7 @@ import {
   describeChangeBare,
   summarizeEdits,
 } from '../src/ai';
+import { validateAiOps } from '../src/ai/compile';
 import type { AiOp } from '../src/ai';
 import type { PrimitiveFeature, HoleFeature, FilletFeature, ShellFeature, SpringFeature } from '../src/doc/types';
 
@@ -950,6 +951,32 @@ console.log('\n【24. 钣金：基体法兰 / 边线法兰 命令识别】');
   // ---------- 回显 ----------
   check('describeOp 基体法兰', /基体法兰/.test(describeOp(base1 as any)) && /100/.test(describeOp(base1 as any)), describeOp(base1 as any));
   check('describeOp 边线法兰（需选中边）', describeOp(edge as any) === '边线法兰（需选中边）', describeOp(edge as any));
+}
+
+// ============================================================
+console.log('\n【参数钳制（A3/D5：AI 指令数值防越界）】');
+{
+  const r1 = validateAiOps([
+    { kind: 'box', dims: [5e6, 20, 20], operation: 'new', place: 'center', source: '巨型方块' },
+  ]);
+  const box = r1.ops[0] as { dims: number[] };
+  check('超限尺寸钳制到 ±1e6', box.dims[0] === 1e6, `dims[0]=${box.dims[0]}`);
+  check('钳制产生 warn 提示', r1.issues.length === 1 && r1.issues[0].level === 'warn', r1.issues[0]?.message ?? '无');
+
+  const r2 = validateAiOps([
+    { kind: 'linearPattern', axis: 'x', spacing: 10, count: 999, source: '阵列999' },
+  ]);
+  check('超限阵列份数钳制到 64', (r2.ops[0] as { count: number }).count === 64, `count=${(r2.ops[0] as { count: number }).count}`);
+
+  const r3 = validateAiOps([
+    { kind: 'box', dims: [Infinity, 20, 20], operation: 'new', place: 'center', source: '无穷' },
+  ]);
+  check('非有限尺寸回退安全下限（-1e6）', (r3.ops[0] as { dims: number[] }).dims[0] === -1e6, `dims[0]=${(r3.ops[0] as { dims: number[] }).dims[0]}`);
+
+  const r4 = validateAiOps([
+    { kind: 'box', dims: [20, 20, 20], operation: 'new', place: 'center', source: '正常' },
+  ]);
+  check('合规输入不改写、无提示', r4.issues.length === 0 && (r4.ops[0] as { dims: number[] }).dims[0] === 20, 'ok');
 }
 
 // ============================================================

@@ -20,7 +20,7 @@ import { ShapeView, type DisplayStyle } from '../view/shapeview';
 import { COLORS } from '../view/materials';
 import { disposeGroupChildren } from '../view/dispose';
 import { notify, tableModal } from '../ui/toast';
-import { DEFAULT_UNIT, isUnitSystem, formatLength, formatArea, formatVolume, type UnitSystem } from '../core/units';
+import { DEFAULT_UNIT, isUnitSystem, formatLength, formatArea, formatVolume, UNIT_BY_ID, type UnitSystem } from '../core/units';
 import { closePropertyManager } from '../ui/propertymanager';
 import { DEFAULT_PLANE, RIGHT_PLANE, TOP_PLANE, type SketchPlane } from '../sketch/types';
 import { SketchController, type SketchTool } from './sketchMode';
@@ -52,8 +52,8 @@ export interface DocumentEntry {
   imported: ModelResult | null;
   assembly: Assembly | null;
   drawing: Drawing | null;
-  undo: string[];
-  redo: string[];
+  undo: unknown[];
+  redo: unknown[];
   /** 视口相机快照（切回时恢复不丢视角） */
   view: { position: [number, number, number]; target: [number, number, number]; up: [number, number, number]; zoom: number } | null;
 }
@@ -234,6 +234,30 @@ export class App implements AppApi {
    * 典型症状是「切到文档 B 却显示文档 A 的模型」。
    */
   private rebuildToken = 0;
+  /**
+   * 合并重建：同一动画帧内来自 `mutate` 的多次重建请求只向 Worker 实际发一次
+   * （参数滑杆连拖会高频触发，否则 Worker 被数十次全量重放占满，主线程也随之反复重绘）。
+   * 走 requestAnimationFrame 做 last-wins：保留最后一次的 fit 标志。撤销/文档切换等关键路径
+   * 仍直接调 `rebuild()`（即时、带 await），不经过此合并。
+   */
+  private rebuildRafScheduled = false;
+  private rebuildPendingFit = false;
+  /** 待触发的合并重建句柄（用于被显式 rebuild() 取消，见 rebuild 开头） */
+  private rebuildRafHandle = 0;
+  private requestRebuild(opts: { fit?: boolean } = {}): void {
+    this.rebuildPendingFit = this.rebuildPendingFit || !!opts.fit;
+    if (this.rebuildRafScheduled) return;
+    this.rebuildRafScheduled = true;
+    const run = () => {
+      this.rebuildRafScheduled = false;
+      this.rebuildRafHandle = 0;
+      const fit = this.rebuildPendingFit;
+      this.rebuildPendingFit = false;
+      void this.rebuild({ fit });
+    };
+    if (typeof requestAnimationFrame === 'function') this.rebuildRafHandle = requestAnimationFrame(run);
+    else run();
+  }
 
   // ---- 多文档（SolidWorks 文档标签栏）----
   /** 已打开的文档（第一个是初始零件） */
@@ -364,16 +388,17 @@ export class App implements AppApi {
 
     // 撤销管理器：宿主回调均为闭包（构造时 this.doc 等字段已初始化）
     this.undoMgr = new UndoManager({
-      snapshot: () => JSON.stringify(this.doc.toJSON()),
-      restore: (json) => {
-        this.doc = CadDocument.fromJSON(JSON.parse(json));
+      // 存 toJSON() 的纯对象（已与实时文档解耦），省去老方案的 JSON.stringify + 之后 parse 两份开销
+      snapshot: () => this.doc.toJSON(),
+      restore: (data) => {
+        this.doc = CadDocument.fromJSON(data);
         this.activeDoc().doc = this.doc;
       },
       afterRestore: async () => {
         this.pruneFeatureUiState();
         await this.rebuild();
       },
-      rebuild: (opts) => this.rebuild(opts),
+      rebuild: (opts) => this.requestRebuild(opts),
       emit: (...evts) => this.emit(...evts),
       info: (msg) => notify.info(msg),
     });
@@ -825,6 +850,16 @@ export class App implements AppApi {
   // ============================================================
   /** 重建模型并刷新视图（异步，几何在内核 Worker 里算） */
   async rebuild(options: { fit?: boolean } = {}): Promise<void> {
+    // 显式重建（可 await）优先：取消任何尚未触发的「合并重建」rAF。
+    // 否则 mutate → requestRebuild 排队的 rAF 会在本次重建 await 期间触发，发起一个
+    // **代号更新**的重建，使本次结果被判过期丢弃——调用方 await 后读到的仍是旧模型
+    // （典型症状：loadFeatures/setFeatures + await app.rebuild() 后体积是上一次的值）。
+    if (this.rebuildRafScheduled) {
+      if (typeof cancelAnimationFrame === 'function' && this.rebuildRafHandle) cancelAnimationFrame(this.rebuildRafHandle);
+      this.rebuildRafScheduled = false;
+      this.rebuildRafHandle = 0;
+      this.rebuildPendingFit = false;
+    }
     // 并发保护：捕获发起时的代号与所属文档条目，返回后若已过期则丢弃（见 rebuildToken 注释）
     const token = ++this.rebuildToken;
     const entry = this.activeDoc();
@@ -1722,7 +1757,7 @@ export class App implements AppApi {
       ['重建次数', this.doc.rebuildCount],
       ['面 / 边 / 实体', `${s.faces} / ${s.edges} / ${s.solids}`],
       ['全局参数', this.doc.params.length],
-      ['单位系统', 'MMGS（毫米、克、秒）'],
+      ['单位系统', UNIT_BY_ID[this.unitSystem].label === 'MMGS' ? 'MMGS（毫米、克、秒）' : `${UNIT_BY_ID[this.unitSystem].label}（${UNIT_BY_ID[this.unitSystem].lenUnit}）`],
       ['投影模式', this.projection === 'perspective' ? '透视' : '正投影'],
       ['布景', this._sceneName],
     ];

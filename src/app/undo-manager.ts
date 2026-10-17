@@ -14,14 +14,18 @@ import type { AppEvent } from './app';
 
 /** undo/redo 流程需要的宿主能力（由 App 提供） */
 export interface UndoHost {
-  /** 当前文档的 JSON 快照（压栈 / 重做前保存现场） */
-  snapshot(): string;
+  /**
+   * 当前文档的快照（压栈 / 重做前保存现场）。
+   * 返回 `toJSON()` 的**纯对象**（由宿主保证与实时文档解耦），避免每次 mutate 都
+   * JSON.stringify + 之后 JSON.parse 两份序列化开销；栈里最多存 `max` 份。
+   */
+  snapshot(): unknown;
   /** 用快照整体替换文档（撤销 / 重做执行） */
-  restore(json: string): void;
+  restore(data: unknown): void;
   /** 恢复后的收尾：剪除悬空 UI 状态 + 异步重建 */
   afterRestore(): Promise<void>;
   /** 异步重建（mutate 的 rebuild 步骤；fire-and-forget，与旧行为一致） */
-  rebuild(opts: { fit?: boolean }): Promise<void>;
+  rebuild(opts: { fit?: boolean }): void;
   /** 广播事件 */
   emit(...evts: AppEvent[]): void;
   /** 轻提示（没有可撤销 / 重做时） */
@@ -39,8 +43,8 @@ export interface MutateOpts {
 }
 
 export class UndoManager {
-  private undoStack: string[] = [];
-  private redoStack: string[] = [];
+  private undoStack: unknown[] = [];
+  private redoStack: unknown[] = [];
   /** 撤销栈上限（与旧 App.maxUndo 一致） */
   private readonly max = 60;
   /** suppress 期间压栈为空操作——供「文档整体替换 + 异步重建」全程使用 */
@@ -52,13 +56,13 @@ export class UndoManager {
    * 切换文档：换成目标条目自己的 undo/redo 栈。
    * 条目持有数组引用（DocumentEntry.undo/redo），切回时几何/参数/计数器全部原样恢复。
    */
-  useStacks(undo: string[], redo: string[]): void {
+  useStacks(undo: unknown[], redo: unknown[]): void {
     this.undoStack = undo;
     this.redoStack = redo;
   }
 
   /** 当前栈引用（切文档前写回条目用——与条目共享同一数组） */
-  get stacks(): { undo: string[]; redo: string[] } {
+  get stacks(): { undo: unknown[]; redo: unknown[] } {
     return { undo: this.undoStack, redo: this.redoStack };
   }
 

@@ -20,15 +20,24 @@ export type Wire = any;
  * 实测这种异常**不会破坏 wasm 运行时状态**（抛错后同实例内新建文档求值、原文档改参数
  * 重算全部正常），所以只需翻译信息，无需熔断或重建内核。
  */
+/**
+ * 把 emscripten 在 wasm 边界抛出的内部噪声翻译成可读中文。
+ * 背景：OCCT 某些算子在几何不可行时直接抛 C++ 异常，而本绑定未链接异常解栈符号，
+ * JS 侧只能看到 `___cxa_is_pointer_type is not defined` 这类无意义信息。
+ */
+export function translateOcctError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/___cxa_is_pointer_type|__cxa_|is not defined|abort\(/.test(msg)) {
+    return '几何条件不满足（尺寸/半径过大，或与相邻面冲突）';
+  }
+  return msg;
+}
+
 function guardOc<T>(what: string, fn: () => T): T {
   try {
     return fn();
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (/___cxa_is_pointer_type|__cxa_|is not defined/.test(msg)) {
-      throw new Error(`${what}：几何条件不满足（尺寸/半径过大，或与相邻面冲突）`);
-    }
-    throw e instanceof Error ? e : new Error(String(e));
+    throw new Error(`${what}：${translateOcctError(e)}`);
   }
 }
 

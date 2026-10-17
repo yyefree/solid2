@@ -65,6 +65,8 @@ const OPS1 = '+-*/%^<>()[],.=';
 const PUNCS = '()[],.';
 
 export function tokenize(src: string): Token[] {
+  // 防御：过长的表达式（AI/用户均可输入）会拖慢解析甚至触发栈问题，先设硬上限
+  if (src.length > 2000) throw new ExprError('表达式过长（上限 2000 字符）');
   const toks: Token[] = [];
   let i = 0;
   const n = src.length;
@@ -181,6 +183,9 @@ const BIND: Record<string, number> = {
 export function parse(src: string): ExprNode {
   const toks = tokenize(src);
   let p = 0;
+  // 递归深度上限：深嵌套（如 a^b^c^… 或深度括号）在纯递归解析下可栈溢出，设硬上限兜底
+  const MAX_DEPTH = 200;
+  let depth = 0;
   const peek = () => toks[p];
   const next = () => toks[p++];
   const expect = (text: string) => {
@@ -190,17 +195,23 @@ export function parse(src: string): ExprNode {
   };
 
   function parseExpr(minBind = 0): ExprNode {
-    let left = parseUnary();
-    for (;;) {
-      const t = peek();
-      if (t.kind !== 'op') break;
-      const bind = BIND[t.text];
-      if (bind === undefined || bind <= minBind) break;
-      next();
-      const right = parseExpr(bind);
-      left = { t: 'bin', op: t.text, a: left, b: right };
+    depth++;
+    if (depth > MAX_DEPTH) throw new ExprError('表达式嵌套过深');
+    try {
+      let left = parseUnary();
+      for (;;) {
+        const t = peek();
+        if (t.kind !== 'op') break;
+        const bind = BIND[t.text];
+        if (bind === undefined || bind <= minBind) break;
+        next();
+        const right = parseExpr(bind);
+        left = { t: 'bin', op: t.text, a: left, b: right };
+      }
+      return left;
+    } finally {
+      depth--;
     }
-    return left;
   }
 
   function parseUnary(): ExprNode {
@@ -529,6 +540,16 @@ export function resolveExpressions(doc: DocLike): ResolveResult {
   // 单元格：参数 或 特征属性。惰性求值 + 栈检测环。
   const cache = new Map<string, number>();
   const visiting = new Set<string>();
+  // parse 是纯函数（同一表达式字符串产出同一 AST），本次求值内做记忆化，避免重复 appearance 的表达式重复解析。
+  const parseCache = new Map<string, ExprNode>();
+  function parseCached(src: string): ExprNode {
+    let n = parseCache.get(src);
+    if (!n) {
+      n = parse(src);
+      parseCache.set(src, n);
+    }
+    return n;
+  }
 
   const paramCell = (name: string) => `@p:${name}`;
   const featCell = (id: string, path: string) => `@f:${id}:${path}`;
@@ -597,7 +618,7 @@ export function resolveExpressions(doc: DocLike): ResolveResult {
     if (!src) throw new ExprError('表达式为空');
     let node: ExprNode;
     try {
-      node = parse(src);
+      node = parseCached(src);
     } catch (e) {
       throw new ExprError(`解析失败：${(e as Error).message}`);
     }
@@ -618,7 +639,22 @@ export function resolveExpressions(doc: DocLike): ResolveResult {
   }
 
   // 2) 求值所有特征表达式，并生成解析后的特征
-  const outFeatures: Feature[] = features.map((f) => JSON.parse(JSON.stringify(f)) as Feature);
+  // 性能：此前对全特征做 JSON 深拷贝（千特征文档 10~50ms 纯主线程开销，且发生在派发 Worker 之前）。
+  // 求值只改 `params`（经 setParamPath，写路径深度 ≤ 2：要么直接子字段、要么直接子数组的元素），
+  // 故对特征对象做浅拷贝、并对 params 的**直接数组/对象子字段**单独克隆即可隔离原始文档，
+  // 无需全量深拷贝（旧实现每次都 JSON 序列化整棵特征树，含草图几何，开销大）。
+  // setParamPath 只会写 `obj[k]=v`（直接子字段）或 `arr[i]=v`（直接子数组元素），
+  // 把每个直接子数组/对象克隆一份后，写入只会落到副本上，原始文档保持不动。
+  // 更深层的嵌套（sketch 几何等）只读、不修改，可安全共享引用。
+  const cloneParams = (p: Record<string, unknown>): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(p)) {
+      const v = p[k];
+      out[k] = Array.isArray(v) ? v.slice() : v && typeof v === 'object' ? { ...v } : v;
+    }
+    return out;
+  };
+  const outFeatures: Feature[] = features.map((f) => ({ ...f, params: cloneParams(f.params as Record<string, unknown>) } as Feature));
   const outById = new Map(outFeatures.map((f) => [f.id, f]));
   for (const f of features) {
     const ex = f.expressions;

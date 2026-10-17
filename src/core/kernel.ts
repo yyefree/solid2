@@ -45,15 +45,31 @@ class KernelClient {
   private progressListeners = new Set<ProgressFn>();
   private _ready = false;
   private _initError: string | null = null;
+  /** 内核是否已崩溃（worker 已不可恢复）。崩溃后所有新请求立即拒绝，避免永久挂起。 */
+  private dead = false;
 
   constructor() {
     this.worker = new Worker(new URL('../app/kernel.worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent) => this.onMessage(e.data as WorkerOutMsg);
     this.worker.onerror = (e) => {
-      this._initError = e.message || 'Worker 运行错误';
-      for (const r of this.readyResolvers) r.reject(new Error(this._initError));
-      this.readyResolvers = [];
+      this.handleFatal(e.message || 'Worker 运行错误');
     };
+  }
+
+  /**
+   * 内核致命错误（worker 抛出未捕获异常 / 经 wasm 边界崩溃）。
+   *
+   * 此时在途的所有 rebuild/measure/... 请求都已不可能再收到回复——若不处理，
+   * 调用方会永久卡在「正在重建」。这里统一拒绝它们，并标记 dead：
+   * 之后任何新请求都立即 reject（提示刷新），不再把请求塞给已死的 worker。
+   */
+  private handleFatal(msg: string): void {
+    this._initError = msg;
+    for (const r of this.readyResolvers) r.reject(new Error(msg));
+    this.readyResolvers = [];
+    for (const { reject } of this.pending.values()) reject(new Error(msg));
+    this.pending.clear();
+    this.dead = true;
   }
 
   private onMessage(m: WorkerOutMsg): void {
@@ -101,6 +117,9 @@ class KernelClient {
   }
 
   private invoke<T = unknown>(op: KernelOp, payload: unknown): Promise<T> {
+    if (this.dead) {
+      return Promise.reject(new Error(this._initError ?? '几何内核已崩溃，请刷新页面恢复'));
+    }
     const id = ++this.seq;
     const req: KernelRequest = { id, op, payload };
     return new Promise<T>((resolve, reject) => {

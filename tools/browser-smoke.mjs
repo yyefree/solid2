@@ -268,7 +268,9 @@ check('特征树原点下含 X/Y/Z 轴三节点', ['原点', 'X 轴', 'Y 轴', '
 
 // Ribbon 右键页签菜单（SW：右键页签勾选显示/隐藏 + 折叠）与自定义键盘
 const ribbonCtx = await evaluate(`(async () => {
-  const { ribbonController } = await import('/src/ui/ribbon.ts');
+  // 读实时 ribbon 控制器：dev 下「动态 import('/src/ui/ribbon.ts')」与主包静态导入是
+  // 两个模块实例（模块级 controller 单例为 null），故直接从 __solid2.ribbon 取主包实例。
+  const ribbonController = () => (window.__solid2 && window.__solid2.ribbon);
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const out = {};
   const before = document.querySelectorAll('.rtab').length;

@@ -1,13 +1,15 @@
 /**
  * 属性管理器（右侧面板）。
  */
-import { el, clear, numberField, checkField, section } from './dom';
+import { el, clear, numberField, checkField, section, isOwnCommit } from './dom';
 import type { AppApi } from '../app/app-api';
 import { FEATURE_LABEL } from '../doc/types';
 import { featureDialogs } from './dialogs';
 
 export function buildPropertyPanel(app: AppApi, host: HTMLElement): void {
   const render = () => {
+    // 字段自己触发的广播且焦点仍在面板内 → 跳过重建，保住输入框焦点（A5 修复）
+    if (isOwnCommit() && host.contains(document.activeElement)) return;
     clear(host);
     if (app.mode === 'sketch') { renderSketchProps(app, host); return; }
     if (app.mode === 'assembly') { renderAssemblyProps(app, host); return; }

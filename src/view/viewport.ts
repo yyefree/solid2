@@ -633,12 +633,13 @@ export class Viewport {
     const loop = () => {
       if (!this.running) return;
       this.rafId = requestAnimationFrame(loop);
-      const damping = this.controls.enableDamping;
-      if (damping) this.controls.update();
-      if (this.needsRender || damping) {
-        this.renderAll();
-        this.needsRender = false;
-      }
+      let render = this.needsRender;
+      this.needsRender = false;
+      // 阻尼开启：每帧推进相机惯性；controls.update() 仅在相机真正移动时返回 true。
+      // 惯性耗尽后它持续返回 false，此时若无其它渲染需求（needsRender）就跳过——
+      // 否则静止场景会永远 60fps 空转，白白烧 GPU/电量。
+      if (this.controls.enableDamping && this.controls.update()) render = true;
+      if (render) this.renderAll();
     };
     loop();
   }

@@ -112,13 +112,18 @@ async function boot() {
     // 开发模式：暴露调试句柄，供浏览器端到端冒烟测试驱动真实 Worker 内核。
     // 生产构建下 import.meta.env.DEV 为 false，此分支会被 Vite 静态消除（不进产物）。
     if (import.meta.env.DEV) {
-      (window as unknown as Record<string, unknown>).__solid2 = { app, kernel };
+      (window as unknown as { __solid2: Record<string, unknown> }).__solid2 = { app, kernel };
     }
 
     // ---------- 挂载 UI ----------
     buildMenubar(app, menubarEl);
     buildStdToolbar(app, stdToolbarEl);
     const ribbon = renderRibbon(app, ribbonTabsEl, ribbonPanelEl);
+    // 暴露实时 ribbon 控制器（供浏览器冒烟测试读取 hiddenTabs/collapsed 等状态；
+    // 动态 import 在 dev 下会拿到与主包不同的模块实例，直接读模块单例为 null）。
+    if (import.meta.env.DEV) {
+      (window as unknown as { __solid2: Record<string, unknown> }).__solid2.ribbon = ribbon;
+    }
 
     // SolidWorks CommandManager 行为：模式与页签联动——进入某模式自动切到对应页签，
     // 退回模型态则回到「特征」页签。这样「画草图 → 退出 → 拉伸」、打开装配体 / 工程图，

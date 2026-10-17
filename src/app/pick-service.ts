@@ -484,7 +484,18 @@ export class PickService {
     g.visible = this.host.mode() === 'assembly';
   }
 
-  /** 屏幕空间边拾取（针对指定视图） */
+  /**
+   * 屏幕空间边拾取（针对指定视图）。
+   *
+   * 性能：原先在内层逐段对两个端点各调一次 worldToScreen（且每段 `tmp.clone()`），
+   * 500 棱 × 40 点 ≈ 4 万次投影 + 4 万对象分配 / 点击。改为**每条棱边的折线顶点
+   * 预先一次性投影到屏幕空间**（缓存进 `screen`），随后只做线段距离计算——
+   * 每个顶点投影恰好一次，不再 clone。
+   *
+   * 坐标约定（与原实现一致）：`worldToScreen` 返回**画布相对**坐标（基于 activeRect，
+   * 不含页面偏移）；点击的客户区坐标 `sx/sy` 在入口处减 `rect.left/top` 换算成
+   * 同一画布相对系后再比较，投影点本身不再二次减偏移。
+   */
   private pickEdgeIn(sv: ShapeView, sx: number, sy: number, threshold = 8): number | null {
     const rect = this.host.canvasRect();
     const mx = sx - rect.left;
@@ -492,24 +503,24 @@ export class PickService {
     let best = -1;
     let bestD = threshold;
 
-    const tmp = new THREE.Vector3();
-    for (let i = 0; i < sv.edgeMetas.length; i++) {
-      const flat = sv.meshResult.edgePolylines[i];
-      if (!flat || flat.length < 6) continue;
-      let prev: THREE.Vector3 | null = null;
+    const screen = sv.meshResult.edgePolylines.map((flat) => {
+      const out: number[] = [];
       for (let k = 0; k < flat.length; k += 3) {
-        tmp.set(flat[k], flat[k + 1], flat[k + 2]);
-        const cur = tmp.clone();
-        if (prev) {
-          const a = this.host.worldToScreen([prev.x, prev.y, prev.z]);
-          const b = this.host.worldToScreen([cur.x, cur.y, cur.z]);
-          const d = distToSegment(mx, my, a.x, a.y, b.x, b.y);
-          if (d < bestD) {
-            bestD = d;
-            best = i;
-          }
+        const sp = this.host.worldToScreen([flat[k], flat[k + 1], flat[k + 2]]);
+        out.push(sp.x, sp.y);
+      }
+      return out;
+    });
+
+    for (let i = 0; i < sv.edgeMetas.length; i++) {
+      const pts = screen[i];
+      if (!pts || pts.length < 4) continue;
+      for (let k = 2; k < pts.length; k += 2) {
+        const d = distToSegment(mx, my, pts[k - 2], pts[k - 1], pts[k], pts[k + 1]);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
         }
-        prev = cur;
       }
     }
     return best >= 0 ? best : null;

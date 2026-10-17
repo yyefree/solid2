@@ -44,7 +44,9 @@ const openClosers = new Set<() => void>();
 /** 打开一个弹出菜单，返回关闭函数 */export function openPopup(items: PopupItem[], x: number, y: number, opts: PopupOptions = {}): () => void {
   const box = el('div', { class: `dropdown ${opts.cls ?? ''}`.trim() });
   if (opts.minWidth) box.style.minWidth = `${opts.minWidth}px`;
-  renderInto(box, items, () => close());
+  // 子菜单挂在 document.body（renderInto 内），关闭时必须一并摘除，否则残留成「幽灵菜单」
+  const subs: HTMLElement[] = [];
+  renderInto(box, items, () => close(), subs);
 
   document.body.appendChild(box);
 
@@ -61,6 +63,7 @@ const openClosers = new Set<() => void>();
     closed = true;
     openClosers.delete(close);
     box.remove();
+    for (const s of subs) s.remove();
     document.removeEventListener('mousedown', away, true);
     document.removeEventListener('keydown', onKey, true);
     opts.onClose?.();
@@ -116,6 +119,7 @@ export function openContextMenu(
     closed = true;
     openClosers.delete(close);
     box.remove();
+    for (const s of subs) s.remove();
     document.removeEventListener('mousedown', away, true);
     document.removeEventListener('keydown', onKey, true);
   };
@@ -143,7 +147,8 @@ export function openContextMenu(
   }
   const list = el('div', { class: 'ctx-list' });
   box.appendChild(list);
-  renderInto(list, items, close);
+  const subs: HTMLElement[] = [];
+  renderInto(list, items, close, subs);
 
   document.body.appendChild(box);
   const r = box.getBoundingClientRect();
@@ -169,7 +174,7 @@ export function openContextMenu(
   return close;
 }
 
-function renderInto(box: HTMLElement, items: PopupItem[], closeSelf: () => void): void {  for (const it of items) {
+function renderInto(box: HTMLElement, items: PopupItem[], closeSelf: () => void, subs?: HTMLElement[]): void {  for (const it of items) {
     if (it.sep) {
       box.appendChild(el('div', { class: 'dd-sep' }));
       continue;
@@ -201,7 +206,8 @@ function renderInto(box: HTMLElement, items: PopupItem[], closeSelf: () => void)
       const openSub = () => {
         if (sub) return;
         sub = el('div', { class: 'dropdown dd-sub' });
-        renderInto(sub, it.submenu!, closeSelf);
+        renderInto(sub, it.submenu!, closeSelf, subs);
+        subs?.push(sub);
         document.body.appendChild(sub);
         const r = btn.getBoundingClientRect();
         const sr = sub.getBoundingClientRect();

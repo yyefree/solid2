@@ -227,6 +227,27 @@ console.log('\n【序列化】');
     `${doc2.features.length} vs ${doc.features.length}`);
 }
 
+// ---------- 7b. 快照解耦（toJSON 必须深拷贝 params） ----------
+// 撤销快照直接存 toJSON() 结果。若只浅拷贝，快照的 params 与实时文档共享同一对象，
+// 之后 Object.assign(f.params, patch) 会连快照一起改掉 → 撤销恢复不出旧值。
+console.log('\n【快照解耦】');
+{
+  const live = doc.features.find((f) => f.type === 'extrude');
+  const snap = doc.toJSON();
+  const snapF = snap.features.find((f) => f.type === 'extrude');
+  if (live && snapF) {
+    const p0 = (live.params as { distance: number }).distance;
+    const s0 = (snapF.params as { distance: number }).distance;
+    (live.params as { distance: number }).distance = p0 + 100; // 模拟 updateFeatureParams
+    const s1 = (snapF.params as { distance: number }).distance;
+    check('toJSON 快照与实时文档解耦（改实时参数不影响快照）', s0 === p0 && s1 === p0,
+      `快照 ${s0}→${s1}，实时 ${p0}→${p0 + 100}`);
+    (live.params as { distance: number }).distance = p0; // 复原
+  } else {
+    check('toJSON 快照与实时文档解耦（改实时参数不影响快照）', false, '未找到 extrude 特征');
+  }
+}
+
 // ---------- 8. 错误处理 ----------
 console.log('\n【错误处理】');
 {

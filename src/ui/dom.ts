@@ -34,6 +34,21 @@ export function on(
   return () => node.removeEventListener(type as keyof HTMLElementEventMap, handler, opts);
 }
 
+/**
+ * 字段内部提交标记。
+ *
+ * 属性面板（buildPropertyPanel）的 numberField 在提交时会经 app.updateFeatureParams
+ * 触发 emit('props')，而面板本身监听 'props' 会整树重建——于是输入框在 keydown 中途被
+ * `clear(host)` 销毁、焦点丢回 body、滚轮微调每次都重绘。
+ *
+ * 解决办法：本模块在所有字段提交入口置位 `ownCommitDepth`，宿主面板渲染时若检测到
+ * 「是字段自己触发的广播 + 焦点还在面板内」就跳过本次重建（输入中保焦点，已是正确值）。
+ */
+let ownCommitDepth = 0;
+export function isOwnCommit(): boolean {
+  return ownCommitDepth > 0;
+}
+
 /** 数值输入框（带上下微调），返回元素与取值函数 */
 export function numberField(
   label: string,
@@ -59,7 +74,12 @@ export function numberField(
     if (opts.min !== undefined) v = Math.max(opts.min, v);
     if (opts.max !== undefined) v = Math.min(opts.max, v);
     input.value = String(round(v));
-    onChange(v);
+    ownCommitDepth++;
+    try {
+      onChange(v);
+    } finally {
+      ownCommitDepth--;
+    }
   };
   input.addEventListener('change', commit);
   input.addEventListener('keydown', (e) => {

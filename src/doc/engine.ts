@@ -10,6 +10,7 @@
  * 绝不能出现在主线程的 import 链里。
  */
 import * as S from '../core/solid';
+import { translateOcctError } from '../core/solid';
 import { tessellate, discretizeEdge } from '../core/mesh';
 import { sketchToRegions, regionToFace } from '../sketch/toShape';
 import { buildRibProfile } from '../sketch/rib';
@@ -1151,6 +1152,27 @@ export interface RebuildOutcome {
  * 末尾汇总与实体合成一个复合形状（供三角化渲染）；
  * 因此返回的 `shape` 可能同时含实体与曲面体，`surfaces` 给出曲面体数量。
  */
+/**
+ * 这些特征类型**合法地**可能让 `out.shape` 不产出实体（也不报错）：
+ *  - `sketch` / `referencePlane`：纯拓扑/参照特征，`out.shape` 原样透传 `current`；
+ *  - 全部 `surface*`：几何输出写入 `ctx.surfaceById`（供末尾汇总），`out.shape` 透传 `current`。
+ * 它们本身从不"吃掉"已有几何，因此即便 `bodiesOf==0 && surfacesOf==0` 也不应被当成缺陷。
+ * 与之相反，`combine`(差集/交集)/`primitive`(cut)/`hole`/`shell`(切除)/`scale`/`split`/`moveBody`/
+ * `deleteBody`/`draft`/`rib` 等**应当**保留至少一个实体——它们若把主体整体移除就是真正缺陷
+ * （OCCT 此时返回空复合体且不抛异常），正是下方断言要拦截的。
+ */
+const MAY_EMPTY_RESULT = new Set<Feature['type']>([
+  'sketch',
+  'referencePlane',
+  'surfaceExtrude',
+  'surfaceRevolve',
+  'surfacePlanar',
+  'surfaceLoft',
+  'surfaceSweep',
+  'surfaceTrim',
+  'surfaceSew',
+]);
+
 export function rebuildFeatures(features: Feature[], upto?: FeatureId): RebuildOutcome {
   const t0 = performance.now();
   const doc = new CadDocument();
@@ -1166,12 +1188,30 @@ export function rebuildFeatures(features: Feature[], upto?: FeatureId): RebuildO
       doc.evalCache.set(f.id, { shape: current });
       continue;
     }
+    // 进入此特征前已有的几何（用于下方「求值后几何被静默清空」判定）
+    const prevHadGeometry =
+      current != null && (S.bodiesOf(current).length + S.surfacesOf(current).length > 0);
     try {
       const out = evaluateFeature(f, current, ctx);
       doc.evalCache.set(f.id, out);
       current = out.shape;
+      // 健壮性：布尔切除/相交等可能把主体整体吃掉，而 OCCT 此时返回的是**空复合体**
+      // （IsNull 为 false、实体数为 0），不会抛异常——若不拦截就会静默产出一个空模型。
+      // 合法特征都不会把「有几何」变成「零实体零曲面」，故此处断言零误报。
+      if (out.shape && !MAY_EMPTY_RESULT.has(f.type)) {
+        const bodies = S.bodiesOf(out.shape).length;
+        if (bodies === 0) {
+          const shells = S.surfacesOf(out.shape).length;
+          if (shells === 0 && prevHadGeometry) {
+            errors.push({
+              id: f.id,
+              message: '求值后几何变为空（布尔/切除把主体整体移除，几何条件不满足）',
+            });
+          }
+        }
+      }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = translateOcctError(e);
       errors.push({ id: f.id, message: msg });
       doc.evalCache.set(f.id, { shape: current });
     }

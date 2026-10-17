@@ -268,10 +268,19 @@ export class CadDocument {
   }
 
   toJSON(): SerializedDoc {
+    // ⚠️ features 必须**深拷贝**（尤其 params/expressions/sketch 这些可变嵌套对象）。
+    // 撤销快照直接存本方法结果：若只 `{...f}` 浅拷贝，快照的 params 会与实时文档共享
+    // 同一对象，之后 `updateFeatureParams` 的 `Object.assign(f.params, patch)` 会连快照
+    // 一起改掉——撤销就恢复不出旧值（改深度 10→20 后 Ctrl+Z 仍是 20）。
+    const features = this.features.map((f) => {
+      const c = structuredClone(f) as Feature;
+      c.error = undefined;
+      return c;
+    });
     return {
       version: 2,
       params: this.params.map((p) => ({ ...p })),
-      features: this.features.map((f) => ({ ...f, error: undefined })),
+      features,
     };
   }
 
@@ -297,7 +306,8 @@ export class CadDocument {
   }
 
   clone(): CadDocument {
-    return CadDocument.fromJSON(JSON.parse(JSON.stringify(this.toJSON())));
+    // toJSON() 已深拷贝 features，直接复用即可（无需再 JSON 往返）
+    return CadDocument.fromJSON(this.toJSON());
   }
 }
 

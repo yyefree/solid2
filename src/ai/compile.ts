@@ -105,6 +105,104 @@ function makeNamer(): (type: string) => string {
   };
 }
 
+/**
+ * 安全上限（白名单闸门的兜底）。
+ *
+ * 解析层（本地规则或未来云端大模型）只产出「意图」`AiOp`，校验逻辑不能只散落在
+ * `compilePlan` 各 case 的下限判断里——那样云端模型吐出的巨大 count/turns/dims 会
+ * 直达内核 Worker（无取消手段），轻则卡死、重则 OOM。
+ *
+ * 故在编译入口统一钳制：所有数值字段限制在 `±MAX_DIM`、阵列/复制份数 ≤ MAX_COUNT、
+ * 弹簧/涡线圈数 ≤ MAX_TURNS；非有限值回退安全下限并记一条 warn。
+ * 本地 parse 与云端 provider 都走 `compilePlan` 入口，故一次覆盖两条路径。
+ */
+const MAX_DIM = 1e6;
+const MAX_COUNT = 64;
+const MAX_TURNS = 1000;
+
+function clampNum(v: number, lo: number, hi: number): number {
+  if (!Number.isFinite(v)) return lo;
+  return Math.min(hi, Math.max(lo, v));
+}
+
+/** 白名单校验 + 钳制 AI 动作的越界数值（详见 MAX_* 注释） */
+export function validateAiOps(ops: AiOp[]): { ops: AiOp[]; issues: ParseIssue[] } {
+  const issues: ParseIssue[] = [];
+  const out: AiOp[] = [];
+  for (const op of ops) {
+    let cloned = false;
+    const next: Record<string, unknown> = {};
+    const changed: string[] = [];
+    const clampField = (k: string, v: unknown) => {
+      if (typeof v === 'number') {
+        const nv = clampNum(v, -MAX_DIM, MAX_DIM);
+        if (nv !== v) changed.push(k);
+        return nv;
+      }
+      if (Array.isArray(v)) {
+        let any = false;
+        const arr = v.map((x) => {
+          if (typeof x === 'number') {
+            const nx = clampNum(x, -MAX_DIM, MAX_DIM);
+            if (nx !== x) any = true;
+            return nx;
+          }
+          return x;
+        });
+        if (any) changed.push(k);
+        return arr;
+      }
+      return v;
+    };
+    switch (op.kind) {
+      case 'linearPattern':
+      case 'circularPattern': {
+        const c = clampNum(op.count, 2, MAX_COUNT);
+        if (c !== op.count) changed.push('count');
+        cloned = true;
+        out.push({ ...op, count: c });
+        break;
+      }
+      case 'moveBody': {
+        const c = op.count !== undefined ? clampNum(op.count, 1, MAX_COUNT) : undefined;
+        if (op.count !== undefined && c !== op.count) changed.push('count');
+        cloned = c !== undefined;
+        out.push(cloned ? { ...op, count: c } : op);
+        break;
+      }
+      case 'spring':
+      case 'spiral': {
+        const t = clampNum(op.turns, 0.05, MAX_TURNS);
+        if (t !== op.turns) changed.push('turns');
+        out.push({ ...op, turns: t });
+        break;
+      }
+      default: {
+        // 其余：逐数值字段钳制（dims / delta / 半径 / 深度 / 角度 …）
+        for (const k of Object.keys(op)) {
+          const v = (op as unknown as Record<string, unknown>)[k];
+          next[k] = clampField(k, v);
+        }
+        if (changed.length) {
+          cloned = true;
+          out.push(next as unknown as AiOp);
+        } else {
+          out.push(op);
+        }
+      }
+    }
+    if (changed.length) {
+      issues.push({
+        clause: op.source,
+        message: `参数越界已钳制：${changed.join(', ')}（安全范围 ±${MAX_DIM} / count≤${MAX_COUNT} / turns≤${MAX_TURNS}）`,
+        level: 'warn',
+      });
+    }
+    void cloned;
+  }
+  return { ops: out, issues };
+}
+
 // ---------- 向量小工具 ----------
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -363,6 +461,11 @@ export function compilePlan(ops: AiOp[], opts: CompileOptions = {}): CompileResu
   const issues: ParseIssue[] = [];
   const names: string[] = [];
 
+  // 白名单闸门：在编译前统一钳制越界数值（本地解析与云端 provider 共用此入口）
+  const validated = validateAiOps(ops);
+  issues.push(...validated.issues);
+  const plan = validated.ops;
+
   /** 当前累计包围盒（所有实体并集）；追加模式下从现有模型续起 */
   let cur: Box | null = opts.initialBBox ?? null;
   /** 只有「上一个实体是纯长方体」时才非空，供解析式边/面引用使用 */
@@ -370,7 +473,7 @@ export function compilePlan(ops: AiOp[], opts: CompileOptions = {}): CompileResu
   /** 上一个特征 id（阵列的种子） */
   let lastId: string | null = opts.initialLastId ?? null;
 
-  for (const op of ops) {
+  for (const op of plan) {
     switch (op.kind) {
       case 'box':
       case 'cylinder':
