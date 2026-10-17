@@ -30,7 +30,8 @@ import { ParamService } from './param-service';
 import { FileService } from './file-service';
 import { PickService } from './pick-service';
 import { Assembly, mateRefLabel, type MateRef } from './assembly';
-import { Drawing, generateStandardViews, type ViewKind } from './drawing';
+import { Drawing, type ViewKind } from './drawing';
+import { DrawingService } from './drawing-service';
 import { openSectionProperties } from '../ui/sectionprops-dialog';
 import type { AppApi } from './app-api';
 
@@ -187,13 +188,26 @@ export class App implements AppApi {
 
   // ---- 装配 / 工程图 ----
   assembly: Assembly | null = null;
-  drawing: Drawing | null = null;
+  /**
+   * 当前文档的工程图子文档（多文档各存一份）。
+   * 存储在 `DrawingService`（src/app/drawing-service.ts）——App 只做 getter/setter
+   * 委托；切文档（activateEntry）/ 打开文档（loadDocument）经 setter 换引用。
+   */
+  get drawing(): Drawing | null {
+    return this.drawSvc.drawing;
+  }
+  set drawing(d: Drawing | null) {
+    this.drawSvc.setDrawing(d);
+  }
   drawingHost: HTMLElement | null = null;
   drawingScale = 0;
-  /** 尺寸标注模式：点击工程图边线即添加标注 */
-  dimMode = false;
-  /** 上一次标注的边（`viewId:runIdx`），用于 Shift+点击标注两条边间距 */
-  private lastDimRun: string | null = null;
+  /** 尺寸标注模式：点击工程图边线即添加标注（委托 DrawingService） */
+  get dimMode(): boolean {
+    return this.drawSvc.dimMode;
+  }
+
+  // ---- 工程图（命令与标注会话在 src/app/drawing-service.ts）----
+  private readonly drawSvc: DrawingService;
 
   /**
    * 装配体可视化拾取：已选中的配合参考（最多 2 个，用于创建配合）。
@@ -301,6 +315,54 @@ export class App implements AppApi {
       sketchFinishBSpline: () => this.sketch.finishBSpline(),
       isSketchMode: () => this.mode === 'sketch',
       onCanvasClickHook: (x, y, additive) => this.onCanvasClick?.(x, y, additive) ?? false,
+    });
+
+    // 工程图服务：子文档随条目切换（setDrawing），标注会话状态（dimMode/lastDimRun）
+    // 收在服务内；SVG→PNG 光栅化与下载是 DOM 能力，经宿主闭包注入
+    this.drawSvc = new DrawingService({
+      currentModel: () => this.currentModel(),
+      unitSystem: () => this.unitSystem,
+      drawingScale: () => this.drawingScale,
+      hasModel: () => this.hasModel,
+      assembly: () => this.assembly,
+      featureCount: () => this.doc.features.length,
+      emit: (...evts) => this.emit(...evts),
+      setStatus: (text, kind, detail) => this.setStatus(text, kind, detail),
+      toast: (kind, msg) => (kind === 'ok' ? notify.ok(msg) : kind === 'err' ? notify.err(msg) : notify.info(msg)),
+      rasterizePNG: (svg, w, h, scale) =>
+        new Promise<ArrayBuffer>((resolve, reject) => {
+          const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const canvas = document.createElement('canvas');
+              canvas.width = Math.round(w * scale);
+              canvas.height = Math.round(h * scale);
+              const ctx = canvas.getContext('2d')!;
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              URL.revokeObjectURL(url);
+              canvas.toBlob((b) => {
+                if (!b) {
+                  reject(new Error('toBlob 失败'));
+                  return;
+                }
+                b.arrayBuffer().then((buf) => resolve(buf));
+              }, 'image/png');
+            } catch (e) {
+              URL.revokeObjectURL(url);
+              reject(e as Error);
+            }
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error('SVG 光栅化失败'));
+          };
+          img.src = url;
+        }),
+      download: (content, filename, mime) => download(content, filename, mime),
     });
 
     // 撤销管理器：宿主回调均为闭包（构造时 this.doc 等字段已初始化）
@@ -1011,10 +1073,8 @@ export class App implements AppApi {
     if (this.mode === mode) return;
     if (mode !== 'sketch' && this.editingSketch) this.exitSketch(false);
     this.mode = mode;
-    if (mode !== 'drawing' && this.dimMode) {
-      this.dimMode = false;
-      this.lastDimRun = null;
-    }
+    // 离开工程图模式 → 取消标注会话（dimMode + lastDimRun 由 DrawingService 收口）
+    if (mode !== 'drawing') this.drawSvc.exitDimensionMode();
     if (mode !== 'assembly') {
       this.assemblyPicks = [];
       this.pickSvc.syncAssemblyPickMarkers();
@@ -1073,118 +1133,53 @@ export class App implements AppApi {
   }
 
   // ============================================================
-  // 工程图
+  // 工程图（视图生成 / 标注会话 / BOM / PNG 导出在 src/app/drawing-service.ts）
   // ============================================================
   ensureDrawing(): Drawing {
-    if (!this.drawing) this.drawing = new Drawing();
-    return this.drawing;
+    return this.drawSvc.ensureDrawing();
   }
 
+  /** 生成标准三视图 + 等轴测（会先清空既有视图） */
   generateDrawing(kinds: ViewKind[] = ['front', 'top', 'right', 'iso']): void {
-    const m = this.currentModel();
-    if (!m) {
-      notify.err('没有可生成工程图的实体');
-      return;
-    }
-    const d = this.ensureDrawing();
-    d.unitSystem = this.unitSystem;
-    generateStandardViews(d, m.mesh, kinds);
-    this.drawingScale && (d.fixedScale = this.drawingScale);
-    this.emit('drawing', 'tree');
+    this.drawSvc.generateDrawing(kinds);
   }
 
+  /** 追加单个视图并重排版 */
   addDrawingView(kind: ViewKind): void {
-    const m = this.currentModel();
-    if (!m) {
-      notify.err('没有可生成工程图的实体');
-      return;
-    }
-    const d = this.ensureDrawing();
-    d.unitSystem = this.unitSystem;
-    d.addView(kind, m.mesh, this.drawingScale);
-    d.layout();
-    this.emit('drawing', 'tree');
+    this.drawSvc.addDrawingView(kind);
   }
 
   refreshDrawing(): void {
-    this.emit('drawing');
+    this.drawSvc.refreshDrawing();
   }
 
   /** 切换尺寸标注模式（点击工程图边线即标注） */
   toggleDimensionMode(): void {
-    if (!this.drawing || !this.drawing.views.length) {
-      notify.info('请先生成工程图视图');
-      return;
-    }
-    this.dimMode = !this.dimMode;
-    this.lastDimRun = null;
-    this.setStatus(this.dimMode ? '尺寸标注：点击边线添加标注' : '就绪', this.dimMode ? 'busy' : 'ok');
-    notify.info(
-      this.dimMode
-        ? '尺寸标注：点击边线添加长度标注（Shift+点击另一条边 → 标注两条边间距；右键标注可删除）'
-        : '已退出尺寸标注模式'
-    );
-    this.refreshDrawing();
+    this.drawSvc.toggleDimensionMode();
   }
 
   /** 工程图边线被点击 → 添加尺寸标注 */
   placeDrawingDimension(viewId: string, runIdx: number, shift = false): void {
-    const d = this.drawing;
-    const v = d?.views.find((x) => x.id === viewId);
-    if (!d || !v || !this.dimMode) return;
-    const key = `${viewId}:${runIdx}`;
-    const prevPrefix = `${viewId}:`;
-    if (shift && this.lastDimRun && this.lastDimRun.startsWith(prevPrefix)) {
-      const prev = Number(this.lastDimRun.slice(prevPrefix.length));
-      const dim = d.dimensionBetweenRuns(viewId, prev, runIdx);
-      if (dim) notify.ok(`距离标注：${d.dimensionValue(v, dim).toFixed(2)} mm`);
-    } else {
-      const dim = d.dimensionRun(viewId, runIdx);
-      if (dim) notify.ok(`长度标注：${d.dimensionValue(v, dim).toFixed(2)} mm`);
-    }
-    this.lastDimRun = key;
-    this.emit('drawing');
+    this.drawSvc.placeDrawingDimension(viewId, runIdx, shift);
   }
 
   /** 删除某个尺寸标注（右键工程图标注） */
   removeDrawingDim(viewId: string, dimId: string): void {
-    const d = this.drawing;
-    if (!d) return;
-    d.removeDim(viewId, dimId);
-    this.refreshDrawing();
+    this.drawSvc.removeDrawingDim(viewId, dimId);
   }
 
   clearDrawingDims(): void {
-    const d = this.drawing;
-    if (!d) return;
-    d.clearDims();
-    this.lastDimRun = null;
-    this.refreshDrawing();
-    notify.info('已清除全部标注');
+    this.drawSvc.clearDrawingDims();
   }
 
   /** 自动标注：overall 标总宽/高，all 再标直线边 */
   autoDimensionDrawing(mode: 'overall' | 'all' = 'overall'): void {
-    const d = this.drawing;
-    if (!d || !d.views.length) {
-      notify.info('请先生成工程图视图');
-      return;
-    }
-    const n = d.autoDimension(mode);
-    this.refreshDrawing();
-    notify.ok(`已自动标注 ${n} 处尺寸`);
+    this.drawSvc.autoDimensionDrawing(mode);
   }
 
   /** 孔位自动标注：中心定位尺寸 + 正视圆的直径 */
   autoHoleDimensionDrawing(): void {
-    const d = this.drawing;
-    if (!d || !d.views.length) {
-      notify.info('请先生成工程图视图');
-      return;
-    }
-    const n = d.autoDimensionHoles();
-    this.refreshDrawing();
-    notify.ok(`已标注 ${n} 处孔位尺寸`);
+    this.drawSvc.autoHoleDimensionDrawing();
   }
 
   /** 应用标注元数据（公差 / φ 前缀） */
@@ -1193,93 +1188,17 @@ export class App implements AppApi {
     dimId: string,
     meta: { tolerance?: { upper: number; lower: number }; prefix?: string }
   ): boolean {
-    const d = this.drawing;
-    if (!d || !d.setDimMeta(viewId, dimId, meta)) return false;
-    this.refreshDrawing();
-    notify.ok('已更新尺寸标注');
-    return true;
+    return this.drawSvc.applyDrawingDimMeta(viewId, dimId, meta);
   }
 
   /** 切换明细表：从装配体（按特征序列分组计数，数量联动）或当前零件生成 */
   toggleDrawingBOM(): void {
-    const d = this.drawing;
-    if (!d || !d.views.length) {
-      notify.info('请先生成工程图');
-      return;
-    }
-    if (d.bom.length) {
-      d.clearBom();
-      this.refreshDrawing();
-      notify.info('已清除明细表');
-      return;
-    }
-    const a = this.assembly;
-    const material = d.sheet.material;
-    let rows: { name: string; qty: number; material?: string; note?: string }[];
-    if (a && a.components.length) {
-      rows = a.bomEntries().map((e) => ({
-        name: e.name,
-        qty: e.qty,
-        material,
-        note: e.qty > 1 ? `共 ${e.qty} 件` : undefined,
-      }));
-    } else if (this.hasModel) {
-      const m = this.currentModel();
-      rows = [{ name: m ? `零件·${this.doc.features.length} 特征` : '零件1', qty: 1, material }];
-    } else {
-      notify.info('没有可生成明细表的模型');
-      return;
-    }
-    d.setBom(rows);
-    this.refreshDrawing();
-    notify.ok(`已生成明细表（${rows.length} 行，数量随装配自动联动）`);
+    this.drawSvc.toggleDrawingBOM();
   }
 
-  /** 导出当前工程图为 PNG（把 SVG 光栅化到 canvas）*/
+  /** 导出当前工程图为 PNG（宿主 canvas 光栅化 + 下载） */
   exportDrawingPNG(scale = 4): Promise<void> {
-    const d = this.drawing;
-    if (!d) {
-      notify.err('没有工程图');
-      return Promise.reject(new Error('no drawing'));
-    }
-    const { w, h } = d.sheet;
-    const svg = d.toSVG();
-    return new Promise<void>((resolve, reject) => {
-      const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.round(w * scale);
-          canvas.height = Math.round(h * scale);
-          const ctx = canvas.getContext('2d')!;
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          URL.revokeObjectURL(url);
-          canvas.toBlob((b) => {
-            if (!b) {
-              reject(new Error('toBlob 失败'));
-              return;
-            }
-            b.arrayBuffer().then((buf) => {
-              download(buf, 'drawing.png', 'image/png');
-              notify.ok('PNG 已导出');
-              resolve();
-            });
-          }, 'image/png');
-        } catch (e) {
-          URL.revokeObjectURL(url);
-          reject(e as Error);
-        }
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error('SVG 光栅化失败'));
-      };
-      img.src = url;
-    });
+    return this.drawSvc.exportDrawingPNG(scale);
   }
 
   // ============================================================

@@ -40,6 +40,7 @@ const SUITES = [
   { name: '表达式/参数服务（求值缓存/写入口/纯查询）', file: 'tools/param-service-test.ts' },
   { name: '文件服务（导出/保存/打开/导入流程）', file: 'tools/file-service-test.ts' },
   { name: '拾取交互服务（点击分发/顶点·棱边·面拾取/装配配合拾取/标记）', file: 'tools/pick-service-test.ts' },
+  { name: '工程图服务（视图生成/标注会话/BOM/PNG 导出）', file: 'tools/drawing-service-test.ts' },
 ];
 
 let failed = 0;
