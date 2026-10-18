@@ -1146,20 +1146,13 @@ export interface RebuildOutcome {
 }
 
 /**
- * 重放整棵特征树，返回最终 TopoDS（仅在 Worker 内有效）与出错特征列表。
- *
- * 曲面特征产生的壳按特征 id 记入 `ctx.surfaceById`（裁剪/缝合会引用并替换其中条目），
- * 末尾汇总与实体合成一个复合形状（供三角化渲染）；
- * 因此返回的 `shape` 可能同时含实体与曲面体，`surfaces` 给出曲面体数量。
- */
-/**
  * 这些特征类型**合法地**可能让 `out.shape` 不产出实体（也不报错）：
  *  - `sketch` / `referencePlane`：纯拓扑/参照特征，`out.shape` 原样透传 `current`；
  *  - 全部 `surface*`：几何输出写入 `ctx.surfaceById`（供末尾汇总），`out.shape` 透传 `current`。
  * 它们本身从不"吃掉"已有几何，因此即便 `bodiesOf==0 && surfacesOf==0` 也不应被当成缺陷。
  * 与之相反，`combine`(差集/交集)/`primitive`(cut)/`hole`/`shell`(切除)/`scale`/`split`/`moveBody`/
  * `deleteBody`/`draft`/`rib` 等**应当**保留至少一个实体——它们若把主体整体移除就是真正缺陷
- * （OCCT 此时返回空复合体且不抛异常），正是下方断言要拦截的。
+ * （OCCT 此时返回空复合体且不抛异常），正是 rebuildFeatures 里的断言要拦截的。
  */
 const MAY_EMPTY_RESULT = new Set<Feature['type']>([
   'sketch',
@@ -1173,6 +1166,13 @@ const MAY_EMPTY_RESULT = new Set<Feature['type']>([
   'surfaceSew',
 ]);
 
+/**
+ * 重放整棵特征树，返回最终 TopoDS（仅在 Worker 内有效）与出错特征列表。
+ *
+ * 曲面特征产生的壳按特征 id 记入 `ctx.surfaceById`（裁剪/缝合会引用并替换其中条目），
+ * 末尾汇总与实体合成一个复合形状（供三角化渲染）；
+ * 因此返回的 `shape` 可能同时含实体与曲面体，`surfaces` 给出曲面体数量。
+ */
 export function rebuildFeatures(features: Feature[], upto?: FeatureId): RebuildOutcome {
   const t0 = performance.now();
   const doc = new CadDocument();

@@ -152,6 +152,8 @@ export class SketchController {
     const plane = this.app.sketchPlane;
     if (!this.overlay) {
       this.overlay = new SketchOverlay(plane);
+      // 视口按需重绘：覆盖层每次视觉变更都要 invalidate，否则进入草图后画面冻结
+      this.overlay.onChange = () => this.app.viewport.invalidate();
       this.app.viewport.scene.add(this.overlay.group);
     } else {
       this.overlay.setPlane(plane);
@@ -207,6 +209,8 @@ export class SketchController {
     const plane = this.app.planeOfSketch(f);
     if (!this.overlay) {
       this.overlay = new SketchOverlay(plane);
+      // 同上：显示态草图的高亮/可见性变化也要触发重绘
+      this.overlay.onChange = () => this.app.viewport.invalidate();
       this.app.viewport.scene.add(this.overlay.group);
     } else {
       this.overlay.setPlane(plane);

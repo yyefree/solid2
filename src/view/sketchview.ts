@@ -80,6 +80,18 @@ export class SketchOverlay {
   private selectedPoints = new Set<string>();
   private hoverEntity: string | null = null;
   private hoverPoint: string | null = null;
+  /**
+   * 视觉变化回调（宿主接到 `viewport.invalidate()`）。
+   *
+   * 视口是**按需重绘**（见 Viewport 渲染循环）：没有 invalidate 就一帧都不会再画。
+   * 覆盖层只改 three.js 场景图、不碰相机，因此必须在每次视觉变更后主动通知宿主，
+   * 否则画面冻结在进入草图那一帧（表现为「鼠标移动没橡皮筋、点了也看不到线」）。
+   */
+  onChange: (() => void) | null = null;
+
+  private changed(): void {
+    this.onChange?.();
+  }
 
   constructor(plane: SketchPlane) {
     this.plane = plane;
@@ -239,6 +251,7 @@ export class SketchOverlay {
       if (p.construction) line.computeLineDistances();
       this.previewGroup.add(line);
     }
+    this.changed();
   }
 
   // ---------------- 绘制 ----------------
@@ -247,7 +260,10 @@ export class SketchOverlay {
     this.clearGroup(this.pointGroup);
     this.clearGroup(this.dimGroup);
     const sk = this.sketch;
-    if (!sk) return;
+    if (!sk) {
+      this.changed();
+      return;
+    }
 
     const mkPt = (x: number, y: number) => new THREE.Vector3(...planeToWorld(this.plane, x, y, 0.02));
 
@@ -314,6 +330,7 @@ export class SketchOverlay {
       m.renderOrder = 10;
       this.pointGroup.add(m);
     }
+    this.changed();
   }
 
   private clearGroup(g: THREE.Group): void {
@@ -454,5 +471,6 @@ export class SketchOverlay {
     this.gridLines.geometry.dispose();
     (this.gridLines.material as THREE.Material).dispose();
     this.group.removeFromParent();
+    this.changed();
   }
 }

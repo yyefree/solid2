@@ -985,6 +985,38 @@ check('拉伸凸台绑定该草图，且创建特征后草图仍可见（SolidWo
   lineExtrude.extrudeSketchId === lineExtrude.sketchFeatId && lineExtrude.overlayStillVisible === true,
   `extrude=${lineExtrude.extrudeSketchId} stillVisible=${lineExtrude.overlayStillVisible}`);
 
+// 视口是「按需重绘」：覆盖层只改场景图、不碰相机，若不 invalidate 就会冻结在进入草图那一帧
+// （数据里线有了、屏幕上看不见 → 用户感觉「画不了」）。这条回归直接数 WebGLRenderer.render。
+const sketchRepaint = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild();
+  const vp = app.viewport;
+  let n = 0;
+  const orig = vp.renderer.render.bind(vp.renderer);
+  vp.renderer.render = (...a) => { n++; return orig(...a); };
+  app.startSketch('front'); await sleep(250);
+  const afterEnter = n;
+  const cv = document.querySelector('canvas');
+  const r = cv ? cv.getBoundingClientRect() : { left: 0, top: 0, width: 800, height: 600 };
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const sk = app.sketch;
+  sk.setTool('line');
+  sk.handleMove(cx + 40, cy + 20); await sleep(250);
+  const afterMove = n;
+  sk.handleClick(cx - 50, cy - 30, false);
+  sk.handleMove(cx + 50, cy + 30); await sleep(200);
+  sk.handleClick(cx + 50, cy + 30, false); await sleep(300);
+  const afterDraw = n;
+  vp.renderer.render = orig;
+  app.exitSketch(false); await sleep(150);
+  for (const f of [...app.doc.features]) app.doc.remove(f.id); await app.rebuild();
+  return { afterEnter, afterMove, afterDraw };
+})()`);
+check('草图交互触发重绘（鼠标移动有橡皮筋、落点后线段上屏）',
+  sketchRepaint.afterMove > sketchRepaint.afterEnter && sketchRepaint.afterDraw > sketchRepaint.afterMove,
+  `进入=${sketchRepaint.afterEnter} 移动后=${sketchRepaint.afterMove} 落点后=${sketchRepaint.afterDraw}`);
+
 // 槽口（3 次点击闭合）→ 拉伸，回归：绘制预览中 cur 为空时曾对 null 取 [0] 崩溃
 const slotExtrude = await evaluate(`(async () => {
   const { app } = window.__solid2;

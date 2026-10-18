@@ -130,7 +130,6 @@ export function validateAiOps(ops: AiOp[]): { ops: AiOp[]; issues: ParseIssue[] 
   const issues: ParseIssue[] = [];
   const out: AiOp[] = [];
   for (const op of ops) {
-    let cloned = false;
     const next: Record<string, unknown> = {};
     const changed: string[] = [];
     const clampField = (k: string, v: unknown) => {
@@ -159,15 +158,13 @@ export function validateAiOps(ops: AiOp[]): { ops: AiOp[]; issues: ParseIssue[] 
       case 'circularPattern': {
         const c = clampNum(op.count, 2, MAX_COUNT);
         if (c !== op.count) changed.push('count');
-        cloned = true;
         out.push({ ...op, count: c });
         break;
       }
       case 'moveBody': {
         const c = op.count !== undefined ? clampNum(op.count, 1, MAX_COUNT) : undefined;
         if (op.count !== undefined && c !== op.count) changed.push('count');
-        cloned = c !== undefined;
-        out.push(cloned ? { ...op, count: c } : op);
+        out.push(c !== undefined ? { ...op, count: c } : op);
         break;
       }
       case 'spring':
@@ -184,7 +181,6 @@ export function validateAiOps(ops: AiOp[]): { ops: AiOp[]; issues: ParseIssue[] 
           next[k] = clampField(k, v);
         }
         if (changed.length) {
-          cloned = true;
           out.push(next as unknown as AiOp);
         } else {
           out.push(op);
@@ -198,7 +194,6 @@ export function validateAiOps(ops: AiOp[]): { ops: AiOp[]; issues: ParseIssue[] 
         level: 'warn',
       });
     }
-    void cloned;
   }
   return { ops: out, issues };
 }

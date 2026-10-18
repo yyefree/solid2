@@ -997,7 +997,11 @@ export class App implements AppApi {
   refreshHighlight(): void {
     disposeGroupChildren(this.highlightGroup);
     const sv = this.shapeView;
-    if (!sv) return;
+    if (!sv) {
+      // 清空高亮本身也是视觉变化，按需重绘下必须 invalidate（否则残留旧高亮）
+      this.viewport.invalidate();
+      return;
+    }
 
     const faceMat = new THREE.MeshBasicMaterial({
       color: COLORS.selectFace,
