@@ -41,7 +41,8 @@ export interface PopupOptions {
  */
 const openClosers = new Set<() => void>();
 
-/** 打开一个弹出菜单，返回关闭函数 */export function openPopup(items: PopupItem[], x: number, y: number, opts: PopupOptions = {}): () => void {
+/** 打开一个弹出菜单，返回关闭函数 */
+export function openPopup(items: PopupItem[], x: number, y: number, opts: PopupOptions = {}): () => void {
   const box = el('div', { class: `dropdown ${opts.cls ?? ''}`.trim() });
   if (opts.minWidth) box.style.minWidth = `${opts.minWidth}px`;
   // 子菜单挂在 document.body（renderInto 内），关闭时必须一并摘除，否则残留成「幽灵菜单」
@@ -69,10 +70,9 @@ const openClosers = new Set<() => void>();
     opts.onClose?.();
   };
   const away = (e: MouseEvent) => {
-    if (box.contains(e.target as Node)) return;
-    // 点在自己的子菜单上不算离开
-    const t = e.target as HTMLElement;
-    if (t.closest?.('.dropdown')) return;
+    const t = e.target as Node;
+    // 点在自己（含自己的子菜单）上不算离开；点别的下拉/面板则关闭
+    if (box.contains(t) || subs.some((s) => s.contains(t))) return;
     close();
   };
   const onKey = (e: KeyboardEvent) => {
@@ -100,11 +100,6 @@ export function closeAllPopups(): void {
   for (const close of [...openClosers]) close();
 }
 
-/** 把菜单项渲染进给定容器（上下文菜单要自己在顶部插一条快捷方式栏时用） */
-export function renderPopupItems(box: HTMLElement, items: PopupItem[], closeSelf: () => void): void {
-  renderInto(box, items, closeSelf);
-}
-
 /** 打开一个「带顶部快捷方式栏」的上下文菜单 */
 export function openContextMenu(
   quick: { icon: string; label: string; run: () => void }[],
@@ -113,6 +108,8 @@ export function openContextMenu(
   y: number
 ): () => void {
   const box = el('div', { class: 'dropdown ctx-menu' });
+  // 子菜单挂在 document.body（renderInto 内），关闭时必须一并摘除，否则残留成「幽灵菜单」
+  const subs: HTMLElement[] = [];
   let closed = false;
   const close = () => {
     if (closed) return;
@@ -147,7 +144,6 @@ export function openContextMenu(
   }
   const list = el('div', { class: 'ctx-list' });
   box.appendChild(list);
-  const subs: HTMLElement[] = [];
   renderInto(list, items, close, subs);
 
   document.body.appendChild(box);
@@ -156,8 +152,9 @@ export function openContextMenu(
   box.style.top = `${Math.max(4, Math.min(y, window.innerHeight - r.height - 6))}px`;
 
   const away = (e: MouseEvent) => {
-    const t = e.target as HTMLElement;
-    if (box.contains(t) || t.closest?.('.dropdown')) return;
+    const t = e.target as Node;
+    // 点在自己（含自己的子菜单）上不算离开；点别的下拉/面板则关闭
+    if (box.contains(t) || subs.some((s) => s.contains(t))) return;
     close();
   };
   const onKey = (e: KeyboardEvent) => {
@@ -174,14 +171,15 @@ export function openContextMenu(
   return close;
 }
 
-function renderInto(box: HTMLElement, items: PopupItem[], closeSelf: () => void, subs?: HTMLElement[]): void {  for (const it of items) {
+function renderInto(box: HTMLElement, items: PopupItem[], closeSelf: () => void, subs?: HTMLElement[]): void {
+  for (const it of items) {
     if (it.sep) {
       box.appendChild(el('div', { class: 'dd-sep' }));
       continue;
     }
     const hasSub = !!it.submenu?.length;
     const btn = el('button', {
-      class: `dd-item ${it.disabled ? 'disabled' : ''} ${it.checked || it.radio ? 'checked' : ''}`.trim(),
+      class: `dd-item ${it.disabled ? 'disabled' : ''} ${it.checked ? 'checked' : ''}`.trim(),
       type: 'button',
       title: it.tip ?? it.label ?? '',
     });
@@ -189,7 +187,8 @@ function renderInto(box: HTMLElement, items: PopupItem[], closeSelf: () => void,
       el(
         'span',
         { class: `dd-check ${it.checked ? 'on' : ''}` },
-        it.checked ? '✓' : it.radio && it.checked ? '●' : ''
+        // 单选项用实心圆、复选项用对勾（此前分支写反顺序，导致 radio 永远显示 ✓）
+        it.checked ? (it.radio ? '●' : '✓') : ''
       )
     );
     if (it.color) {
@@ -203,20 +202,36 @@ function renderInto(box: HTMLElement, items: PopupItem[], closeSelf: () => void,
 
     if (hasSub) {
       let sub: HTMLElement | null = null;
+      const closeSub = () => {
+        if (!sub) return;
+        sub.remove();
+        if (subs) {
+          const i = subs.indexOf(sub);
+          if (i >= 0) subs.splice(i, 1);
+        }
+        sub = null;
+      };
       const openSub = () => {
         if (sub) return;
-        sub = el('div', { class: 'dropdown dd-sub' });
-        renderInto(sub, it.submenu!, closeSelf, subs);
-        subs?.push(sub);
-        document.body.appendChild(sub);
+        const box2 = el('div', { class: 'dropdown dd-sub' });
+        sub = box2;
+        // 本次渲染期间新建的子菜单（递归 push 进同一个数组）→ 用于判定「指针进了下级」
+        const before = subs ? subs.length : 0;
+        renderInto(box2, it.submenu!, closeSelf, subs);
+        subs?.push(box2);
+        document.body.appendChild(box2);
         const r = btn.getBoundingClientRect();
-        const sr = sub.getBoundingClientRect();
-        sub.style.left = `${Math.min(r.right - 4, window.innerWidth - sr.width - 6)}px`;
-        sub.style.top = `${Math.min(r.top - 4, window.innerHeight - sr.height - 6)}px`;
-      };
-      const closeSub = () => {
-        sub?.remove();
-        sub = null;
+        const sr = box2.getBoundingClientRect();
+        box2.style.left = `${Math.min(r.right - 4, window.innerWidth - sr.width - 6)}px`;
+        box2.style.top = `${Math.min(r.top - 4, window.innerHeight - sr.height - 6)}px`;
+        // 指针直接从子菜单移走（不经过父项）时也要收起，否则子菜单会幽灵残留。
+        // 下级子菜单挂在 body 上、不是 box2 的 DOM 后代，所以要按「本次之后新建的 sub」判归属。
+        box2.addEventListener('mouseleave', (e) => {
+          const to = e.relatedTarget as HTMLElement | null;
+          if (to && (btn.contains(to) || box2.contains(to))) return;
+          if (to && subs && subs.slice(before).some((s) => s.contains(to))) return;
+          closeSub();
+        });
       };
       btn.addEventListener('mouseenter', openSub);
       btn.addEventListener('mouseleave', (e) => {

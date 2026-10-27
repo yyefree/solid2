@@ -361,6 +361,35 @@ const ctxLabels = await evaluate(`(() => {
 })()`);
 check('图形区右键菜单含「更多命令…」飞出', ctxLabels.includes('更多命令…'), ctxLabels.join(' / '));
 
+// 子菜单生命周期：hover 展开 → 指针直接移出子菜单（不经过父项）必须收起。
+// 此前子菜单只在「离开父项」时关闭，指针从子菜单直接移走会留下幽灵菜单
+// （A1 同类问题的第二个入口）。这里用真实鼠标事件序列验证。
+const subMenu = await evaluate(`(() => {
+  const cv = document.querySelector('.viewport canvas');
+  if (!cv) return { ok: false, why: 'no-canvas' };
+  cv.dispatchEvent(new MouseEvent('contextmenu', { clientX: 420, clientY: 320, bubbles: true }));
+  const item = [...document.querySelectorAll('.dropdown.ctx-menu .dd-item')]
+    .find((b) => { const l = b.querySelector('.dd-label'); return l && l.textContent.trim() === '显示样式'; });
+  if (!item) return { ok: false, why: 'no-item' };
+  item.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false }));
+  const opened = document.querySelectorAll('.dropdown.dd-sub').length;
+  const sub = document.querySelector('.dropdown.dd-sub');
+  const visible = sub ? (sub.getBoundingClientRect().width > 0) : false;
+  if (sub) sub.dispatchEvent(new MouseEvent('mouseleave', { bubbles: false, relatedTarget: cv }));
+  const afterLeave = document.querySelectorAll('.dropdown.dd-sub').length;
+  return { ok: true, opened, visible, afterLeave };
+})()`);
+check('子菜单 hover 可展开且真正可见', subMenu.ok === true && subMenu.opened === 1 && subMenu.visible === true,
+  JSON.stringify(subMenu));
+check('指针直接移出子菜单即收起（无幽灵残留）', subMenu.afterLeave === 0, JSON.stringify(subMenu));
+// 菜单的 keydown 监听器是 setTimeout(0) 才挂上的，必须等一个宏任务再派发 Esc
+await sleep(30);
+const popupAfterEsc = await evaluate(`(() => {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  return document.querySelectorAll('.dropdown').length;
+})()`);
+check('Esc 关闭右键菜单后无任何下拉/子菜单残留', popupAfterEsc === 0, `left=${popupAfterEsc}`);
+
 // 浮层可见性：下拉菜单 / 图形区右键菜单 / 页签右键 popup 必须「真正可见」。
 // 只查 `querySelector('.dropdown')` 存在性会漏掉 display:none / 0 尺寸 / opacity:0
 // 整类「挂在 DOM 上但用户看不见」的 bug（PropertyManager 那次就是这么躲过 213 条断言的）。
