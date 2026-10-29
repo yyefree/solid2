@@ -1321,11 +1321,9 @@ export const featureDialogs = {
   },
 
   toggleHiddenLines(app: AppApi): void {
-    const d = app.drawing;
-    if (!d) return;
-    d.showHidden = !d.showHidden;
-    app.refreshDrawing();
-    notify.info(d.showHidden ? '隐藏线：显示' : '隐藏线：隐藏');
+    const on = app.toggleDrawingHiddenLines();
+    if (on === null) return;
+    notify.info(on ? '隐藏线：显示' : '隐藏线：隐藏');
   },
 
   showBOM(app: AppApi): void {
@@ -1443,15 +1441,17 @@ export const featureDialogs = {
       actions: [
         { label: '取消' },
         { label: '确定', primary: true, onClick: () => {
-          const v = d.views.find((x) => x.id === viewRow.select.value);
-          if (v) {
-            d.addGdt(v.id, symRow.select.value as GdtSymbol, parseFloat((tolRow.input as HTMLInputElement).value) || 0, {
+          const ok = app.addDrawingGdt(
+            viewRow.select.value,
+            symRow.select.value as GdtSymbol,
+            parseFloat((tolRow.input as HTMLInputElement).value) || 0,
+            {
               datum: (datRow.input as HTMLInputElement).value || undefined,
               diameter: (diaRow.input as HTMLInputElement).checked,
-            });
-            app.refreshDrawing();
-            notify.ok('已添加形位公差标注（右键可删除）');
-          }
+            }
+          );
+          if (ok) notify.ok('已添加形位公差标注（右键可删除）');
+          else notify.err('视图已不存在，标注未添加');
           return true;
         } },
       ],
@@ -1476,10 +1476,11 @@ export const featureDialogs = {
       actions: [
         { label: '取消' },
         { label: '确定', primary: true, onClick: () => {
-          s.title = (t.input as HTMLInputElement).value;
-          s.code = (c.input as HTMLInputElement).value;
-          s.material = (m.input as HTMLInputElement).value;
-          app.refreshDrawing();
+          app.updateDrawingSheet({
+            title: (t.input as HTMLInputElement).value,
+            code: (c.input as HTMLInputElement).value,
+            material: (m.input as HTMLInputElement).value,
+          });
           return true;
         } },
       ],

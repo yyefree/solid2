@@ -45,12 +45,9 @@ export function buildDrawingView(app: AppApi, host: HTMLElement): void {
     const gdtEl = target.closest('.d-gdt') as HTMLElement | null;
     if (gdtEl?.dataset.gdt) {
       ev.preventDefault();
-      const d = app.drawing;
-      if (d) {
-        d.removeGdt(gdtEl.dataset.gdt);
-        render();
-        notify.info('已删除形位公差标注');
-      }
+      // 走 App 方法（内部压撤销栈）；直接调 Drawing.removeGdt 会让删除不可撤销
+      app.removeDrawingGdt(gdtEl.dataset.gdt);
+      notify.info('已删除形位公差标注');
       return;
     }
     const dimEl = target.closest('.d-dim') as HTMLElement | null;

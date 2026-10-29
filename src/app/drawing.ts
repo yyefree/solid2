@@ -105,6 +105,41 @@ export interface SheetSpec {
   material: string;
 }
 
+/**
+ * 工程图的序列化形态（项目文件 / 撤销快照共用）。
+ *
+ * 存的是**投影结果**（edges/holes/bbox）而非「重算指令」：工程图视图是 mesh 的
+ * 一次性投影，重新生成需要内核在场且会丢掉用户手改的标注位置。存结果才能做到
+ * 「保存时看到什么，打开后就是什么」；零件后续改动的同步仍走「重新生成视图」。
+ *
+ * `seq` 系列是 id 发号器，必须一起存 —— 否则重开后新视图/标注从 1 重新编号，
+ * 与已有 id 撞车（`selectedRuns` 的 `viewId:runIdx` 键、删除标注都会打错目标）。
+ */
+export interface SerializedDrawing {
+  version: 1;
+  views: DrawingView[];
+  sheet: SheetSpec;
+  showHidden: boolean;
+  fixedScale: number;
+  gdts: GdtAnnotation[];
+  bom: BomRow[];
+  unitSystem: UnitSystem;
+  seq: number;
+  dimSeq: number;
+  gdtSeq: number;
+}
+
+/** 从 `v12` / `dim3` / `gdt7` 这类 id 里取数字后缀的最大值（外部文件的发号器兜底） */
+function maxIdSuffix(ids: string[], prefix: string): number {
+  let max = 0;
+  for (const id of ids) {
+    if (typeof id !== 'string' || !id.startsWith(prefix)) continue;
+    const n = Number(id.slice(prefix.length));
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max;
+}
+
 const VIEW_BASIS: Record<ViewKind, { f: [number, number, number]; up: [number, number, number] }> = {
   front: { f: [0, 1, 0], up: [0, 0, 1] },
   back: { f: [0, -1, 0], up: [0, 0, 1] },
@@ -818,6 +853,58 @@ export class Drawing {
       hidden += v.edges.filter((e) => e.hidden).length;
     }
     return { views: this.views.length, edges, hidden };
+  }
+
+  /**
+   * 纯数据快照。`selectedRuns` 是交互高亮的会话态，不存（恢复后应为空）。
+   * ⚠️ 必须深拷贝到每一层数组：撤销快照直接存本结果，浅拷贝会让快照与实时对象
+   * 共享 `edges[].pts` / `dims[].a`，后续排版或标注原地改写会连快照一起改。
+   */
+  toJSON(): SerializedDrawing {
+    return structuredClone({
+      version: 1 as const,
+      views: this.views,
+      sheet: this.sheet,
+      showHidden: this.showHidden,
+      fixedScale: this.fixedScale,
+      gdts: this.gdts,
+      bom: this.bom,
+      unitSystem: this.unitSystem,
+      seq: this.seq,
+      dimSeq: this.dimSeq,
+      gdtSeq: this.gdtSeq,
+    });
+  }
+
+  /** 从 `toJSON` 结果重建；输入非法时返回空工程图（不抛，打开旧文件要能继续） */
+  static fromJSON(data: unknown): Drawing {
+    const d = new Drawing();
+    const rec = (data ?? null) as Partial<SerializedDrawing> | null;
+    if (!rec || typeof rec !== 'object') return d;
+
+    if (Array.isArray(rec.views)) {
+      d.views = rec.views
+        .filter((v) => !!v && typeof v.id === 'string' && Array.isArray(v.edges))
+        .map((v) => ({
+          ...v,
+          dims: Array.isArray(v.dims) ? v.dims : [],
+          holes: Array.isArray(v.holes) ? v.holes : [],
+          bbox: v.bbox ?? { x0: 0, y0: 0, x1: 0, y1: 0 },
+        }));
+    }
+    if (rec.sheet && typeof rec.sheet === 'object') d.sheet = { ...d.sheet, ...rec.sheet };
+    if (typeof rec.showHidden === 'boolean') d.showHidden = rec.showHidden;
+    if (typeof rec.fixedScale === 'number' && Number.isFinite(rec.fixedScale)) d.fixedScale = rec.fixedScale;
+    if (Array.isArray(rec.gdts)) d.gdts = rec.gdts.filter((g) => !!g && typeof g.id === 'string');
+    if (Array.isArray(rec.bom)) d.bom = rec.bom.filter((r) => !!r && typeof r.name === 'string');
+    if (rec.unitSystem && rec.unitSystem in UNIT_BY_ID) d.unitSystem = rec.unitSystem;
+
+    // 发号器：文件里的值与本文件实际 id 取最大，防止手工编辑/旧版本把 seq 写小后 id 撞车
+    const dimIds = d.views.flatMap((v) => v.dims.map((x) => x.id));
+    d.seq = Math.max(typeof rec.seq === 'number' ? rec.seq : 0, maxIdSuffix(d.views.map((v) => v.id), 'v'));
+    d.dimSeq = Math.max(typeof rec.dimSeq === 'number' ? rec.dimSeq : 0, maxIdSuffix(dimIds, 'dim'));
+    d.gdtSeq = Math.max(typeof rec.gdtSeq === 'number' ? rec.gdtSeq : 0, maxIdSuffix(d.gdts.map((g) => g.id), 'gdt'));
+    return d;
   }
 }
 

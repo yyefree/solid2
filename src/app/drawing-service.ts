@@ -21,7 +21,14 @@
  * 经 `setDrawing` 换引用），App 只做 `get/set drawing` 与 `get dimMode` 委托。
  */
 
-import { Drawing, generateStandardViews, type ViewKind, type BomRow } from './drawing';
+import {
+  Drawing,
+  generateStandardViews,
+  type ViewKind,
+  type BomRow,
+  type SheetSpec,
+  type GdtSymbol,
+} from './drawing';
 import type { AppEvent, StatusInfo } from './app';
 import type { ModelResult } from '../core/kernel-types';
 import type { UnitSystem } from '../core/units';
@@ -43,6 +50,12 @@ export interface DrawingHost {
   featureCount(): number;
   /** 广播事件 */
   emit(...evts: AppEvent[]): void;
+  /**
+   * 写操作入口（压撤销栈 → 执行改动 → 广播）。
+   * 工程图改动不涉及几何重建，调用方一律传 `rebuild: false`；emit 由本服务给出。
+   * 不接这个回调 → 所有标注/视图操作绕过撤销栈（Ctrl+Z 会转而回退零件文档）。
+   */
+  mutate(fn: () => void, opts: { rebuild?: boolean; emit?: AppEvent[] }): void;
   /** 状态栏 */
   setStatus(text: string, kind: StatusInfo['kind'], detail?: string): void;
   /** 轻提示（info/ok/err 三态） */
@@ -62,6 +75,15 @@ export class DrawingService {
   private lastDimRun: string | null = null;
 
   constructor(private readonly host: DrawingHost) {}
+
+  /**
+   * 工程图写操作的统一入口：压撤销栈 → 改图 → 广播（不重建几何）。
+   * 与装配体的 `App.editAssembly` 同构：UI 侧不得直接改 `Drawing`。
+   */
+  private edit(fn: (d: Drawing) => void, tree = false): void {
+    const d = this.ensureDrawing();
+    this.host.mutate(() => fn(d), { rebuild: false, emit: tree ? ['drawing', 'tree'] : ['drawing'] });
+  }
 
   // ---- 子文档与模式状态（App getter/setter 委托）----
   get drawing(): Drawing | null {
@@ -90,24 +112,43 @@ export class DrawingService {
     if (this._dimMode) {
       this._dimMode = false;
       this.lastDimRun = null;
+      // 高亮边是标注会话的产物：只清 lastDimRun 会留下蓝框，
+      // 切回工程图时旧高亮还挂在图上（selectedRuns 只在标注时写入）
+      this._drawing?.selectedRuns.clear();
     }
   }
 
-  /** 生成标准三视图 + 等轴测（会先清空既有视图） */
-  generateDrawing(kinds: ViewKind[] = ['front', 'top', 'right', 'iso']): void {
+  /**
+   * 生成标准三视图 + 等轴测（会先清空既有视图）。
+   *
+   * `record: false` 供**模式切换时的自动生成**用（`App.ensureModeObjects`）：那不是
+   * 用户操作，压栈会让「切到工程图 → Ctrl+Z」撤销出一个用户没做过的步骤，还把零件
+   * 的撤销历史搅乱。用户主动点「生成工程图」仍走默认（压栈）。
+   */
+  generateDrawing(
+    kinds: ViewKind[] = ['front', 'top', 'right', 'iso'],
+    opts: { record?: boolean } = {}
+  ): void {
     const m = this.host.currentModel();
     if (!m) {
       this.host.toast('err', '没有可生成工程图的实体');
       return;
     }
-    const d = this.ensureDrawing();
-    d.unitSystem = this.host.unitSystem();
-    generateStandardViews(d, m.mesh, kinds);
+    const unit = this.host.unitSystem();
+    const scale = this.host.drawingScale();
+    const apply = (d: Drawing) => {
+      d.unitSystem = unit;
+      generateStandardViews(d, m.mesh, kinds);
+      if (scale) d.fixedScale = scale;
+    };
+    if (opts.record === false) {
+      apply(this.ensureDrawing());
+      this.host.emit('drawing', 'tree');
+    } else {
+      this.edit(apply, true);
+    }
     // 视图整体重建（viewId 重新编号）：旧的「上次标注边」不再可解释，清
     this.lastDimRun = null;
-    const scale = this.host.drawingScale();
-    if (scale) d.fixedScale = scale;
-    this.host.emit('drawing', 'tree');
   }
 
   /** 追加单个视图并重排版 */
@@ -117,11 +158,13 @@ export class DrawingService {
       this.host.toast('err', '没有可生成工程图的实体');
       return;
     }
-    const d = this.ensureDrawing();
-    d.unitSystem = this.host.unitSystem();
-    d.addView(kind, m.mesh, this.host.drawingScale());
-    d.layout();
-    this.host.emit('drawing', 'tree');
+    const unit = this.host.unitSystem();
+    const scale = this.host.drawingScale();
+    this.edit((d) => {
+      d.unitSystem = unit;
+      d.addView(kind, m.mesh, scale);
+      d.layout();
+    }, true);
   }
 
   /** 刷新工程图显示（仅广播，不重算几何） */
@@ -156,34 +199,41 @@ export class DrawingService {
     const d = this._drawing;
     const v = d?.views.find((x) => x.id === viewId);
     if (!d || !v || !this._dimMode) return;
-    const key = `${viewId}:${runIdx}`;
-    const prevPrefix = `${viewId}:`;
-    if (shift && this.lastDimRun && this.lastDimRun.startsWith(prevPrefix)) {
-      const prev = Number(this.lastDimRun.slice(prevPrefix.length));
-      const dim = d.dimensionBetweenRuns(viewId, prev, runIdx);
-      if (dim) this.host.toast('ok', `距离标注：${d.dimensionValue(v, dim).toFixed(2)} mm`);
-    } else {
-      const dim = d.dimensionRun(viewId, runIdx);
-      if (dim) this.host.toast('ok', `长度标注：${d.dimensionValue(v, dim).toFixed(2)} mm`);
-    }
-    this.lastDimRun = key;
-    this.host.emit('drawing');
+    const prefix = `${viewId}:`;
+    const prevKey = this.lastDimRun;
+    let msg: string | null = null;
+    this.edit((dr) => {
+      if (shift && prevKey && prevKey.startsWith(prefix)) {
+        const prev = Number(prevKey.slice(prefix.length));
+        const dim = dr.dimensionBetweenRuns(viewId, prev, runIdx);
+        if (dim) msg = `距离标注：${dr.dimensionValue(v, dim).toFixed(2)} mm`;
+      } else {
+        const dim = dr.dimensionRun(viewId, runIdx);
+        if (dim) msg = `长度标注：${dr.dimensionValue(v, dim).toFixed(2)} mm`;
+      }
+    });
+    // 会话态（不进快照）：下一次 Shift+点击据此判断是否连成距离标注
+    this.lastDimRun = `${viewId}:${runIdx}`;
+    if (msg) this.host.toast('ok', msg);
   }
 
   /** 删除某个尺寸标注（右键工程图标注） */
   removeDrawingDim(viewId: string, dimId: string): void {
-    const d = this._drawing;
-    if (!d) return;
-    d.removeDim(viewId, dimId);
-    this.refreshDrawing();
+    // 先校验再压栈：对不存在的标注也压栈会留下「Ctrl+Z 画面毫无变化」的空撤销步
+    const v = this._drawing?.views.find((x) => x.id === viewId);
+    if (!v || !v.dims.some((x) => x.id === dimId)) return;
+    this.edit((d) => d.removeDim(viewId, dimId));
   }
 
   clearDrawingDims(): void {
     const d = this._drawing;
     if (!d) return;
-    d.clearDims();
+    if (!d.views.some((v) => v.dims.length)) {
+      this.host.toast('info', '没有可清除的标注');
+      return;
+    }
+    this.edit((dr) => dr.clearDims());
     this.lastDimRun = null;
-    this.refreshDrawing();
     this.host.toast('info', '已清除全部标注');
   }
 
@@ -194,8 +244,8 @@ export class DrawingService {
       this.host.toast('info', '请先生成工程图视图');
       return;
     }
-    const n = d.autoDimension(mode);
-    this.refreshDrawing();
+    let n = 0;
+    this.edit((dr) => { n = dr.autoDimension(mode); });
     this.host.toast('ok', `已自动标注 ${n} 处尺寸`);
   }
 
@@ -206,8 +256,8 @@ export class DrawingService {
       this.host.toast('info', '请先生成工程图视图');
       return;
     }
-    const n = d.autoDimensionHoles();
-    this.refreshDrawing();
+    let n = 0;
+    this.edit((dr) => { n = dr.autoDimensionHoles(); });
     this.host.toast('ok', `已标注 ${n} 处孔位尺寸`);
   }
 
@@ -217,11 +267,54 @@ export class DrawingService {
     dimId: string,
     meta: { tolerance?: { upper: number; lower: number }; prefix?: string }
   ): boolean {
-    const d = this._drawing;
-    if (!d || !d.setDimMeta(viewId, dimId, meta)) return false;
-    this.refreshDrawing();
+    // 同上：不存在就不压栈，避免空撤销步
+    const v = this._drawing?.views.find((x) => x.id === viewId);
+    if (!v || !v.dims.some((x) => x.id === dimId)) return false;
+    this.edit((d) => {
+      d.setDimMeta(viewId, dimId, meta);
+    });
     this.host.toast('ok', '已更新尺寸标注');
     return true;
+  }
+
+  /** 切换隐藏线显示；返回切换后的值（无工程图返回 null） */
+  toggleHiddenLines(): boolean | null {
+    if (!this._drawing) return null;
+    let on = false;
+    this.edit((d) => {
+      d.showHidden = !d.showHidden;
+      on = d.showHidden;
+    });
+    return on;
+  }
+
+  /** 添加形位公差标注；视图不存在返回 false */
+  addGdt(
+    viewId: string,
+    symbol: GdtSymbol,
+    tol: number,
+    opts: { datum?: string; diameter?: boolean; anchor?: [number, number] } = {}
+  ): boolean {
+    if (!this._drawing) return false;
+    let ok = false;
+    this.edit((d) => {
+      ok = !!d.addGdt(viewId, symbol, tol, opts);
+    });
+    return ok;
+  }
+
+  /** 删除形位公差标注（右键标注） */
+  removeGdt(id: string): void {
+    if (!this._drawing) return;
+    this.edit((d) => d.removeGdt(id));
+  }
+
+  /** 更新图纸属性（名称 / 图号 / 材料） */
+  updateSheet(patch: Partial<SheetSpec>): void {
+    if (!this._drawing) return;
+    this.edit((d) => {
+      d.sheet = { ...d.sheet, ...patch };
+    });
   }
 
   /** 切换明细表：从装配体（按特征序列分组计数，数量联动）或当前零件生成 */
@@ -232,8 +325,7 @@ export class DrawingService {
       return;
     }
     if (d.bom.length) {
-      d.clearBom();
-      this.refreshDrawing();
+      this.edit((dr) => dr.clearBom());
       this.host.toast('info', '已清除明细表');
       return;
     }
@@ -253,8 +345,7 @@ export class DrawingService {
       this.host.toast('info', '没有可生成明细表的模型');
       return;
     }
-    d.setBom(rows);
-    this.refreshDrawing();
+    this.edit((dr) => dr.setBom(rows));
     this.host.toast('ok', `已生成明细表（${rows.length} 行，数量随装配自动联动）`);
   }
 

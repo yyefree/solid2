@@ -84,7 +84,6 @@ type AppApiKeys =
   'redo' |
   'redraw' |
   'referenceCandidates' |
-  'refreshDrawing' |
   'removeDrawingDim' |
   'removeFeature' |
   'removeFeatureExpression' |
@@ -136,6 +135,10 @@ type AppApiKeys =
   'syncAssemblyScene' |
   'toggleDimensionMode' |
   'toggleDrawingBOM' |
+  'toggleDrawingHiddenLines' |
+  'addDrawingGdt' |
+  'removeDrawingGdt' |
+  'updateDrawingSheet' |
   'toggleGrid' |
   'toggleOrigin' |
   'togglePlanes' |

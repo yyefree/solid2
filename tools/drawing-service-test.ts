@@ -76,6 +76,10 @@ function makeHost(overrides: Partial<DrawingHost> = {}) {
     emits: [] as string[][],
     downloads: [] as { content: ArrayBuffer; filename: string; mime: string }[],
     raster: [] as { svg: string; w: number; h: number; scale: number }[],
+    /** 压栈次数（写操作必须全部经过 mutate → 工程图才可撤销） */
+    mutations: 0,
+    /** 每次 mutate 的 opts.rebuild（工程图不重建几何，应恒为 false） */
+    rebuildOpts: [] as (boolean | undefined)[],
   };
   let unit: UnitSystem = 'MMGS';
   let scale = 0;
@@ -87,6 +91,12 @@ function makeHost(overrides: Partial<DrawingHost> = {}) {
     assembly: () => null,
     featureCount: () => 3,
     emit: (...evts) => { rec.emits.push(evts as string[]); },
+    mutate: (fn, opts) => {
+      rec.mutations++;
+      rec.rebuildOpts.push(opts?.rebuild);
+      fn();
+      if (opts?.emit?.length) rec.emits.push(opts.emit as string[]);
+    },
     setStatus: (text, kind, detail) => { rec.statuses.push({ text, kind, detail }); },
     toast: (kind, msg) => { rec.toasts.push({ kind, msg }); },
     rasterizePNG: async (svg, w, h, sc) => { rec.raster.push({ svg, w, h, scale: sc }); return new ArrayBuffer(8); },
@@ -423,14 +433,70 @@ function makeHost(overrides: Partial<DrawingHost> = {}) {
   check('exitDimensionMode 未开启：空操作', h.svc.dimMode === false);
   h.svc.toggleDimensionMode();
   h.svc.placeDrawingDimension('v1', 0);
+  const highlighted = h.svc.drawing!.selectedRuns.size;
   h.svc.exitDimensionMode();
   check('exitDimensionMode：关 dimMode + 清 lastDimRun（Shift 退化长度标注）',
     h.svc.dimMode === false);
+  check('exitDimensionMode：清标注高亮（selectedRuns 不留蓝框）',
+    highlighted === 1 && h.svc.drawing!.selectedRuns.size === 0,
+    `${highlighted} → ${h.svc.drawing!.selectedRuns.size}`);
   h.svc.toggleDimensionMode(); // 再开
   h.svc.placeDrawingDimension('v1', 1, true);
   check('exitDimensionMode 后 Shift 退化为长度标注（lastDimRun 已清）',
     h.rec.toasts[h.rec.toasts.length - 1].msg === '长度标注：20.00 mm',
     JSON.stringify(h.rec.toasts[h.rec.toasts.length - 1]));
+}
+
+console.log('\n【撤销接线：写操作必须全部经过 mutate】');
+{
+  // 每个写操作都要压栈（rec.mutations 递增），且一律 rebuild:false（工程图不重建几何）。
+  // 漏掉任何一个 → 该操作不可撤销，且 Ctrl+Z 会转而回退零件文档。
+  const h = makeHost({ currentModel: () => modelWith(emptyMesh()), hasModel: () => true });
+  const ops: [string, () => void][] = [
+    ['generateDrawing', () => h.svc.generateDrawing(['front'])],
+    ['addDrawingView', () => h.svc.addDrawingView('top')],
+    ['toggleHiddenLines', () => h.svc.toggleHiddenLines()],
+    ['updateSheet', () => h.svc.updateSheet({ title: 'T' })],
+    ['addGdt', () => h.svc.addGdt(h.svc.drawing!.views[0].id, 'flatness', 0.05)],
+    ['removeGdt', () => h.svc.removeGdt(h.svc.drawing!.gdts[0].id)],
+    ['toggleDrawingBOM', () => h.svc.toggleDrawingBOM()],
+    ['autoDimensionDrawing', () => h.svc.autoDimensionDrawing('all')],
+    ['autoHoleDimensionDrawing', () => h.svc.autoHoleDimensionDrawing()],
+    ['placeDrawingDimension', () => { h.svc.toggleDimensionMode(); h.svc.placeDrawingDimension(h.svc.drawing!.views[0].id, 0); }],
+    ['applyDrawingDimMeta', () => {
+      // 造一个标注（emptyMesh 无投影边，标注只能手工塞）
+      const v = h.svc.drawing!.views[0];
+      v.dims.push({ id: 'dimT', a: [0, 0], b: [1, 0], offset: 5 });
+      h.svc.applyDrawingDimMeta(v.id, 'dimT', { prefix: 'φ' });
+    }],
+    ['removeDrawingDim', () => {
+      const v = h.svc.drawing!.views[0];
+      v.dims.push({ id: 'dimU', a: [0, 0], b: [1, 0], offset: 5 });
+      h.svc.removeDrawingDim(v.id, 'dimU');
+    }],
+    ['clearDrawingDims', () => h.svc.clearDrawingDims()],
+  ];
+  const missing: string[] = [];
+  for (const [name, run] of ops) {
+    const before = h.rec.mutations;
+    run();
+    if (h.rec.mutations <= before) missing.push(name);
+  }
+  check('全部 13 个写操作都压撤销栈', missing.length === 0, `未压栈：${missing.join(',') || '无'}`);
+  check('写操作一律 rebuild:false（工程图不重建零件几何）',
+    h.rec.rebuildOpts.length > 0 && h.rec.rebuildOpts.every((v) => v === false),
+    JSON.stringify(h.rec.rebuildOpts.slice(0, 5)));
+  check('generateDrawing / addDrawingView 额外广播 tree（设计树要刷新）',
+    h.rec.emits.some((e) => e.includes('drawing') && e.includes('tree')));
+}
+{
+  // 会话态不进撤销栈：toggleDimensionMode 只切状态，不应压栈
+  const h = makeHost();
+  h.svc.setDrawing(Object.assign(new Drawing(), { views: [mkView()] }));
+  const before = h.rec.mutations;
+  h.svc.toggleDimensionMode();
+  check('toggleDimensionMode 是会话态，不压撤销栈', h.rec.mutations === before,
+    `${before} → ${h.rec.mutations}`);
 }
 
 console.log(`\n工程图服务：${pass} 通过 / ${fail} 失败（共 ${pass + fail} 项）`);

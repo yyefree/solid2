@@ -31,7 +31,7 @@ import { ParamService } from './param-service';
 import { FileService } from './file-service';
 import { PickService } from './pick-service';
 import { Assembly, mateRefLabel, type MateRef } from './assembly';
-import { Drawing, type ViewKind } from './drawing';
+import { Drawing, type ViewKind, type GdtSymbol, type SheetSpec } from './drawing';
 import { DrawingService } from './drawing-service';
 import { openSectionProperties } from '../ui/sectionprops-dialog';
 import type { AppApi } from './app-api';
@@ -349,6 +349,9 @@ export class App implements AppApi {
       assembly: () => this.assembly,
       featureCount: () => this.doc.features.length,
       emit: (...evts) => this.emit(...evts),
+      // 工程图的写操作也要压撤销栈：不接这条通路，标注/视图生成全绕过 undo，
+      // Ctrl+Z 会转而回退零件文档（用户看不到变化，模型却被改了）。
+      mutate: (fn, opts) => this.mutate(fn, opts),
       setStatus: (text, kind, detail) => this.setStatus(text, kind, detail),
       toast: (kind, msg) => (kind === 'ok' ? notify.ok(msg) : kind === 'err' ? notify.err(msg) : notify.info(msg)),
       rasterizePNG: (svg, w, h, scale) =>
@@ -389,16 +392,17 @@ export class App implements AppApi {
 
     // 撤销管理器：宿主回调均为闭包（构造时 this.doc 等字段已初始化）
     this.undoMgr = new UndoManager({
-      // 快照 = 零件文档 + 装配体（装配体是独立子对象，只存 doc 会让
-      // 「插入组件 / 添加配合」完全不可撤销，且 Ctrl+Z 会静默回退零件文档）。
-      // 两者都是纯数据（已与实时对象解耦），装配体的视图/网格是缓存，恢复后由 syncScene 重建。
+      // 快照 = 零件文档 + 装配体 + 工程图。三者都是独立子对象，只存 doc 会让
+      // 「插入组件 / 添加配合 / 标注尺寸」完全不可撤销，且 Ctrl+Z 会静默回退零件文档
+      // （用户看不到变化，模型却被改了）。三者都是纯数据，视图/网格是缓存，恢复后重建。
       snapshot: () => ({
         doc: this.doc.toJSON(),
         asm: this.assembly ? this.assembly.toJSON() : null,
+        dwg: this.drawing ? this.drawing.toJSON() : null,
       }),
       restore: (data) => {
         // 兼容「只有 doc」的旧形态快照（同一次会话内不会混用，防御性处理）
-        const rec = (data ?? null) as { doc?: unknown; asm?: unknown } | null;
+        const rec = (data ?? null) as { doc?: unknown; asm?: unknown; dwg?: unknown } | null;
         const docJSON = rec && typeof rec === 'object' && 'doc' in rec ? rec.doc : data;
         this.doc = CadDocument.fromJSON(docJSON);
         this.activeDoc().doc = this.doc;
@@ -407,6 +411,10 @@ export class App implements AppApi {
         this.assembly?.disposeViews();
         this.assembly = asmJSON ? Assembly.fromJSON(asmJSON) : null;
         this.activeDoc().assembly = this.assembly;
+        const dwgJSON = rec && typeof rec === 'object' && 'dwg' in rec ? rec.dwg : null;
+        // 工程图走 setter → DrawingService.setDrawing，顺带清掉 lastDimRun（旧边引用对新图无意义）
+        this.drawing = dwgJSON ? Drawing.fromJSON(dwgJSON) : null;
+        this.activeDoc().drawing = this.drawing;
       },
       afterRestore: async () => {
         this.pruneFeatureUiState();
@@ -419,6 +427,10 @@ export class App implements AppApi {
           this.applyModeVisibility();
           if (this.assembly) await this.syncAssemblyScene();
         }
+        // 工程图是纯 SVG 重绘（不重建几何），但 `rebuild` 只广播 change/tree/props/params
+        // → 不补这一条，撤销工程图操作后数据已复原而画面停在旧图（数据断言全绿也看不出来）。
+        // 无条件发：撤销也可能把 drawing 从有变无，宿主需要重绘成「没有工程图视图」。
+        this.emit('drawing');
       },
       rebuild: (opts) => this.requestRebuild(opts),
       emit: (...evts) => this.emit(...evts),
@@ -435,25 +447,28 @@ export class App implements AppApi {
     this.fileSvc = new FileService({
       hasModel: () => this.hasModel,
       resolvedFeatures: () => this.resolvedFeatures(),
-      // 项目文件 = 信封 {format, version, doc, assembly}。
-      // 只存 doc 会让「装配体保存后再打开就没了」（组件/配合全丢）——真实数据丢失。
+      // 项目文件 = 信封 {format, version, doc, assembly, drawing}。
+      // 只存 doc 会让「装配体 / 工程图保存后再打开就没了」（组件、配合、视图、
+      // 全部尺寸标注、明细表全丢）——真实数据丢失。
       projectJSON: () =>
         JSON.stringify(
           {
             format: 'solid2-project',
-            version: 3,
+            version: 4,
             doc: this.doc.toJSON(),
             assembly: this.assembly ? this.assembly.toJSON() : null,
+            drawing: this.drawing ? this.drawing.toJSON() : null,
           },
           null,
           2
         ),
       loadDocument: (data) => {
         // 兼容两种输入：项目信封 与 早期的裸文档 JSON
-        const rec = (data ?? null) as { format?: string; doc?: unknown; assembly?: unknown } | null;
+        const rec = (data ?? null) as { format?: string; doc?: unknown; assembly?: unknown; drawing?: unknown } | null;
         const isProject = !!rec && rec.format === 'solid2-project' && !!rec.doc;
         const docJSON = isProject ? rec!.doc : data;
         const asmJSON = isProject ? rec!.assembly : null;
+        const dwgJSON = isProject ? rec!.drawing : null;
         // 裸 JSON 必须是文档形态：`fromJSON` 对垃圾输入会**静默返回空文档**，
         // 不加这道校验，「打开」一个随便的 JSON 会把当前模型清空（只有撤销能救）。
         if (!isProject) {
@@ -464,16 +479,23 @@ export class App implements AppApi {
           this.doc = CadDocument.fromJSON(docJSON);
           this.assembly?.disposeViews(); // 旧装配体视图随文档一起丢弃（防泄漏）
           this.assembly = asmJSON ? Assembly.fromJSON(asmJSON) : null;
-          this.drawing = null;
+          // 工程图随项目一起恢复（此前恒为 null → 保存再打开，视图/标注/明细表全丢）
+          this.drawing = dwgJSON ? Drawing.fromJSON(dwgJSON) : null;
+          // 子文档对象全部换新引用，必须同步回条目，否则切文档回来还是旧值
+          this.activeDoc().doc = this.doc;
+          this.activeDoc().assembly = this.assembly;
+          this.activeDoc().drawing = this.drawing;
           // 整体换文档：旧文档的选中特征/草图 id 在新文档不存在，剪除悬空引用
           // （与 loadFeatures/removeFeature 的清理路径一致）
           this.pruneFeatureUiState();
+          // 表达式求值缓存属于旧文档，必须丢弃（同 activateEntry）
+          this.paramSvc.reset();
         }, { fit: true });
         // 打开后按当前模式补齐子对象；装配体视图是缓存，必须重新向内核要网格
         this.ensureModeObjects();
         this.applyModeVisibility();
         if (this.mode === 'assembly' && this.assembly) void this.syncAssemblyScene();
-        this.emit('tree', 'props', 'docs');
+        this.emit('tree', 'props', 'docs', 'drawing');
       },
       syncEntry: () => this.syncActiveEntry(),
       setImportedModel: (model) => {
@@ -633,6 +655,9 @@ export class App implements AppApi {
     this.assembly = entry.assembly;
     this.drawing = entry.drawing; // setter → drawSvc.setDrawing（同步清标注会话 lastDimRun）
     this.undoMgr.useStacks(entry.undo, entry.redo);
+    // 表达式求值缓存属于上一份文档（`paramRows()` 命中 `lastResolve` 就直接复用）：
+    // 不 reset 会拿旧文档的参数值配新文档的参数名，参数表显示错值。
+    this.paramSvc.reset();
     this.activeDocId = entry.id;
     this.sel.reset(); // 切文档：选中态整体重置（含特征/几何/草图），避免跨文档残留
     this.clearSelection();
@@ -1195,7 +1220,8 @@ export class App implements AppApi {
     if (this.mode === 'drawing') {
       this.ensureDrawing();
       if (this.drawing && !this.drawing.views.length && this.hasModel) {
-        this.generateDrawing(['front', 'top', 'right', 'iso']);
+        // record:false —— 切模式触发的自动生成不是用户操作，不能压撤销栈
+        this.generateDrawing(['front', 'top', 'right', 'iso'], { record: false });
       }
     }
   }
@@ -1261,8 +1287,11 @@ export class App implements AppApi {
   }
 
   /** 生成标准三视图 + 等轴测（会先清空既有视图） */
-  generateDrawing(kinds: ViewKind[] = ['front', 'top', 'right', 'iso']): void {
-    this.drawSvc.generateDrawing(kinds);
+  generateDrawing(
+    kinds: ViewKind[] = ['front', 'top', 'right', 'iso'],
+    opts: { record?: boolean } = {}
+  ): void {
+    this.drawSvc.generateDrawing(kinds, opts);
   }
 
   /** 追加单个视图并重排版 */
@@ -1270,8 +1299,29 @@ export class App implements AppApi {
     this.drawSvc.addDrawingView(kind);
   }
 
-  refreshDrawing(): void {
-    this.drawSvc.refreshDrawing();
+  /** 切换隐藏线显示；返回切换后的值（无工程图为 null） */
+  toggleDrawingHiddenLines(): boolean | null {
+    return this.drawSvc.toggleHiddenLines();
+  }
+
+  /** 添加形位公差标注；视图不存在返回 false */
+  addDrawingGdt(
+    viewId: string,
+    symbol: GdtSymbol,
+    tol: number,
+    opts: { datum?: string; diameter?: boolean; anchor?: [number, number] } = {}
+  ): boolean {
+    return this.drawSvc.addGdt(viewId, symbol, tol, opts);
+  }
+
+  /** 删除形位公差标注 */
+  removeDrawingGdt(id: string): void {
+    this.drawSvc.removeGdt(id);
+  }
+
+  /** 更新图纸属性（名称 / 图号 / 材料） */
+  updateDrawingSheet(patch: Partial<SheetSpec>): void {
+    this.drawSvc.updateSheet(patch);
   }
 
   /** 切换尺寸标注模式（点击工程图边线即标注） */

@@ -168,19 +168,26 @@ function makeHost(overrides: Partial<FileHost> = {}) {
     rec.loadDocument.length === 0 && rec.syncEntry === 0 && rec.toasts.length === 0);
 }
 {
-  // 项目信封（零件文档 + 装配体）必须**原样**转交宿主：装配体字段由 App 侧的
-  // loadDocument 解析，服务层不得裁剪，否则「保存后重开装配体就没了」。
+  // 项目信封（零件文档 + 装配体 + 工程图）必须**原样**转交宿主：装配体/工程图字段
+  // 由 App 侧的 loadDocument 解析，服务层不得裁剪，否则「保存后重开就没了」。
   const envelope = JSON.stringify({
-    format: 'solid2-project', version: 3,
+    format: 'solid2-project', version: 4,
     doc: { version: 2, params: [], features: [] },
     assembly: { components: [{ id: 'c1', name: '零件1' }], mates: [], explodeAmount: 0 },
+    drawing: { version: 1, views: [{ id: 'v1', edges: [], dims: [], holes: [] }], bom: [] },
   });
   const { svc, rec } = makeHost({ pickText: async () => ({ name: '装配.json', text: envelope }) });
   await svc.openProject();
-  const got = rec.loadDocument[0] as { format?: string; assembly?: { components?: unknown[] } };
+  const got = rec.loadDocument[0] as {
+    format?: string;
+    assembly?: { components?: unknown[] };
+    drawing?: { views?: unknown[] };
+  };
   check('openProject 信封：format/assembly 原样转交宿主',
     got?.format === 'solid2-project' && got?.assembly?.components?.length === 1,
     JSON.stringify({ format: got?.format, comps: got?.assembly?.components?.length }));
+  check('openProject 信封：drawing 原样转交宿主（服务层不裁剪）',
+    got?.drawing?.views?.length === 1, JSON.stringify({ views: got?.drawing?.views?.length }));
 }
 {
   const { svc, rec } = makeHost({

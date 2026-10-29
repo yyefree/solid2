@@ -3036,6 +3036,57 @@ check('工程图宿主（.drawing-wrap，同一个 .hidden 类）在工程图态
     modeTab.wrapInModel.hidden === true,
   `drawing=${JSON.stringify(modeTab.wrapInDrawing)} model=${JSON.stringify(modeTab.wrapInModel)}`);
 
+// 工程图写操作必须可撤销，且**不得**回退零件文档。
+// 此前工程图的视图生成 / 标注 / 隐藏线 / 图纸属性全部直接改 Drawing、绕过撤销栈：
+// Ctrl+Z 会转而回退零件文档——用户看不到工程图有任何变化，模型却被改了。
+const dwgUndo = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const T = await import('/src/sketch/types.ts');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const out = {};
+  if (!app.hasModel) {
+    app.addFeature({ id: T.newId('f'), type: 'primitive', name: '基本体1',
+      params: { kind: 'box', dims: [20, 20, 20], operation: 'new' } }, { rebuild: false });
+    await app.rebuild(); await sleep(120);
+  }
+  const featsBefore = app.doc.features.length;
+  const volBefore = app.model ? app.model.stats.volume : 0;
+  // 清空工程图后切模式：会触发自动生成，但那是模式切换的副作用，不得压撤销栈
+  app.drawing = null;
+  const depthBefore = app.undoDepth;
+  app.setMode('drawing'); await sleep(600);
+  out.views = app.drawing ? app.drawing.views.length : -1;
+  out.depthUnchanged = app.undoDepth === depthBefore;
+  // 隐藏线开关 → 可撤销
+  const hiddenBefore = app.drawing.showHidden;
+  app.toggleDrawingHiddenLines(); await sleep(100);
+  out.toggled = app.drawing.showHidden === !hiddenBefore;
+  await app.undo(); await sleep(300);
+  out.hiddenRestored = app.drawing.showHidden === hiddenBefore;
+  // 图纸属性 → 可撤销
+  const titleBefore = app.drawing.sheet.title;
+  app.updateDrawingSheet({ title: '撤销测试标题' }); await sleep(100);
+  out.titleChanged = app.drawing.sheet.title === '撤销测试标题';
+  await app.undo(); await sleep(300);
+  out.titleRestored = app.drawing.sheet.title === titleBefore;
+  // 关键：工程图撤销不得波及零件文档
+  out.featsIntact = app.doc.features.length === featsBefore;
+  out.volIntact = Math.abs((app.model ? app.model.stats.volume : 0) - volBefore) < 1e-6;
+  app.setMode('model'); await sleep(300);
+  return out;
+})()`);
+check('切到工程图触发的自动生成不压撤销栈（模式切换不是用户操作）',
+  dwgUndo.depthUnchanged === true, `depthUnchanged=${dwgUndo.depthUnchanged}`);
+check('工程图隐藏线开关可撤销（改→撤销→复原）',
+  dwgUndo.toggled === true && dwgUndo.hiddenRestored === true,
+  `toggled=${dwgUndo.toggled} restored=${dwgUndo.hiddenRestored}`);
+check('工程图图纸属性可撤销（改→撤销→复原）',
+  dwgUndo.titleChanged === true && dwgUndo.titleRestored === true,
+  `changed=${dwgUndo.titleChanged} restored=${dwgUndo.titleRestored}`);
+check('工程图撤销不波及零件文档（特征数/体积不变）',
+  dwgUndo.featsIntact === true && dwgUndo.volIntact === true,
+  `feats=${dwgUndo.featsIntact} vol=${dwgUndo.volIntact} views=${dwgUndo.views}`);
+
 // 异步重建的并发保护：rebuild() 等待几何内核期间，若又发起了重建（连续操作 / 切换文档），
 // 先发起但后返回的旧结果**必须被丢弃**，否则会用旧模型覆盖新状态（切文档时表现为串模型）。
 // 由于内核 Worker 串行处理、按序返回，「最后一次」在终态上总是胜出——所以这里直接推高
