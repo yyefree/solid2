@@ -390,6 +390,56 @@ const popupAfterEsc = await evaluate(`(() => {
 })()`);
 check('Esc 关闭右键菜单后无任何下拉/子菜单残留', popupAfterEsc === 0, `left=${popupAfterEsc}`);
 
+// 弹出菜单打开时，全局热键必须让位：
+//   ① 快捷键不再执行命令（此前 F 会一边缩视图一边把菜单留着）；
+//   ② Esc 只关菜单，且不能连带取消正在执行的命令（草图工具）。
+// 根因是热键挂在 window 捕获阶段并 stopPropagation，把菜单挂在 document 上的
+// Esc 监听器整个截停了 —— 表现为「Esc 菜单不关，工具却被取消」。
+const popupKeyboard = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const tab = document.querySelector('.rtab');
+  const cam = () => app.viewport.camera.position.toArray().map(v => +v.toFixed(2)).join(',');
+
+  // ① 菜单打开时按 F（整屏显示）不应改变相机
+  tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 300, clientY: 100 }));
+  await sleep(60);
+  const c0 = cam();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', bubbles: true }));
+  await sleep(150);
+  out.camMoved = cam() !== c0;
+  out.menuStaysOpen = document.querySelectorAll('.dropdown').length;
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(80);
+  out.closedByEsc = document.querySelectorAll('.dropdown').length;
+
+  // ② 切模式时菜单自动收起（菜单内容属于旧模式上下文）
+  tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 300, clientY: 100 }));
+  await sleep(60);
+  out.openedAgain = document.querySelectorAll('.dropdown').length;
+  app.setMode('assembly'); await sleep(250);
+  out.afterModeSwitch = document.querySelectorAll('.dropdown').length;
+  app.setMode('model'); await sleep(250);
+
+  // ③ 快捷方式栏（S）：Esc 必须能关掉
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 's', bubbles: true }));
+  await sleep(200);
+  out.sbarOpen = document.querySelectorAll('.sbar').length;
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(150);
+  out.sbarAfterEsc = document.querySelectorAll('.sbar').length;
+  out.modeAfterSbarEsc = app.mode;
+  return out;
+})()`);
+check('菜单打开时快捷键不执行命令（F 不改相机）', popupKeyboard.camMoved === false && popupKeyboard.menuStaysOpen === 1,
+  `moved=${popupKeyboard.camMoved} open=${popupKeyboard.menuStaysOpen}`);
+check('Esc 关闭菜单', popupKeyboard.closedByEsc === 0, `left=${popupKeyboard.closedByEsc}`);
+check('切换文档模式时弹出菜单自动收起', popupKeyboard.openedAgain === 1 && popupKeyboard.afterModeSwitch === 0,
+  `open=${popupKeyboard.openedAgain} after=${popupKeyboard.afterModeSwitch}`);
+check('快捷方式栏（S）可用 Esc 关闭', popupKeyboard.sbarOpen === 1 && popupKeyboard.sbarAfterEsc === 0,
+  `open=${popupKeyboard.sbarOpen} afterEsc=${popupKeyboard.sbarAfterEsc}`);
+
 // 浮层可见性：下拉菜单 / 图形区右键菜单 / 页签右键 popup 必须「真正可见」。
 // 只查 `querySelector('.dropdown')` 存在性会漏掉 display:none / 0 尺寸 / opacity:0
 // 整类「挂在 DOM 上但用户看不见」的 bug（PropertyManager 那次就是这么躲过 213 条断言的）。
@@ -958,6 +1008,42 @@ check('基体法兰生成 1 个实体薄板、入设计树、无错误', sheetMe
 check('「边线法兰」对话框可点开（选中边后、无遮罩、标题正确）', sheetMetal.edgeTitle === '边线法兰' && sheetMetal.edgeMask === 0, `${sheetMetal.edgeTitle} mask=${sheetMetal.edgeMask}`);
 check('边线法兰与基体融合为 1 个实体、入设计树、无错误', sheetMetal.solids2 === 1 && sheetMetal.treeHasEdge && !sheetMetal.errs2, `solids=${sheetMetal.solids2} err=${sheetMetal.errs2 || '无'}`);
 
+// 草图态右键菜单 + Esc：只关菜单，不能顺手把当前工具取消掉。
+// 热键（sk.exit）挂在 window 捕获阶段且 stopPropagation，会截停菜单自己的 Esc 监听器，
+// 于是「Esc 菜单不关、工具却被取消」——两个症状都来自同一处。
+const sketchMenuEsc = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  app.startSketch('front'); await sleep(80);
+  app.setSketchTool('line');
+  const cv = document.querySelector('.viewport canvas') || document.querySelector('canvas');
+  cv.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
+  await sleep(80);
+  out.menuOpen = document.querySelectorAll('.dropdown').length;
+  out.toolBefore = app.sketchTool;
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(120);
+  out.menuAfterEsc = document.querySelectorAll('.dropdown').length;
+  out.toolAfterEsc = app.sketchTool;
+  out.modeAfterEsc = app.mode;
+  // 再按一次才回 select（分层退出仍成立）
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(120);
+  out.toolAfterEsc2 = app.sketchTool;
+  app.exitSketch(true); await sleep(80);
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return out;
+})()`);
+check('草图态右键菜单可打开', sketchMenuEsc.menuOpen === 1, `open=${sketchMenuEsc.menuOpen}`);
+check('Esc 关掉草图右键菜单且不取消当前工具（菜单优先吃掉 Esc）',
+  sketchMenuEsc.menuAfterEsc === 0 && sketchMenuEsc.toolAfterEsc === 'line' && sketchMenuEsc.modeAfterEsc === 'sketch',
+  `menu=${sketchMenuEsc.menuAfterEsc} tool=${sketchMenuEsc.toolAfterEsc} mode=${sketchMenuEsc.modeAfterEsc}`);
+check('菜单关掉后再次 Esc 才回 select 工具', sketchMenuEsc.toolAfterEsc2 === 'select', `tool=${sketchMenuEsc.toolAfterEsc2}`);
+
 // 交互式「直线工具画闭合矩形 → 拉伸凸台」回归：连续线段必须共享端点，
 // 否则 4 条线各带独立端点 id、findLoops 判成未封闭，拉伸报「草图没有封闭轮廓」。
 const lineExtrude = await evaluate(`(async () => {
@@ -1388,6 +1474,107 @@ const paramUndo = await evaluate(`(async () => {
 check('特征参数编辑可撤销（改深度 10→20 后 Ctrl+Z 回到 4000）',
   Math.abs(paramUndo.v10 - 4000) < 1 && Math.abs(paramUndo.v20 - 8000) < 1 && Math.abs(paramUndo.afterUndo - 4000) < 1,
   `v10=${(paramUndo.v10||0).toFixed(0)} v20=${(paramUndo.v20||0).toFixed(0)} undo=${(paramUndo.afterUndo||0).toFixed(0)}`);
+
+// 设计树操作（压缩 / 重命名 / 上移下移）必须入撤销栈。
+// 曾经的缺陷：右键菜单直接改 `f.suppressed` / `f.name` 再 rebuild，
+// 不压栈 → Ctrl+Z 不回到旧状态，而是弹掉更早的一次无关操作。
+const treeUndo = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const M = await import('/src/doc/model.ts');
+  const T = await import('/src/sketch/types.ts');
+  const out = {};
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild(); await sleep(50);
+  const sk = T.emptySketch();
+  const pts = [[0,0],[20,0],[20,20],[0,20]].map(([x,y]) => { const id = T.newId('p'); sk.points[id] = { id, x, y }; return id; });
+  for (let i = 0; i < 4; i++) sk.entities.push({ id: T.newId('e'), kind: 'line', a: pts[i], b: pts[(i+1)%4] });
+  const skf = M.newSketchFeature('front', sk);
+  app.addFeature(skf, { rebuild: false });
+  const exId = T.newId('f');
+  app.addFeature({ id: exId, type: 'extrude', name: '拉伸1', params: { sketchId: skf.id, distance: 10, operation: 'new' } }, { rebuild: false });
+  await app.rebuild(); await sleep(60);
+  out.vol = app.model.stats.volume;
+
+  // 压缩 → 体积归零；撤销 → 恢复
+  app.toggleSuppress(exId);
+  await sleep(150);
+  out.volSuppressed = app.model.stats.volume;
+  out.suppressed = !!app.doc.getFeature(exId).suppressed;
+  app.undo(); await sleep(180);
+  out.volUndo = app.model.stats.volume;
+  out.suppressedAfterUndo = !!app.doc.getFeature(exId).suppressed;
+
+  // 重命名 → 撤销
+  app.renameFeature(exId, '底板'); await sleep(120);
+  out.name = app.doc.getFeature(exId).name;
+  app.undo(); await sleep(180);
+  out.nameAfterUndo = app.doc.getFeature(exId).name;
+
+  // 上移（拉伸在草图之前会失败）→ 撤销后顺序复原
+  const order0 = app.doc.features.map(f => f.id).join(',');
+  app.moveFeature(exId, -1); await sleep(150);
+  const order1 = app.doc.features.map(f => f.id).join(',');
+  app.undo(); await sleep(180);
+  out.moved = order0 !== order1;
+  out.orderRestored = app.doc.features.map(f => f.id).join(',') === order0;
+
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild(); await sleep(40);
+  return out;
+})()`);
+check('设计树「压缩」可撤销（体积归零 → 撤销恢复，suppressed 复位）',
+  Math.abs(treeUndo.volSuppressed) < 1 && treeUndo.suppressed === true &&
+    Math.abs(treeUndo.volUndo - treeUndo.vol) < 1 && treeUndo.suppressedAfterUndo === false,
+  `suppressed=${(treeUndo.volSuppressed||0).toFixed(0)} undo=${(treeUndo.volUndo||0).toFixed(0)} flag=${treeUndo.suppressedAfterUndo}`);
+check('设计树「重命名」可撤销', treeUndo.name === '底板' && treeUndo.nameAfterUndo === '拉伸1',
+  `${treeUndo.name} → ${treeUndo.nameAfterUndo}`);
+check('设计树「上移/下移」可撤销（顺序复原）', treeUndo.moved === true && treeUndo.orderRestored === true,
+  `moved=${treeUndo.moved} restored=${treeUndo.orderRestored}`);
+
+// 拔模默认中性面必须与所选面**相交**：水平面上拔模时默认「前视(Z=0)」与之平行，
+// 两平面无交线 → 拔模方向退化，OCCT 直接抛异常（旧行为：弹「拔模失败：<异常指针数字>」）。
+const draftDefault = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  const tab = [...document.querySelectorAll('.rtab')].find(t => t.textContent.trim() === '特征');
+  if (tab) tab.click(); await sleep(50);
+  const boxBtn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '长方体');
+  boxBtn?.click();
+  for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+  [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '确定')?.click();
+  await sleep(250); await app.rebuild();
+  const fm = app.model.mesh.faceMetas;
+  let top = -1;
+  for (let i = 0; i < fm.length; i++) if (fm[i].surfaceType === 'plane' && fm[i].normal[2] > 0.9) { top = i; break; }
+  out.topFace = top;
+  if (top >= 0) {
+    app.selectFace(top); await sleep(80);
+    const draftBtn = [...document.querySelectorAll('.rbtn')].find(b => b.textContent.trim() === '拔模');
+    out.hasBtn = !!draftBtn;
+    draftBtn?.click();
+    for (let i = 0; i < 40 && !document.querySelector('.pm'); i++) await sleep(50);
+    const sel = document.querySelector('.pm select');
+    out.defaultNeutral = sel ? sel.value : '(none)';
+    [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '确定')?.click();
+    await sleep(400); await app.rebuild();
+    out.err = app.doc.features.map(f => f.error).filter(Boolean).join('; ');
+    out.vol = app.model.stats.volume;
+    if (document.querySelector('.pm')) [...document.querySelectorAll('.pm-foot .btn')].find(b => b.textContent.trim() === '取消')?.click();
+  }
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild();
+  return out;
+})()`);
+check('拔模默认中性面自动避开与所选面平行的基准面（水平面 → 上视）',
+  draftDefault.hasBtn === true && draftDefault.defaultNeutral === 'top',
+  `default=${draftDefault.defaultNeutral}`);
+check('拔模按默认值即可成功（无「几何条件不满足」错误、体积略减）',
+  !draftDefault.err && draftDefault.vol > 0 && draftDefault.vol < 8000,
+  `err=${draftDefault.err || '无'} vol=${(draftDefault.vol||0).toFixed(1)}`);
 
 // 选中态唯一真源（SelectionStore）：特征选择 ⇄ 几何选择 **双向**互斥 + 批量入口（全选）亦清特征。
 // 收口前这条不变量由 4 个字段（selectedFeatureId/activeSketchFeature/editingSketch/selection）各自

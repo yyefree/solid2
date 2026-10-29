@@ -140,6 +140,9 @@ type AppApiKeys =
   'togglePlanes' |
   'toggleSection' |
   'toggleTabVisibility' |
+  'toggleSuppress' |
+  'moveFeature' |
+  'renameFeature' |
   'undo' |
   'unitSystem' |
   'updateFeatureParams' |

@@ -13,11 +13,12 @@
  */
 import type { AppApi } from './app-api';
 import { notify } from '../ui/toast';
-import { openShortcutBar } from '../ui/shortcutbar';
+import { openShortcutBar, shortcutBarOpen } from '../ui/shortcutbar';
 import { openViewOrientation, setRotateMode } from '../ui/headsup';
 import { toggleMagnifier } from '../ui/magnifier';
 import { featureDialogs } from '../ui/dialogs';
 import { ribbonController } from '../ui/ribbon';
+import { popupOpen } from '../ui/popup';
 import { hotkeyOverrides, keysMatchEvent, eventToKeys, isValidKeys, type OverrideStore } from './hotkey-keys';
 
 export type HotkeyScope = 'global' | 'sketch' | 'model' | 'assembly' | 'drawing';
@@ -331,6 +332,12 @@ export function installHotkeys(app: AppApi): () => void {
       if (e.key === 'Escape') return;
       return;
     }
+
+    // 弹出菜单 / 快捷方式栏打开时键盘归它们：Esc 由它们自己的 document 捕获监听器关闭，
+    // 其余键不触发全局命令（SolidWorks 菜单展开时同样不响应快捷键）。
+    // ⚠️ 必须在这里就 return：下面的 e.stopPropagation() 会把事件截停在 window，
+    // 菜单挂在 document 上的监听器永远收不到 Esc（表现为「按 Esc 菜单不关，工具却被取消」）。
+    if (popupOpen() || shortcutBarOpen()) return;
 
     for (const h of HOTKEYS) {
       if (!matches(h, e)) continue;

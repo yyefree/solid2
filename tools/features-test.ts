@@ -468,5 +468,22 @@ console.log('\n【对称拉伸】');
   check('对称拉伸：居中（质心 z ≈ 0）', near(c[2], 0, 1e-3), `z = ${c[2].toFixed(4)}`);
 }
 
+// ============================================================
+// D2：embind 异常翻译（纯函数，不需要几何）
+// ============================================================
+{
+  console.log('\n【OCCT 异常翻译】');
+  // emscripten 噪声（缺异常解栈符号时唯一能看到的信息）
+  check(
+    '___cxa_is_pointer_type 噪声 → 中文提示',
+    /几何条件不满足/.test(S.translateOcctError(new Error('___cxa_is_pointer_type is not defined'))),
+    S.translateOcctError(new Error('___cxa_is_pointer_type is not defined'))
+  );
+  // embind 有时把 C++ 异常对象直接当数字抛出：界面上会出现一串随机数字
+  check('裸异常指针（纯数字）→ 中文提示', /几何条件不满足/.test(S.translateOcctError(new Error('17874872'))), S.translateOcctError(new Error('17874872')));
+  check('负数指针同样翻译', /几何条件不满足/.test(S.translateOcctError(-2147483648)), S.translateOcctError(-2147483648));
+  check('正常业务错误原样保留', S.translateOcctError(new Error('拔模：找不到要拔模的面')) === '拔模：找不到要拔模的面');
+}
+
 console.log(`\n===== 通过 ${pass} / 失败 ${fail} =====`);
 process.exit(fail ? 1 : 0);

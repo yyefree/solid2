@@ -267,9 +267,8 @@ export function openFeatureContextMenu(app: AppApi, id: string, x: number, y: nu
   const toggleSuppress = () => {
     const feat = app.doc.getFeature(id);
     if (!feat) return;
-    feat.suppressed = !feat.suppressed;
-    app.rebuild();
-    notify.ok(feat.suppressed ? `已压缩 ${feat.name}` : `已解除压缩 ${feat.name}`);
+    app.toggleSuppress(id);
+    notify.ok(feat.suppressed ? `已解除压缩 ${feat.name}` : `已压缩 ${feat.name}`);
   };
 
   openContextMenu(
@@ -291,8 +290,8 @@ export function openFeatureContextMenu(app: AppApi, id: string, x: number, y: nu
       { label: '重命名', icon: 'rename', run: () => renameFeature(app, id) },
       { label: '父子关系…', icon: 'parents', disabled: true },
       { sep: true },
-      { label: '上移', icon: 'rollback', run: () => { app.doc.move(id, -1); app.rebuild(); } },
-      { label: '下移', icon: 'rollback', run: () => { app.doc.move(id, 1); app.rebuild(); } },
+      { label: '上移', icon: 'rollback', run: () => app.moveFeature(id, -1) },
+      { label: '下移', icon: 'rollback', run: () => app.moveFeature(id, 1) },
       { label: '回退到此处', icon: 'rollback', disabled: true },
       { sep: true },
       {
@@ -367,8 +366,7 @@ function renameFeature(app: AppApi, id: string): void {
   const f = app.doc.getFeature(id);
   if (!f) return;
   promptText('重命名特征', '名称', f.name, (v) => {
-    f.name = v;
-    app.emit('tree', 'props');
+    app.renameFeature(id, v);
     notify.ok(`已重命名为「${v}」`);
   });
 }

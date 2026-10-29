@@ -22,6 +22,7 @@ import { disposeGroupChildren } from '../view/dispose';
 import { notify, tableModal } from '../ui/toast';
 import { DEFAULT_UNIT, isUnitSystem, formatLength, formatArea, formatVolume, UNIT_BY_ID, type UnitSystem } from '../core/units';
 import { closePropertyManager } from '../ui/propertymanager';
+import { closeAllPopups } from '../ui/popup';
 import { DEFAULT_PLANE, RIGHT_PLANE, TOP_PLANE, type SketchPlane } from '../sketch/types';
 import { SketchController, type SketchTool } from './sketchMode';
 import { SelectionStore, type GeomKind, type SelectionFilter } from './selection-store';
@@ -575,6 +576,7 @@ export class App implements AppApi {
   /** 激活条目：换引用 + 刷新一切依赖文档的 UI */
   private activateEntry(entry: DocumentEntry): void {
     closePropertyManager(); // PM 引用旧文档上下文，先关
+    closeAllPopups(); // 弹出菜单同样是旧文档上下文（如「显示样式」勾选态）
     this.doc = entry.doc;
     this.model = entry.model;
     this.importedModel = entry.imported;
@@ -1116,6 +1118,9 @@ export class App implements AppApi {
   // ============================================================
   setMode(mode: AppMode): void {
     if (this.mode === mode) return;
+    // 切模式时先收起所有弹出菜单：菜单内容是按旧模式上下文生成的，
+    // 留着会在新模式里变成点不动的「幽灵菜单」（且它挡住画布点击）。
+    closeAllPopups();
     if (mode !== 'sketch' && this.editingSketch) this.exitSketch(false);
     this.mode = mode;
     // 离开工程图模式 → 取消标注会话（dimMode + lastDimRun 由 DrawingService 收口）
@@ -1267,6 +1272,7 @@ export class App implements AppApi {
   }
 
   enterSketch(f: SketchFeature): void {
+    closeAllPopups(); // 进入草图：收起模型态的弹出菜单
     this.sel.setEditingSketch(f.id); // 同时把它设为「当前草图」（后续特征默认绑定它）
     this.mode = 'sketch';
     this.sketchTool = null;
@@ -1554,12 +1560,15 @@ export class App implements AppApi {
       this.sketch.handleKey(new KeyboardEvent('keydown', { key: kind === 'confirm' ? 'Enter' : 'Escape' }));
       return;
     }
+    // 活动命令优先于选中态：SolidWorks 里 Esc 先取消正在执行的命令（如工程图标注），
+    // 命令取消完再按才清选中。此前顺序反了，选中着视图时 Esc 退不出标注命令。
+    if (this.dimMode) {
+      this.toggleDimensionMode();
+      return;
+    }
     if (this.selection.faces.length || this.selection.edges.length) {
       this.clearSelection();
       return;
-    }
-    if (this.dimMode) {
-      this.toggleDimensionMode();
     }
   }
 
@@ -1648,6 +1657,35 @@ export class App implements AppApi {
       // 不变量由 SelectionStore.prune 保证，无需在此逐字段判断。
       this.pruneFeatureUiState();
     });
+  }
+
+  /**
+   * 压缩 / 解除压缩特征（设计树右键）。
+   * 必须走 mutate：直接改 `f.suppressed` + rebuild 不进撤销栈，
+   * 之后的 Ctrl+Z 会去弹更早的一次无关操作，视觉上像是「撤销没生效」。
+   */
+  toggleSuppress(id: FeatureId): void {
+    const f = this.doc.getFeature(id);
+    if (!f) return;
+    this.mutate(() => {
+      f.suppressed = !f.suppressed;
+    });
+  }
+
+  /** 特征上移 / 下移（delta = -1 / +1），同样入撤销栈 */
+  moveFeature(id: FeatureId, delta: number): void {
+    if (!this.doc.getFeature(id)) return;
+    this.mutate(() => this.doc.move(id, delta));
+  }
+
+  /** 重命名特征（入撤销栈；空名/同名直接忽略） */
+  renameFeature(id: FeatureId, name: string): void {
+    const f = this.doc.getFeature(id);
+    const next = name.trim();
+    if (!f || !next || next === f.name) return;
+    this.mutate(() => {
+      f.name = next;
+    }, { rebuild: false, emit: ['tree', 'props'] });
   }
 
   updateFeatureParams(id: FeatureId, patch: FeatureParamsPatch): void {

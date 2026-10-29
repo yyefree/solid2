@@ -160,6 +160,8 @@ export function openContextMenu(
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault();
+      // 与 openPopup 一致：Esc 只归菜单，不再向下传播触发工具取消等命令
+      e.stopPropagation();
       close();
     }
   };
@@ -200,7 +202,7 @@ function renderInto(box: HTMLElement, items: PopupItem[], closeSelf: () => void,
     if (it.sc) btn.appendChild(el('span', { class: 'sc', text: it.sc }));
     if (hasSub) btn.appendChild(el('span', { class: 'dd-arrow', text: '▸' }));
 
-    if (hasSub) {
+    if (hasSub && !it.disabled) {
       let sub: HTMLElement | null = null;
       const closeSub = () => {
         if (!sub) return;

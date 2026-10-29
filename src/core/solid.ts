@@ -30,6 +30,11 @@ export function translateOcctError(e: unknown): string {
   if (/___cxa_is_pointer_type|__cxa_|is not defined|abort\(/.test(msg)) {
     return '几何条件不满足（尺寸/半径过大，或与相邻面冲突）';
   }
+  // embind 有时把 C++ 异常对象直接当数字抛出（只看到异常指针值，如 `17874872`），
+  // 这种消息对用户毫无意义 —— 统一翻译，避免界面上出现一串随机数字。
+  if (/^-?\d+$/.test(msg.trim()) || /^BindingError:.*\bundefined\b/i.test(msg)) {
+    return '几何条件不满足（尺寸/角度不可行，或与相邻面冲突）';
+  }
   return msg;
 }
 

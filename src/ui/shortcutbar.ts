@@ -104,6 +104,8 @@ function gestureCommandsFor(app: AppApi): BarCmd[] {
 let bar: HTMLElement | null = null;
 /** 快捷栏的「点击外部关闭」监听器——必须随关闭一起摘除，否则会随每次打开累积（泄漏）。 */
 let barAway: ((e: MouseEvent) => void) | null = null;
+/** 快捷栏的 Esc 监听器（同上，必须显式摘除） */
+let barEsc: ((e: KeyboardEvent) => void) | null = null;
 let barCount = 4;
 let lastPointer = { x: 200, y: 200 };
 
@@ -165,6 +167,16 @@ export function openShortcutBar(app: AppApi, at?: { x: number; y: number }): voi
     };
     barAway = away;
     document.addEventListener('mousedown', away, true);
+    // Esc 关闭（SolidWorks 行为）。与弹出菜单一致：吃掉这次 Esc，
+    // 否则全局热键会顺手把当前草图工具也取消掉。
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      closeShortcutBar();
+    };
+    barEsc = onEsc;
+    document.addEventListener('keydown', onEsc, true);
   }, 10);
 }
 
@@ -175,6 +187,10 @@ export function closeShortcutBar(): void {
   if (barAway) {
     document.removeEventListener('mousedown', barAway, true);
     barAway = null;
+  }
+  if (barEsc) {
+    document.removeEventListener('keydown', barEsc, true);
+    barEsc = null;
   }
   bar?.remove();
   bar = null;

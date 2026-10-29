@@ -999,8 +999,12 @@ export const featureDialogs = {
   draft(app: AppApi): void {
     const faces = app.selectedFaceInfos();
     if (!faces.length) { notify.err('请先选中要拔模的面'); return; }
+    // 中性面不能与拔模面平行（两平面无交线 → 拔模方向退化，OCCT 直接抛异常）。
+    // 默认值按第一个面的法向挑一个**垂直**的基准面：水平面 → 上视(Y=0)，其余 → 前视(Z=0)。
+    const n0 = faces[0].normal as [number, number, number];
+    const defaultNeutral = Math.abs(n0[2]) > 0.9 ? 'top' : 'front';
     const body = el('div', { class: 'col' });
-    const neutralRow = selectField('中性面', 'front', [
+    const neutralRow = selectField('中性面', defaultNeutral, [
       { value: 'front', label: '前视基准面 (Z=0)' },
       { value: 'top', label: '上视基准面 (Y=0)' },
       { value: 'right', label: '右视基准面 (X=0)' },
@@ -1023,6 +1027,16 @@ export const featureDialogs = {
           } else {
             const pl = PLANES[src as 'front' | 'top' | 'right'];
             neutral = { point: pl.origin, normal: pl.normal };
+          }
+          // 与拔模面平行 → 无交线，拔模退化。提前拦下并说清怎么改，
+          // 否则只会在内核里抛一个「几何条件不满足」的笼统错误。
+          const parallel = faces.some((f) => {
+            const n = f.normal as [number, number, number];
+            return Math.abs(n[0] * neutral.normal[0] + n[1] * neutral.normal[1] + n[2] * neutral.normal[2]) > 0.999;
+          });
+          if (parallel) {
+            notify.err('拔模：所选面与中性面平行，无法生成拔模角；请换一个与该面相交的中性面');
+            return false;
           }
           const f: DraftFeature = {
             id: newId('f'), type: 'draft', name: app.doc.nextName('draft'),
