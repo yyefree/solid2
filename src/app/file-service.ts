@@ -25,8 +25,8 @@ export interface FileHost {
   hasModel(): boolean;
   /** 解析后的特征（发给内核/导出必须用它——内核只认数值，不认表达式） */
   resolvedFeatures(): Feature[];
-  /** 当前文档的序列化 JSON（保存用；含缩进格式） */
-  documentJSON(): string;
+  /** 当前项目的序列化 JSON（保存用；含缩进格式，含零件文档 + 装配体） */
+  projectJSON(): string;
   /** 整体替换文档（打开项目；App 内部走 mutate 压栈 + 重建 + 适配视图） */
   loadDocument(data: unknown): void;
   /** 把当前状态写回文档条目（打开/导入后同步） */
@@ -104,7 +104,7 @@ export class FileService {
   // ---- 项目保存 / 打开 ----
 
   saveProject(): void {
-    this.host.download(this.host.documentJSON(), 'solid2-model.json', 'application/json');
+    this.host.download(this.host.projectJSON(), 'solid2-model.json', 'application/json');
     this.host.toast('ok', '项目已保存');
   }
 

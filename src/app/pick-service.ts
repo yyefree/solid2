@@ -427,7 +427,7 @@ export class PickService {
       .join(' → ');
     this.host.setStatus('装配拾取', 'ok', `${label}（${this._picks.length}/2）：${names}`);
     this.host.emit('change', 'props');
-    this.host.invalidate();
+    // 重绘由 `syncAssemblyPickMarkers()` 统一请求（它改了场景图），此处不再重复 invalidate
   }
 
   clearAssemblyPicks(): void {
@@ -482,6 +482,10 @@ export class PickService {
       g.add(node);
     });
     g.visible = this.host.mode() === 'assembly';
+    // ⚠️ 这里改了场景图（增删标记）→ 必须请求重绘。视口是按需重绘的（needsRender），
+    // 相机不动时不会自己渲染：`clearAssemblyPicks()`（加完配合就调它）此前没有
+    // invalidate，橙/蓝拾取标记会一直挂在屏幕上，直到用户碰一下相机才消失。
+    this.host.invalidate();
   }
 
   /**

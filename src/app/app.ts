@@ -389,15 +389,36 @@ export class App implements AppApi {
 
     // 撤销管理器：宿主回调均为闭包（构造时 this.doc 等字段已初始化）
     this.undoMgr = new UndoManager({
-      // 存 toJSON() 的纯对象（已与实时文档解耦），省去老方案的 JSON.stringify + 之后 parse 两份开销
-      snapshot: () => this.doc.toJSON(),
+      // 快照 = 零件文档 + 装配体（装配体是独立子对象，只存 doc 会让
+      // 「插入组件 / 添加配合」完全不可撤销，且 Ctrl+Z 会静默回退零件文档）。
+      // 两者都是纯数据（已与实时对象解耦），装配体的视图/网格是缓存，恢复后由 syncScene 重建。
+      snapshot: () => ({
+        doc: this.doc.toJSON(),
+        asm: this.assembly ? this.assembly.toJSON() : null,
+      }),
       restore: (data) => {
-        this.doc = CadDocument.fromJSON(data);
+        // 兼容「只有 doc」的旧形态快照（同一次会话内不会混用，防御性处理）
+        const rec = (data ?? null) as { doc?: unknown; asm?: unknown } | null;
+        const docJSON = rec && typeof rec === 'object' && 'doc' in rec ? rec.doc : data;
+        this.doc = CadDocument.fromJSON(docJSON);
         this.activeDoc().doc = this.doc;
+        const asmJSON = rec && typeof rec === 'object' && 'asm' in rec ? rec.asm : null;
+        // 换实例前先丢弃旧实例的视图：否则旧 ShapeView 留在场景里且再无引用可 dispose（泄漏）
+        this.assembly?.disposeViews();
+        this.assembly = asmJSON ? Assembly.fromJSON(asmJSON) : null;
+        this.activeDoc().assembly = this.assembly;
       },
       afterRestore: async () => {
         this.pruneFeatureUiState();
         await this.rebuild();
+        // 装配体：撤销后视图与网格全部失效（fromJSON 的 view 为 null）→ 重新向内核要。
+        // 快照里 asm 为 null 时（该步操作发生在装配体创建之前）需按当前模式补建，
+        // 否则装配模式下 `this.assembly` 变 null、树/视口无处取值。
+        if (this.mode === 'assembly') {
+          this.ensureModeObjects();
+          this.applyModeVisibility();
+          if (this.assembly) await this.syncAssemblyScene();
+        }
       },
       rebuild: (opts) => this.requestRebuild(opts),
       emit: (...evts) => this.emit(...evts),
@@ -414,16 +435,45 @@ export class App implements AppApi {
     this.fileSvc = new FileService({
       hasModel: () => this.hasModel,
       resolvedFeatures: () => this.resolvedFeatures(),
-      documentJSON: () => JSON.stringify(this.doc.toJSON(), null, 2),
+      // 项目文件 = 信封 {format, version, doc, assembly}。
+      // 只存 doc 会让「装配体保存后再打开就没了」（组件/配合全丢）——真实数据丢失。
+      projectJSON: () =>
+        JSON.stringify(
+          {
+            format: 'solid2-project',
+            version: 3,
+            doc: this.doc.toJSON(),
+            assembly: this.assembly ? this.assembly.toJSON() : null,
+          },
+          null,
+          2
+        ),
       loadDocument: (data) => {
+        // 兼容两种输入：项目信封 与 早期的裸文档 JSON
+        const rec = (data ?? null) as { format?: string; doc?: unknown; assembly?: unknown } | null;
+        const isProject = !!rec && rec.format === 'solid2-project' && !!rec.doc;
+        const docJSON = isProject ? rec!.doc : data;
+        const asmJSON = isProject ? rec!.assembly : null;
+        // 裸 JSON 必须是文档形态：`fromJSON` 对垃圾输入会**静默返回空文档**，
+        // 不加这道校验，「打开」一个随便的 JSON 会把当前模型清空（只有撤销能救）。
+        if (!isProject) {
+          const bare = docJSON as { features?: unknown } | null;
+          if (!bare || !Array.isArray(bare.features)) throw new Error('不是 Solid2 项目文件');
+        }
         this.mutate(() => {
-          this.doc = CadDocument.fromJSON(data);
-          this.assembly = null;
+          this.doc = CadDocument.fromJSON(docJSON);
+          this.assembly?.disposeViews(); // 旧装配体视图随文档一起丢弃（防泄漏）
+          this.assembly = asmJSON ? Assembly.fromJSON(asmJSON) : null;
           this.drawing = null;
           // 整体换文档：旧文档的选中特征/草图 id 在新文档不存在，剪除悬空引用
           // （与 loadFeatures/removeFeature 的清理路径一致）
           this.pruneFeatureUiState();
         }, { fit: true });
+        // 打开后按当前模式补齐子对象；装配体视图是缓存，必须重新向内核要网格
+        this.ensureModeObjects();
+        this.applyModeVisibility();
+        if (this.mode === 'assembly' && this.assembly) void this.syncAssemblyScene();
+        this.emit('tree', 'props', 'docs');
       },
       syncEntry: () => this.syncActiveEntry(),
       setImportedModel: (model) => {
@@ -1179,6 +1229,22 @@ export class App implements AppApi {
     return this.assembly;
   }
 
+  /**
+   * 装配体编辑的**唯一写入口**（与 `mutate` 之于零件文档同构）。
+   *
+   * 为什么必须收口：装配体是独立子对象，UI 里直接 `a.mates.push(...)` / `c.fixed = ...`
+   * 再 `syncAssemblyScene()` 不压撤销栈 —— 「插入组件 / 删除组件 / 添加配合 / 固定 / 爆炸」
+   * 全都不可撤销，而 Ctrl+Z 会转而回退**零件文档**（用户看不到任何变化，却悄悄改了模型）。
+   *
+   * 不重建零件模型（`rebuild: false`）：装配编辑只影响装配体，零件网格由
+   * `syncAssemblyScene()` 按需向内核要。
+   */
+  editAssembly(fn: (a: Assembly) => void): void {
+    const a = this.ensureAssembly();
+    this.mutate(() => fn(a), { rebuild: false, emit: ['tree', 'props'] });
+    void this.syncAssemblyScene();
+  }
+
   async syncAssemblyScene(): Promise<void> {
     const a = this.assembly;
     if (!a) return;
@@ -1566,7 +1632,9 @@ export class App implements AppApi {
       this.toggleDimensionMode();
       return;
     }
-    if (this.selection.faces.length || this.selection.edges.length) {
+    // 选中态包含「几何选择」与「设计树特征选中」两种：只判 faces/edges 会让
+    // 「在设计树选中一个特征后按 Esc」变成无反应（SolidWorks 里 Esc 一律清选中）。
+    if (this.selection.faces.length || this.selection.edges.length || this.selectedFeatureId) {
       this.clearSelection();
       return;
     }

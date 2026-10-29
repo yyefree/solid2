@@ -181,5 +181,82 @@ console.log('\n【BOM 数量联动】');
     JSON.stringify(rows2.map((r) => `${r.name}:${r.qty}`)));
 }
 
+// ---------- 7. 序列化往返 + 与快照解耦（撤销栈依赖）----------
+console.log('\n【序列化往返 / 快照解耦】');
+{
+  function boxDoc(dims: [number, number, number]): CadDocument {
+    const doc = emptyDoc();
+    doc.add({ id: 'f1', type: 'primitive', name: '基本体1', params: { kind: 'box', dims, operation: 'new' } } as never);
+    return doc;
+  }
+  const a = new Assembly();
+  const c1 = a.addComponent(boxDoc([10, 10, 10]), '底座');
+  const c2 = a.addComponent(boxDoc([5, 5, 5]), '轴');
+  c1.fixed = true;
+  c2.position = [3, 4, 5];
+  c2.rotation = [0.1, 0.2, 0.3];
+  c2.explodeDir = [1, 0, 0];
+  a.explodeAmount = 12;
+  a.mates.push({
+    id: 'm1', type: 'distance', name: '距离1',
+    a: ref(c1.id, [0, 0, 0], [0, 0, 1]),
+    b: ref(c2.id, [1, 2, 3], [0, 0, 1]),
+    value: 25,
+  });
+
+  const json = a.toJSON();
+  const b = Assembly.fromJSON(JSON.parse(JSON.stringify(json)));
+  check('往返后组件数一致', b.components.length === 2, `n=${b.components.length}`);
+  check('往返后名称/固定/位姿保留',
+    b.components[0].name === '底座' && b.components[0].fixed === true &&
+    near(b.components[1].position[1], 4) && near(b.components[1].rotation[2], 0.3),
+    `${b.components[1].name} pos=${b.components[1].position.map(v => v.toFixed(1)).join(',')}`);
+  check('往返后爆炸距离保留', near(b.explodeAmount, 12), `explode=${b.explodeAmount}`);
+  check('往返后配合保留',
+    b.mates.length === 1 && b.mates[0].type === 'distance' && b.mates[0].value === 25 &&
+    near(b.mates[0].b.localPoint[2], 3),
+    JSON.stringify(b.mates[0]?.b?.localPoint));
+  check('往返后组件零件文档特征保留',
+    (b.components[1].doc.toJSON().features ?? []).length === 1,
+    `features=${(b.components[1].doc.toJSON().features ?? []).length}`);
+  check('往返后视图为 null（网格由 syncScene 重建）', b.components[0].view === null);
+
+  // ⚠️ 撤销快照直接存 toJSON() 的结果 → 快照必须与实时对象**无共享引用**
+  const snap = a.toJSON();
+  a.mates[0].b.localPoint[0] = 999;
+  a.mates[0].value = 777;
+  a.components[1].position[0] = 999;
+  check('改实时配合坐标不污染快照', snap.mates[0].b.localPoint[0] !== 999,
+    `snap=${snap.mates[0].b.localPoint[0]}`);
+  check('改实时配合数值不污染快照', snap.mates[0].value === 25, `snap=${snap.mates[0].value}`);
+  check('改实时组件位姿不污染快照', snap.components[1].position[0] !== 999,
+    `snap=${snap.components[1].position[0]}`);
+
+  // fromJSON 也不能把入参数组的引用直接交给实时对象（否则 push 会改快照）
+  const snap2 = a.toJSON();
+  const c = Assembly.fromJSON(snap2);
+  c.mates.push({
+    id: 'm2', type: 'coincident', name: '重合1',
+    a: ref(c1.id, [0, 0, 0], [0, 0, 1]), b: ref(c2.id, [0, 0, 0], [0, 0, 1]),
+  });
+  check('fromJSON 后 push 配合不污染入参快照', snap2.mates.length === 1, `snap=${snap2.mates.length}`);
+
+  // 换 Assembly 实例（撤销 / 打开项目）前必须显式释放旧视图，否则 ShapeView 常驻显存
+  const d = new Assembly();
+  d.addComponent(emptyDoc(), 'A');
+  let disposed = 0;
+  let removed = 0;
+  d.components[0].view = {
+    group: { removeFromParent: () => { removed++; } },
+    dispose: () => { disposed++; },
+  } as never;
+  d.disposeViews();
+  check('disposeViews 摘除并释放视图、置空引用',
+    disposed === 1 && removed === 1 && d.components[0].view === null,
+    `disposed=${disposed} removed=${removed} view=${d.components[0].view}`);
+  d.disposeViews(); // 幂等：没有视图时不得重复释放
+  check('disposeViews 幂等（无视图时不再释放）', disposed === 1, `disposed=${disposed}`);
+}
+
 console.log(`\n===== 通过 ${pass} / 失败 ${fail} =====`);
 process.exit(fail ? 1 : 0);

@@ -148,6 +148,24 @@ export const HOTKEYS: HotkeyDef[] = [
   },
   { id: 'edit.delete', label: '删除', keys: 'Delete', group: '编辑', run: (a) => a.deleteSelection() },
   { id: 'edit.properties', label: '属性', keys: 'Alt+Enter', group: '编辑', run: (a) => a.showProperties() },
+  {
+    // 零件/装配/工程图态的 Esc：清除选择、取消活动命令（工程图标注）。
+    // 此前 Esc **只**在草图态绑了（`sk.exit`），`App.escape()` 里清除选择/退出标注
+    // 两个分支因此是死代码 —— 模型态按 Esc 毫无反应（SolidWorks 里 Esc 一律清选中）。
+    // `when` 里的四个排除项都是「自己接管 Esc」的浮层：它们把监听挂在 document 上，
+    // 而本分发器在 window 捕获阶段命中后会 stopPropagation，不排除就会把它们饿死。
+    id: 'edit.esc',
+    label: '清除选择 / 取消命令',
+    keys: 'Esc',
+    group: '编辑',
+    when: (a) =>
+      a.mode !== 'sketch' &&
+      !document.querySelector('.pm') &&
+      !document.querySelector('.modal-mask') &&
+      !document.querySelector('.zoom-rubber') &&
+      !document.querySelector('.view-rotating'),
+    run: (a) => a.escape(),
+  },
 
   // ============================================================
   // 视图
@@ -327,11 +345,8 @@ export function installHotkeys(app: AppApi): () => void {
   const onKey = (e: KeyboardEvent) => {
     if (inEditable(e.target)) return;
 
-    // 模态框打开时只放行 Esc（模态框自己处理关闭），避免误触全局命令
-    if (document.querySelector('.modal-mask')) {
-      if (e.key === 'Escape') return;
-      return;
-    }
+    // 模态框打开时键盘全部归它（含 Esc）：这里直接放行不拦，让模态框自己的监听器关闭它。
+    if (document.querySelector('.modal-mask')) return;
 
     // 弹出菜单 / 快捷方式栏打开时键盘归它们：Esc 由它们自己的 document 捕获监听器关闭，
     // 其余键不触发全局命令（SolidWorks 菜单展开时同样不响应快捷键）。

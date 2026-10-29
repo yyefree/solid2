@@ -42,6 +42,7 @@ type AppApiKeys =
   'drawing' |
   'drawingHost' |
   'editingSketch' |
+  'editAssembly' |
   'emit' |
   'ensureAssembly' |
   'enterSketch' |

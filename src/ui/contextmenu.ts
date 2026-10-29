@@ -265,10 +265,10 @@ export function openFeatureContextMenu(app: AppApi, id: string, x: number, y: nu
   const suppressed = !!f.suppressed;
 
   const toggleSuppress = () => {
-    const feat = app.doc.getFeature(id);
-    if (!feat) return;
+    // 用**切换前**捕获的状态生成提示：`toggleSuppress` 内部走 mutate 原地翻转，
+    // 切换后再读 `f.suppressed` 拿到的是新值，提示语会恰好反过来说。
     app.toggleSuppress(id);
-    notify.ok(feat.suppressed ? `已解除压缩 ${feat.name}` : `已压缩 ${feat.name}`);
+    notify.ok(suppressed ? `已解除压缩 ${f.name}` : `已压缩 ${f.name}`);
   };
 
   openContextMenu(
@@ -358,7 +358,8 @@ function editFeature(app: AppApi, id: string): void {
   if (f.type === 'sketch' && app.mode !== 'sketch') {
     app.enterSketch(f as never);
     return;
-  }  app.emit('props');
+  }
+  app.emit('props');
   notify.info(`已选中「${f.name}」，可在左侧属性管理器修改参数`);
 }
 
@@ -366,7 +367,10 @@ function renameFeature(app: AppApi, id: string): void {
   const f = app.doc.getFeature(id);
   if (!f) return;
   promptText('重命名特征', '名称', f.name, (v) => {
-    app.renameFeature(id, v);
-    notify.ok(`已重命名为「${v}」`);
+    const next = v.trim();
+    // 空白名 / 未改名：`App.renameFeature` 会静默忽略，这里也不该报"已重命名"
+    if (!next || next === f.name) return;
+    app.renameFeature(id, next);
+    notify.ok(`已重命名为「${next}」`);
   });
 }

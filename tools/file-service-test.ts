@@ -3,7 +3,7 @@
  *
  * 覆盖 `src/app/file-service.ts` 的核心流程：
  *   - 三个导出：无实体守卫 → 内核调用 → 下载（文件名/MIME/内容类型）→ 提示（含 KB / 三角形数）
- *   - 保存：documentJSON → 下载 → 提示
+ *   - 保存：projectJSON（零件文档 + 装配体信封）→ 下载 → 提示
  *   - 打开：选文件 → JSON.parse → loadDocument + syncEntry → 提示；取消/坏 JSON 的路径
  *   - 导入：选文件 → 内核 → setImportedModel（ModelResult 形状）+ showImportedMesh → 提示；
  *     取消/内核报错的路径
@@ -56,7 +56,7 @@ function makeHost(overrides: Partial<FileHost> = {}) {
   const host: FileHost = {
     hasModel: () => model,
     resolvedFeatures: () => [],
-    documentJSON: () => '{"version":2,"params":[],"features":[]}',
+    projectJSON: () => '{"version":2,"params":[],"features":[]}',
     loadDocument: (data) => { rec.loadDocument.push(data); },
     syncEntry: () => { rec.syncEntry++; },
     setImportedModel: (m) => { rec.imported.push(m); },
@@ -166,6 +166,21 @@ function makeHost(overrides: Partial<FileHost> = {}) {
   await svc.openProject();
   check('openProject 取消：无任何副作用',
     rec.loadDocument.length === 0 && rec.syncEntry === 0 && rec.toasts.length === 0);
+}
+{
+  // 项目信封（零件文档 + 装配体）必须**原样**转交宿主：装配体字段由 App 侧的
+  // loadDocument 解析，服务层不得裁剪，否则「保存后重开装配体就没了」。
+  const envelope = JSON.stringify({
+    format: 'solid2-project', version: 3,
+    doc: { version: 2, params: [], features: [] },
+    assembly: { components: [{ id: 'c1', name: '零件1' }], mates: [], explodeAmount: 0 },
+  });
+  const { svc, rec } = makeHost({ pickText: async () => ({ name: '装配.json', text: envelope }) });
+  await svc.openProject();
+  const got = rec.loadDocument[0] as { format?: string; assembly?: { components?: unknown[] } };
+  check('openProject 信封：format/assembly 原样转交宿主',
+    got?.format === 'solid2-project' && got?.assembly?.components?.length === 1,
+    JSON.stringify({ format: got?.format, comps: got?.assembly?.components?.length }));
 }
 {
   const { svc, rec } = makeHost({

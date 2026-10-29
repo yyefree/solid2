@@ -1532,6 +1532,71 @@ check('设计树「重命名」可撤销', treeUndo.name === '底板' && treeUnd
 check('设计树「上移/下移」可撤销（顺序复原）', treeUndo.moved === true && treeUndo.orderRestored === true,
   `moved=${treeUndo.moved} restored=${treeUndo.orderRestored}`);
 
+// 装配体必须纳入撤销快照。
+// 曾经的缺陷：快照只存零件文档 → 插入组件/加配合/固定/爆炸全都不可撤销，
+// 而 Ctrl+Z 会转而回退**零件文档**（用户看不到变化，模型却被悄悄改了）。
+const assemblyUndo = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const T = await import('/src/sketch/types.ts');
+  const out = {};
+  app.setMode('model');
+  await sleep(80);
+  app.assembly = null; // 前面段落可能留下装配体：从空装配起步，计数才确定
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  app.addFeature({ id: T.newId('f'), type: 'primitive', name: '基本体1',
+    params: { kind: 'box', dims: [10, 10, 10], operation: 'new' } }, { rebuild: false });
+  await app.rebuild(); await sleep(80);
+  out.vol = app.model ? app.model.stats.volume : 0;
+
+  app.setMode('assembly');
+  await sleep(200);
+  const a = app.ensureAssembly();
+  out.c0 = a.components.length;
+
+  // 插入组件（UI 的「插入零件」走同一条 editAssembly 通路）
+  app.editAssembly((asm) => asm.insertFromDocument(app.doc.clone(), '副本'));
+  await sleep(200);
+  out.c1 = app.assembly.components.length;
+
+  app.undo(); await sleep(350);
+  out.cAfterUndo = app.assembly ? app.assembly.components.length : -1;
+  out.asmAlive = !!app.assembly;
+
+  app.redo(); await sleep(350);
+  out.cAfterRedo = app.assembly ? app.assembly.components.length : -1;
+
+  // 固定/浮动 也要可撤销
+  const last = app.assembly.components[app.assembly.components.length - 1];
+  out.fixed0 = last.fixed;
+  app.editAssembly((asm) => { const t = asm.getComponent(last.id); if (t) t.fixed = !t.fixed; });
+  await sleep(150);
+  out.fixed1 = app.assembly.getComponent(last.id).fixed;
+  app.undo(); await sleep(350);
+  out.fixedAfterUndo = app.assembly.getComponent(last.id).fixed;
+
+  // 撤销装配编辑不能连带回退零件文档
+  out.volAfter = app.model ? app.model.stats.volume : 0;
+
+  app.setMode('model');
+  await sleep(120);
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild(); await sleep(60);
+  return out;
+})()`);
+check('装配体「插入组件」可撤销（组件数回到插入前）',
+  assemblyUndo.c1 === assemblyUndo.c0 + 1 && assemblyUndo.cAfterUndo === assemblyUndo.c0 &&
+    assemblyUndo.asmAlive === true,
+  `c0=${assemblyUndo.c0} c1=${assemblyUndo.c1} undo=${assemblyUndo.cAfterUndo} asm=${assemblyUndo.asmAlive}`);
+check('装配体「插入组件」可重做', assemblyUndo.cAfterRedo === assemblyUndo.c0 + 1,
+  `redo=${assemblyUndo.cAfterRedo}`);
+check('装配体「固定/浮动」可撤销', assemblyUndo.fixed1 === !assemblyUndo.fixed0 &&
+  assemblyUndo.fixedAfterUndo === assemblyUndo.fixed0,
+  `${assemblyUndo.fixed0} → ${assemblyUndo.fixed1} → ${assemblyUndo.fixedAfterUndo}`);
+check('撤销装配编辑不误伤零件模型（体积不变）',
+  Math.abs((assemblyUndo.volAfter || 0) - (assemblyUndo.vol || 0)) < 1,
+  `vol=${(assemblyUndo.vol||0).toFixed(0)} after=${(assemblyUndo.volAfter||0).toFixed(0)}`);
+
 // 拔模默认中性面必须与所选面**相交**：水平面上拔模时默认「前视(Z=0)」与之平行，
 // 两平面无交线 → 拔模方向退化，OCCT 直接抛异常（旧行为：弹「拔模失败：<异常指针数字>」）。
 const draftDefault = await evaluate(`(async () => {
@@ -1613,6 +1678,66 @@ check('选中态唯一真源：特征⇄几何双向互斥，全选亦清特征�
   !selInvariant.err && selInvariant.featSelected === true && selInvariant.geomClearsFeature === true &&
     selInvariant.featureClearsGeom === true && selInvariant.selectAllClearsFeature === true,
   JSON.stringify(selInvariant));
+
+// 零件/装配/工程图态的 Esc：此前 Esc **只**在草图态绑了热键，
+// `App.escape()` 的「清选中 / 取消标注」分支是死代码 —— 模型态按 Esc 毫无反应。
+// 同时必须保证「自己接管 Esc 的浮层」不被全局热键饿死（缩放至区域 / 旋转视图）。
+const escModel = await evaluate(`(async () => {
+  const { app } = window.__solid2;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const esc = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  const T = await import('/src/sketch/types.ts');
+  app.addFeature({ id: T.newId('f'), type: 'primitive', name: '基本体1',
+    params: { kind: 'box', dims: [10, 10, 10], operation: 'new' } }, { rebuild: false });
+  await app.rebuild(); await sleep(80);
+
+  // 面选中 → Esc 清除
+  app.selectFace(0); await sleep(60);
+  out.facesBefore = app.selection.faces.length;
+  esc(); await sleep(100);
+  out.facesAfter = app.selection.faces.length;
+
+  // 设计树特征选中（无几何选中）→ Esc 也要清
+  const fid = app.doc.features[0].id;
+  app.selectFeature(fid); await sleep(60);
+  out.featBefore = app.selectedFeatureId === fid;
+  esc(); await sleep(100);
+  out.featAfter = app.selectedFeatureId;
+
+  // 缩放至区域进行中：Esc 归缩放自己（全局热键必须让路，否则框选状态卡死）
+  app.selectFace(0); await sleep(60);
+  const zb = document.createElement('div');
+  zb.className = 'zoom-rubber';
+  document.body.appendChild(zb);
+  esc(); await sleep(100);
+  out.facesWhileZoom = app.selection.faces.length;
+  zb.remove();
+
+  // 旋转视图模式同理（.view-rotating）
+  app.clearSelection(); app.selectFace(0); await sleep(60);
+  const rot = document.createElement('div');
+  rot.className = 'view-rotating';
+  document.body.appendChild(rot);
+  esc(); await sleep(100);
+  out.facesWhileRotate = app.selection.faces.length;
+  rot.remove();
+
+  app.clearSelection();
+  for (const f of [...app.doc.features]) app.doc.remove(f.id);
+  await app.rebuild(); await sleep(60);
+  return out;
+})()`);
+check('模型态 Esc 清除几何选中（不再是死代码）',
+  escModel.facesBefore === 1 && escModel.facesAfter === 0,
+  `before=${escModel.facesBefore} after=${escModel.facesAfter}`);
+check('模型态 Esc 清除设计树特征选中',
+  escModel.featBefore === true && escModel.featAfter === null,
+  `before=${escModel.featBefore} after=${escModel.featAfter}`);
+check('「缩放至区域」/「旋转视图」进行中 Esc 不被全局热键截走',
+  escModel.facesWhileZoom === 1 && escModel.facesWhileRotate === 1,
+  `zoom=${escModel.facesWhileZoom} rotate=${escModel.facesWhileRotate}`);
 
 // Enter 重复上一命令（SolidWorks：Enter 重跑上次执行的命令）
 const enterRepeat = await evaluate(`(async () => {

@@ -10,7 +10,7 @@
  * 调 `kernel.assembly` 拿回可序列化的 MeshResult，再构造成 ShapeView。
  */
 import * as THREE from 'three';
-import { CadDocument } from '../doc/model';
+import { CadDocument, type SerializedDoc } from '../doc/model';
 import { resolveExpressions } from '../doc/expr';
 import { ShapeView, type DisplayStyle } from '../view/shapeview';
 import { kernel } from '../core/kernel';
@@ -76,11 +76,95 @@ export const MATE_LABEL: Record<MateType, string> = {
   angle: '角度',
 };
 
+/** 装配体的可序列化形态（保存 / 撤销快照共用；不含 THREE 视图与网格缓存） */
+export interface SerializedComponent {
+  id: string;
+  name: string;
+  /** 组件自身的零件文档 */
+  doc: SerializedDoc;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  visible: boolean;
+  fixed: boolean;
+  color?: number;
+  explodeDir?: [number, number, number];
+}
+
+export interface SerializedAssembly {
+  components: SerializedComponent[];
+  mates: Mate[];
+  explodeAmount: number;
+}
+
+/**
+ * 深拷贝一条配合。
+ * ⚠️ 不能只 `{...m}`：`a`/`b` 里的 `localPoint`/`localDir` 是数组，
+ * 浅拷贝会让撤销快照与实时装配体**共享同一份坐标数组**，之后求解原地改写
+ * 就会连快照一起改（撤销恢复不出旧值）—— 与 `doc.toJSON()` 必须真深拷贝同源。
+ */
+function cloneMate(m: Mate): Mate {
+  return {
+    ...m,
+    a: { ...m.a, localPoint: [...m.a.localPoint], localDir: [...m.a.localDir] },
+    b: { ...m.b, localPoint: [...m.b.localPoint], localDir: [...m.b.localDir] },
+  };
+}
+
 export class Assembly {
   components: Component[] = [];
   mates: Mate[] = [];
   explodeAmount = 0;
   lastResidual = 0;
+
+  /**
+   * 序列化为纯数据。
+   * ⚠️ 只存**能重建几何所需**的字段：视图 / 网格 / bbox 都是缓存，
+   * 反序列化后由 `syncScene()` 重新向内核要（`view: null` → 进 needMesh 分支）。
+   */
+  toJSON(): SerializedAssembly {
+    return {
+      components: this.components.map((c) => ({
+        id: c.id,
+        name: c.name,
+        doc: c.doc.toJSON(),
+        position: [...c.position] as [number, number, number],
+        rotation: [...c.rotation] as [number, number, number],
+        visible: c.visible,
+        fixed: c.fixed,
+        ...(c.color !== undefined ? { color: c.color } : {}),
+        ...(c.explodeDir ? { explodeDir: [...c.explodeDir] as [number, number, number] } : {}),
+      })),
+      mates: this.mates.map(cloneMate),
+      explodeAmount: this.explodeAmount,
+    };
+  }
+
+  /** 从纯数据重建（视图留空，需调用方再 `syncScene`） */
+  static fromJSON(data: unknown): Assembly {
+    const a = new Assembly();
+    const rec = (data ?? null) as Partial<SerializedAssembly> | null;
+    if (!rec) return a;
+    if (Array.isArray(rec.components)) {
+      for (const sc of rec.components) {
+        if (!sc || typeof sc.id !== 'string') continue;
+        a.components.push({
+          id: sc.id,
+          name: typeof sc.name === 'string' ? sc.name : '零件',
+          doc: CadDocument.fromJSON(sc.doc),
+          position: Array.isArray(sc.position) ? [...sc.position] as [number, number, number] : [0, 0, 0],
+          rotation: Array.isArray(sc.rotation) ? [...sc.rotation] as [number, number, number] : [0, 0, 0],
+          visible: sc.visible !== false,
+          fixed: !!sc.fixed,
+          ...(sc.color !== undefined ? { color: sc.color } : {}),
+          ...(sc.explodeDir ? { explodeDir: [...sc.explodeDir] as [number, number, number] } : {}),
+          view: null,
+        });
+      }
+    }
+    if (Array.isArray(rec.mates)) a.mates = (rec.mates as Mate[]).map(cloneMate);
+    if (typeof rec.explodeAmount === 'number') a.explodeAmount = rec.explodeAmount;
+    return a;
+  }
 
   addComponent(doc: CadDocument, name?: string): Component {
     const c: Component = {
@@ -199,9 +283,32 @@ export class Assembly {
       }
     }
 
+    const views = new Set<THREE.Object3D>();
+    for (const c of this.components) if (c.view) views.add(c.view.group);
     for (const child of [...root.children]) {
       const cid = child.userData?.compId;
-      if (cid && !alive.has(cid)) child.removeFromParent();
+      if (!cid) continue;
+      // 已删除组件 → 摘除；或「同 compId 但不是当前视图」的孤儿 → 也摘除
+      // （撤销会用 `fromJSON` 换掉整个 Assembly 实例，旧实例的 ShapeView 还挂在场景里）
+      if (!alive.has(cid) || !views.has(child)) child.removeFromParent();
+    }
+  }
+
+  /**
+   * 丢弃全部视图（替换本实例前调用）。
+   *
+   * ⚠️ 撤销 / 打开项目都会用 `fromJSON` **新建** Assembly 实例；旧实例的 ShapeView
+   * 仍挂在 `viewport.root` 上，没有引用再去 dispose → 几何/材质常驻显存（泄漏），
+   * 且切换模式时新视图与孤儿视图并存。故换实例前必须显式收尾。
+   */
+  disposeViews(): void {
+    for (const c of this.components) {
+      if (!c.view) continue;
+      c.view.group.removeFromParent();
+      c.view.dispose();
+      c.view = null;
+      c.mesh = undefined;
+      c.meshRev = undefined;
     }
   }
 

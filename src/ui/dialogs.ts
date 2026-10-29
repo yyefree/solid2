@@ -16,7 +16,7 @@ import { PLANES, makeEdgeRef, makeFaceRef, CadDocument, planeFromFace, offsetPla
 import { download } from '../core/meshexport';
 import type { ViewKind, DimAnnotation, GdtSymbol } from '../app/drawing';
 import { GDT_LABEL } from '../app/drawing';
-import type { MateType } from '../app/assembly';
+import type { Mate, MateType } from '../app/assembly';
 import type { MateRef } from '../app/assembly';
 import { mateRefLabel } from '../app/assembly';
 
@@ -1174,35 +1174,33 @@ export const featureDialogs = {
   },
 
   // ---------------- 装配 ----------------
+  // ⚠️ 全部写操作必须经 `app.editAssembly()`：装配体是独立子对象，
+  // 直接改 `a.components/mates` 或 `c.fixed` 不压撤销栈，Ctrl+Z 会转而回退零件文档。
   insertComponent(app: AppApi): void {
-    const a = app.ensureAssembly();
-    a.insertFromDocument(app.doc.clone(), `零件${a.components.length + 1}`);
-    app.syncAssemblyScene();
+    const name = `零件${(app.assembly?.components.length ?? 0) + 1}`;
+    app.editAssembly((a) => a.insertFromDocument(app.doc.clone(), name));
     notify.ok('已插入当前零件');
   },
 
   newComponent(app: AppApi): void {
-    const a = app.ensureAssembly();
-    const doc = new CadDocument();
-    a.addComponent(doc, `零件${a.components.length + 1}`);
-    app.syncAssemblyScene();
+    const name = `零件${(app.assembly?.components.length ?? 0) + 1}`;
+    app.editAssembly((a) => a.addComponent(new CadDocument(), name));
     notify.ok('新建零件已添加');
   },
 
   deleteComponent(app: AppApi): void {
-    const a = app.ensureAssembly();
-    if (!a.components.length) { notify.info('没有组件'); return; }
+    const a = app.assembly;
+    if (!a || !a.components.length) { notify.info('没有组件'); return; }
     const c = a.components[a.components.length - 1];
     confirmDialog('删除组件', `确定删除 "${c.name}" 吗？`, () => {
-      a.removeComponent(c.id);
-      app.syncAssemblyScene();
+      app.editAssembly((asm) => asm.removeComponent(c.id));
       notify.ok('组件已删除');
     });
   },
 
   mate(app: AppApi): void {
-    const a = app.ensureAssembly();
-    if (a.components.length < 2) { notify.info('至少需要两个组件'); return; }
+    const a = app.assembly;
+    if (!a || a.components.length < 2) { notify.info('至少需要两个组件'); return; }
     const types = ['coincident', 'concentric', 'distance', 'parallel', 'perpendicular', 'angle'] as const;
     const labels: Record<string, string> = { coincident: '重合', concentric: '同心', distance: '距离', parallel: '平行', perpendicular: '垂直', angle: '角度' };
     const picks = app.assemblyPicks;
@@ -1250,14 +1248,16 @@ export const featureDialogs = {
             refB = center(c2);
           }
           const value = parseFloat(valRow.input.value);
-          a.mates.push({
+          const mate: Mate = {
             id: newId('m'), type, name: `${labels[type]}${a.mates.length + 1}`,
             a: refA, b: refB,
             value: Number.isFinite(value) ? value : undefined,
-          });
+          };
           app.clearAssemblyPicks();
-          a.solve();
-          app.syncAssemblyScene();
+          app.editAssembly((asm) => {
+            asm.mates.push(mate);
+            asm.solve();
+          });
           notify.ok('配合已添加');
           return true;
         } },
@@ -1266,23 +1266,29 @@ export const featureDialogs = {
   },
 
   solveAssembly(app: AppApi): void {
-    const a = app.ensureAssembly();
-    const r = a.solve();
-    app.syncAssemblyScene();
+    const a = app.assembly;
+    if (!a) return;
+    // 求解会改写组件位姿 → 走 editAssembly 才可撤销
+    let r = { iterations: 0, residual: 0 };
+    app.editAssembly((asm) => { r = asm.solve(); });
     notify.info(`配合求解完成：${r.iterations} 轮，残差 ${r.residual.toExponential(1)}`);
   },
 
   toggleFixed(app: AppApi): void {
-    const a = app.ensureAssembly();
-    if (!a.components.length) { notify.info('没有组件'); return; }
+    const a = app.assembly;
+    if (!a || !a.components.length) { notify.info('没有组件'); return; }
     const c = a.components[a.components.length - 1];
-    c.fixed = !c.fixed;
-    app.syncAssemblyScene();
-    notify.ok(c.fixed ? '已固定' : '已浮动');
+    const next = !c.fixed;
+    app.editAssembly((asm) => {
+      const t = asm.getComponent(c.id);
+      if (t) t.fixed = next;
+    });
+    notify.ok(next ? '已固定' : '已浮动');
   },
 
   interference(app: AppApi): void {
-    const a = app.ensureAssembly();
+    const a = app.assembly;
+    if (!a) { notify.info('装配体为空'); return; }
     a.checkInterference().then((res) => {
       if (!res.length) { notify.ok('无干涉'); return; }
       tableModal('干涉检查', ['零件A', '零件B', `干涉体积 (${app.unitSystem === 'IPS' ? 'in³' : app.unitSystem === 'CGS' ? 'cm³' : 'mm³'})`], res.map(r => [r.a, r.b, formatVolume(r.volume, app.unitSystem)]));
@@ -1290,10 +1296,10 @@ export const featureDialogs = {
   },
 
   explodeDialog(app: AppApi): void {
-    const a = app.ensureAssembly();
+    const a = app.assembly;
+    if (!a) return;
     promptNumber('爆炸视图', '爆炸距离 (mm)', a.explodeAmount, (v) => {
-      a.setExplode(v);
-      app.syncAssemblyScene();
+      app.editAssembly((asm) => asm.setExplode(v));
     });
   },
 
